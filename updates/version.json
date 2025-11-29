@@ -1,7 +1,7 @@
 {
   "latest_version": "3.2.1",
   "mandatory": false,
-  "url": "https://github.com/MiswarR/metabayn-update/raw/main/updates/metabayn-3.2.1.zip",
+  "url": "https://github.com/MiswarR/metabayn-update/releases/download/v3.2.1/metabayn-3.2.1.zip",
   "hash": "",
   "changelog": "Initial GitHub update build for Metabayn."
 }
