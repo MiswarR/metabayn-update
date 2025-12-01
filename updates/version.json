@@ -1,7 +1,7 @@
 {
   "latest_version": "3.2.6",
   "mandatory": false,
-  "url": "https://github.com/MiswarR/metabayn-update/releases/download/v3.2.5/metabayn-3.2.6.zip",
+  "url": "https://github.com/MiswarR/metabayn-update/releases/download/v3.2.6/metabayn-3.2.6.zip",
   "hash": "",
   "changelog": "Perbaikan bug deskripsi yang tidak embed."
 }
