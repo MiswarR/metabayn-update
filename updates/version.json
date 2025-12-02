@@ -1,7 +1,7 @@
 {
-  "latest_version": "3.2.8",
+  "latest_version": "3.2.9",
   "mandatory": false,
-  "url": "https://github.com/MiswarR/metabayn-update/releases/download/v3.2.8/metabayn-3.2.8.zip",
-  "hash": "5E2335561104F58BB8BC1F85A26F1ED71A12283308F06C7B477404815908881D",
-  "changelog": "Perbaikan bug deskripsi dan pembersihan Subject."
+  "url": "https://github.com/MiswarR/metabayn-update/releases/download/v3.2.9/metabayn-3.2.9.zip",
+  "hash": "C44FC36A70E6D3CDE4023B8501379637FBB4CFA5A17B6DC1FF1D2ADD99F3C546",
+  "changelog": "Perbaikan Tags PNG dan stabilitas update."
 }
