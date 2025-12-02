@@ -2,6 +2,6 @@
   "latest_version": "3.2.8",
   "mandatory": false,
   "url": "https://github.com/MiswarR/metabayn-update/releases/download/v3.2.8/metabayn-3.2.8.zip",
-  "hash": "",
+  "hash": "5E2335561104F58BB8BC1F85A26F1ED71A12283308F06C7B477404815908881D",
   "changelog": "Perbaikan bug deskripsi dan pembersihan Subject."
 }
