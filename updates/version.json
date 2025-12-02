@@ -2,6 +2,6 @@
   "latest_version": "3.3.0",
   "mandatory": false,
   "url": "https://github.com/MiswarR/metabayn-update/releases/download/v3.3.0/metabayn-3.3.0.zip",
-  "hash": "7E6D948C9CDA12BAC134FF5201772EC085BB7A91A1A7256E8223DB2EDC214ED8",
-  "changelog": "Perbaikan Tags PNG dan stabilitas update."
+  "hash": "59EB8C14EFA7668FA6CD224D879D1EF63DA72414FEFB7446CB80C001A6C99A31",
+  "changelog": "Update tampilan dashboard."
 }
