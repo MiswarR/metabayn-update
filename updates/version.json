@@ -1,7 +1,7 @@
 {
-  "latest_version": "3.3.2",
+  "latest_version": "3.3.3",
   "mandatory": false,
-  "url": "https://github.com/MiswarR/metabayn-update/releases/download/v3.3.2/metabayn-3.3.2.zip",
-  "hash": "548FCFBBA6002E87723F62A2D2F6901D616CEC4AA15EEECFE42E3B4637C0D642",
+  "url": "https://github.com/MiswarR/metabayn-update/releases/download/v3.3.3/metabayn-3.3.3.zip",
+  "hash": "61A1F53884678EF6A9ACE41FD1B8F91E40D01B0529C7955D05A9DE7EE9BADA14",
   "changelog": "Update tampilan dashboard."
 }
