@@ -3,5 +3,5 @@
   "mandatory": false,
   "url": "https://github.com/MiswarR/metabayn-update/releases/download/v3.2.8/metabayn-3.2.8.zip",
   "hash": "",
-  "changelog": "Perbaikan bug deskripsi yang tidak embed."
+  "changelog": "Perbaikan bug deskripsi dan pembersihan Subject."
 }
