@@ -1,11 +1,11 @@
 {
-  "version": "v4.1.2",
-  "notes": "Perbaikan bug dan fitur baru...",
-  "pub_date": "2024-03-20T12:00:00Z",
+  "version": "v4.1.1",
+  "notes": "Update v4.1.1: Perbaikan bug dan peningkatan performa.",
+  "pub_date": "2025-12-07T12:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "ISI_DARI_FILE_SIG_YANG_DIHASILKAN_SAAT_BUILD",
-      "url": "LINK_DOWNLOAD_INSTALLER_MSI_ZIP_ANDA"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTWlMxK0o2dTI5clkycUwxWTVBOFlqMnVQdjRSSlM2NWRtYktXTEVRTmRzT3lackJUQ2ZZY2FaaTB3Q0hLd29QeHliVzFWazVZay9hVmlGUUVuZHBOV2t1M1QwVDdJaXdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY1MTAwNDIwCWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMS4xX3g2NF9lbi1VUy5tc2kuemlwCjczTkZ4NnkvRXBhbVRmb084Y1RmZ2dyWnhDMk1ubFNVS3ZESnFMMU5yV3RhbnY3aDVKR1drVHR6a2ZDV0I1dkl6eXVIdCtGZmRzZm03TjZ0eFVBL0JnPT0K",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.1.1/Metabayn.Studio_4.1.1_x64_en-US.msi.zip"
     }
   }
 }
