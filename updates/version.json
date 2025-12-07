@@ -1,7 +1,11 @@
 {
-  "latest_version": "3.3.3",
-  "mandatory": false,
-  "url": "https://github.com/MiswarR/metabayn-update/releases/download/v3.3.3/metabayn-3.3.3.zip",
-  "hash": "61A1F53884678EF6A9ACE41FD1B8F91E40D01B0529C7955D05A9DE7EE9BADA14",
-  "changelog": "Update tampilan dashboard."
+  "version": "v4.1.2",
+  "notes": "Perbaikan bug dan fitur baru...",
+  "pub_date": "2024-03-20T12:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "ISI_DARI_FILE_SIG_YANG_DIHASILKAN_SAAT_BUILD",
+      "url": "LINK_DOWNLOAD_INSTALLER_MSI_ZIP_ANDA"
+    }
+  }
 }
