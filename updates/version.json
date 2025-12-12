@@ -1,11 +1,11 @@
 {
-  "version": "4.1.2",
-  "notes": "Update v4.1.2: Fix Token Display & UI Improvements",
-  "pub_date": "2025-12-09T08:32:02Z",
+  "version": "4.1.4",
+  "notes": "Update v4.1.4: Fix Token Display & UI Improvements",
+  "pub_date": "2025-12-12T21:24:02Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRL285dGlOM2VaZlAwbms0bTFyT2lZYlUzSGdOK1JuU2V3WVVaWWtnSXEvMG9RRHdQanVuc3FTSzIwL3lDUzd6T1ZaUTlyUVV6ckNwdDMrdDNjOW92ZE9IY1RXMjhoandVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY1Mjc4NzIyCWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMS4yX3g2NF9lbi1VUy5tc2kuemlwCmthMWp5b21hdCtWZG1naytyZUlDZVRsWVFlWkp0V0xnVkZOMDZkc3FxN2tOSS9sTHRrMWJXZWIxbXhEMXV2S0trTHVYNDVUWkgyS2hkL3h5YW1qRkJRPT0K",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.1.2/Metabayn.Studio_4.1.2_x64_en-US.msi.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVST01FUHY1N1QzdFpOMklNMm0xc2JmTWFxaEJKcTBsWlVYT3cyOEdIa01hbS9KbkFIWlMzZXVSUm8wcHdNZWMxWXlLTkpsS2dRSFdQUVRPWGpFdytpalA0OUwzNmIwYkFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY1MzQ0MDE2CWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMS4zX3g2NF9lbi1VUy5tc2kuemlwCmExMzhlSVZVcU5CemRGVEZuang5ZkhoZXZIOHBDaU83TG9uZlVwM3NEY2R0aVEvcjNOV2NFMm0vSmV5MldwcDZ0Sjhvb0FCcWNoQmo4dEJFOFlMRkJ3PT0K",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.1.4/Metabayn.Studio_4.1.4_x64_en-US.msi.zip"
     }
   }
 }
