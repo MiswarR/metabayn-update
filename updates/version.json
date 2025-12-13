@@ -1,11 +1,11 @@
 {
-  "version": "4.1.9",
-  "notes": "Update v4.1.9: Fix Token Display & UI Improvements",
-  "pub_date": "2025-12-13T19:20:02Z",
+  "version": "v4.2.1",
+  "notes": "Update v4.2.1: \n- Fixed Threads/Speed Setting (Unlock Max Speed)\n- Fixed Video Metadata Writing (File Locked Retry Logic)\n- Added Full Windows/Apple Metadata Support (XMP, XP, ItemList, QuickTime)\n- Enhanced Stability",
+  "pub_date": "2024-12-13T22:10:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTby9TZHgrd1ExQzFEdVJtL29vU2dxQ0YxTWk2Y1ljNXBVL2x2aXNWRk80aGlmTFhSaDZ4WnpXMHhZNlErSlVoc2Z2QmFIUTdtMWRKRnA3VVRxSlk3TFhWK3hGbjF3N0FrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY1NjIzODQ3CWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMS45X3g2NF9lbi1VUy5tc2kuemlwCnBGbzVsTzVxTmwwZmVPd2RFcjJKZTArOXJoM3BVSld4U0pteXM2TlRTMVNWVnlsOHlzaWI0bVF6TUp4N1M3NWFwQVBxVVhJTXNxSkFjdEF6WXJhT0FBPT0K",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.1.9/Metabayn.Studio_4.1.9_x64_en-US.msi.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTby9TZHgrd1ExQzVNd29oZ3paUlRtQXhXdk5DNkRhVHRiTll0WFZTWWJQbmJVTDV0elZGWVo3K0IrWXI0dFo2VTdod2FxNlVHeThCOC9YWWl2endPMFpwblcwV0RxZGdRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY1NjM0NjE3CWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMi4xX3g2NC1zZXR1cC5uc2lzLnppcApjM3V6QVhxMyszdVh1WXpnYzBIRmpuQkw3aHZXcHptMWtSZk9mTDhOeERHbGVPWllNWC9UdjJlK3pDditTTVd6eU82cXhocTh0WlBPZ1BhOFM2dUxDUT09Cg==",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.2.1/Metabayn.Studio_4.2.1_x64-setup.nsis.zip"
     }
   }
 }
