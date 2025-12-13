@@ -1,6 +1,6 @@
 {
-  "version": "4.1.4",
-  "notes": "Update v4.1.4: Fix Token Display & UI Improvements",
+  "version": "4.1.9",
+  "notes": "Update v4.1.9: Fix Token Display & UI Improvements",
   "pub_date": "2025-12-13T19:20:02Z",
   "platforms": {
     "windows-x86_64": {
