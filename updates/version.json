@@ -1,7 +1,7 @@
 {
   "version": "v4.2.4",
   "notes": "Update v4.2.4: \n- Fixed Threads/Speed Setting (Unlock Max Speed)\n- Fixed Video Metadata Writing (File Locked Retry Logic)\n- Added Full Windows/Apple Metadata Support (XMP, XP, ItemList, QuickTime)\n- Enhanced Stability",
-  "pub_date": "2024-12-15T12:10:00Z",
+  "pub_date": "2024-12-15T13:40:00Z",
   "platforms": {
     "windows-x86_64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YThiZk9Mby9USEJLWllEREc3Nlc5bDkra2RyMklIVVJyeERqQjZWbm9UQy9XY25jc2dXYnZ3U0dvNzRtY0NNL0JEREVIQlUwRTRJcFBnQmh0KzNwUndJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY1Nzc1MjgyCWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMi40X3g2NC1zZXR1cC5uc2lzLnppcAp2citGRVREKzEwMzdpUGFiL2ErSC9tUlVkTEljODA0c3NrREU5Ym41SG9adW5VWEt4L3RQQTdXMkQ5YjgxOE54emF3S2dTZTZNYVpwU3BGTmRMWW5Cdz09Cg==",
