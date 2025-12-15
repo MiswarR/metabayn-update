@@ -1,11 +1,11 @@
 {
-  "version": "v4.2.3",
-  "notes": "Update v4.2.3: \n- Fixed Threads/Speed Setting (Unlock Max Speed)\n- Fixed Video Metadata Writing (File Locked Retry Logic)\n- Added Full Windows/Apple Metadata Support (XMP, XP, ItemList, QuickTime)\n- Enhanced Stability",
-  "pub_date": "2024-12-14T14:10:00Z",
+  "version": "v4.2.4",
+  "notes": "Update v4.2.4: \n- Fixed Threads/Speed Setting (Unlock Max Speed)\n- Fixed Video Metadata Writing (File Locked Retry Logic)\n- Added Full Windows/Apple Metadata Support (XMP, XP, ItemList, QuickTime)\n- Enhanced Stability",
+  "pub_date": "2024-12-15T12:10:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTby9TZHgrd1ExQzhrNFp4U216dkhEQkF5dE9QZDFYYmxGR2FHMWdzYk83RHkvZUZ0SWtGQnJCUmcyMzFHc0pIZEtIcWFvd2diTXRGalhpWjZ1Y3ovM3I1aEVWd0tIRWdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY1NjY3NTI1CWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMi4zX3g2NC1zZXR1cC5uc2lzLnppcApGVk4vTVdKQlRnZUVvUlZ6cUNNWGZITzZ1SjRCY1N2bTNqZEFKS1J5NWN2dDlkOFZVclpvWlFnRWl0cytnaGNsRGh2ci9JNW1Obld3R1kyeXNwR0REZz09Cg==",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.2.3/Metabayn.Studio_4.2.3_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRakZoNGtHbXZXS3NTWEdWYmNrVm90L2NqeXBnZ1YvSUdIY2FMaTViVEp6dWNXUkRXQW5Kb1M1OHlqSnJlYTE4Y0ZjZk5VazJ5N1B0c05VYWlyM1E3bVhKWVdkM1dQWndnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY1Nzc0MzkyCWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMi40X3g2NC1zZXR1cC5uc2lzLnppcApiNjhpc3h3VldUcDM1ejgvLy9QZUlkNmNjSVc5NmlJanB6akNUYmwrU3NSdURrR2p6OUJRZ1Z3UDZaNGJSWjg1ZWZkdVl6ZlZwbDNvUG5BdVRNeitCQT09Cg==",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.2.4/Metabayn.Studio_4.2.4_x64-setup.nsis.zip"
     }
   }
 }
