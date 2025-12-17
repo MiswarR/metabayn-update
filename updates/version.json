@@ -1,11 +1,11 @@
 {
-  "version": "v4.2.6",
-  "notes": "Update v4.2.6: \n- Fixed Threads/Speed Setting (Unlock Max Speed)\n- Fixed Video Metadata Writing (File Locked Retry Logic)\n- Added Full Windows/Apple Metadata Support (XMP, XP, ItemList, QuickTime)\n- Enhanced Stability",
-  "pub_date": "2024-12-16T10:15:00Z",
+  "version": "v4.2.7",
+  "notes": "Update v4.2.7: \n- FIXED: Masalah 'Stuck' / Macet saat generate (Menambahkan Timeout 120s).\n- FIXED: Pengaturan Admin Panel (Profit Margin & USD Rate) sekarang berfungsi normal dan mempengaruhi harga.\n- IMPROVED: Stabilitas koneksi dan penanganan error pada jaringan lambat.",
+  "pub_date": "2025-12-17T09:34:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YTA5QkY4RUZhNTc2Y1FtYUhJY1N3V2RWRW1JcVhTbndwek0yUld6Z3hHb2JUeTVjWVovdit3OHBORXhjN3Y0R2czRzRuMmI3a3c4Q21Za1Y0WEVmVlFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY1ODUwNTIzCWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMi42X3g2NC1zZXR1cC5uc2lzLnppcAprOUVTZVV0dDBwWm0yVE5jOWlIOC9wSjNXTGttTG5LWmMwWXR3RDRXMm85TURvcXJmSXJaeGVNam90dCt4WHJXbERuelFmUXNuaU1hdHZGeDdxcUVBdz09Cg==",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.2.6/Metabayn.Studio_4.2.6_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YTI3SFdjSlE1MTRKMm83dHpUTGtiNjh0d2xNTWljT2x2NFBGREF3eW5uZkNPMmtScndFSmw2U1hNNlROb1JxMUM2U09jVGtway9RN3dyanhKYnoyZVE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY1OTIyNDgxCWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMi43X3g2NC1zZXR1cC5uc2lzLnppcApCaXNzdW10SHAvQ0REVEFXMDZteGEwLzY3MUtYT3lRMUl1Rjl5OGJuaTAxTUtUMnlPQm1FMDNTNXZhTDlkUTVVTTI5ZzVuZmR2RTlwVFAyM3RaeHJDZz09Cg==",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.2.7/Metabayn.Studio_4.2.7_x64-setup.nsis.zip"
     }
   }
 }
