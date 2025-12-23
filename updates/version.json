@@ -1,11 +1,11 @@
 {
-  "version": "v4.2.7",
-  "notes": "Update v4.2.7: \n- FIXED: Masalah 'Stuck' / Macet saat generate (Menambahkan Timeout 120s).\n- FIXED: Pengaturan Admin Panel (Profit Margin & USD Rate) sekarang berfungsi normal dan mempengaruhi harga.\n- IMPROVED: Stabilitas koneksi dan penanganan error pada jaringan lambat.",
-  "pub_date": "2025-12-17T09:34:00Z",
+  "version": "v4.3.1",
+  "notes": "Update v4.3.1: UI improvements, performance optimizations, new Lean Mode feature, API key management, image selection enhancements, and admin panel fixes.",
+  "pub_date": "2025-12-23T12:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YTI3SFdjSlE1MTRKMm83dHpUTGtiNjh0d2xNTWljT2x2NFBGREF3eW5uZkNPMmtScndFSmw2U1hNNlROb1JxMUM2U09jVGtway9RN3dyanhKYnoyZVE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY1OTIyNDgxCWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMi43X3g2NC1zZXR1cC5uc2lzLnppcApCaXNzdW10SHAvQ0REVEFXMDZteGEwLzY3MUtYT3lRMUl1Rjl5OGJuaTAxTUtUMnlPQm1FMDNTNXZhTDlkUTVVTTI5ZzVuZmR2RTlwVFAyM3RaeHJDZz09Cg==",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.2.7/Metabayn.Studio_4.2.7_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YXluSFFRdzVLQTgwVEF2bU9BM3JwRWVyaXJDT0hzRmE1UUFnNk9mZU1KMi8waTFJZHgwWFFTTTl0eGlDNkMwcWNmNmdDRlduc01uYVFKdEZaZkxhZlFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY2NDk4NTQxCWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMy4xX3g2NC1zZXR1cC5uc2lzLnppcApiOGJkMnRBRnBTSnJQaFl0VFo3dDRtZUVtZ1h0eW9tV09STnlOcFFTdUtsMlJZUHhYZlNsZUszZ1VsdnVpeERadjVXdzE2MkxHT2JieWExUG9vTU9Bdz09Cg==",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.3.1/Metabayn.Studio_4.3.1_x64-setup.nsis.zip"
     }
   }
 }
