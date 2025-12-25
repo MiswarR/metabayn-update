@@ -1,11 +1,11 @@
 {
-  "version": "v4.3.3",
-  "notes": "Update v4.3.3: UI improvements, performance optimizations, new Lean Mode feature, API key management, image selection enhancements, and admin panel fixes.",
-  "pub_date": "2025-12-24T18:00:00Z",
+  "version": "v4.3.4",
+  "notes": "Update v4.3.4: Fixed login and registration features, updated the admin panel, temporarily disabled Lean Mode, and added instructions for using image filters.",
+  "pub_date": "2025-12-26T00:05:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YTh6eDZhRDVZOVp6bkhDdjFUcnQyR3YyQXQyNlZjcklWV0diSElmTXo5ZkpiUlBSRVBoRVhPQVhPWTRHVGx6SUl5WHh1bmNOQnpGaTNpYlc5czlwdXdVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY2NTU2ODQ0CWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMy4zX3g2NC1zZXR1cC5uc2lzLnppcAp0Tm5sQXJvNVJhYnFKOWdjS3hUaUhybWZSR2RyTWJ0cGN4K1ZPUnloU3BkTDhLdjVHU2NsWFBpR0dWZ2xPSVlOZXBCNllVL3lhaFNtMEpqOEpIWUJDdz09Cg==",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.3.3/Metabayn.Studio_4.3.3_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YXdzbk9aTHRQaFBMeG5VK0VVS3hsTzFkMmoxT21VSklEb1NFNXd5bkgvUWFySWtGbnRINTViVk5NY0drNEVLdzcya1BFNllXK3M3RitBZTVYM3NOa2c4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY2NjgwMjExCWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMy40X3g2NC1zZXR1cC5uc2lzLnppcApkOG5VdDZHSjFCTlVFWVdBb0lMVVBLNmNsNHV3WVRJcWNuWTdqT2ZzajNVSzM4cU9nNnhjM09rbjh2OXFscnAvMCtBZ01KWlcrTGdBN1l6dm1wbXhEQT09Cg==",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.3.4/Metabayn.Studio_4.3.4_x64-setup.nsis.zip"
     }
   }
 }
