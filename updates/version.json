@@ -5,7 +5,7 @@
   "platforms": {
     "windows-x86_64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YXpRYmZEOTVOQlE0RWh0TytHYk44dzZ5Qk9wS0FzajYzaVExOWZYTkVkS2VvRVRKV1VLTklZME4zSmdTZWpmSkxGVUwzTkxpWk1MZ0VZdnBaaTJVZVE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY3MDg2MDI4CWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMy42X3g2NF9lbi1VUy5tc2kuemlwCjRCNGNZRUFPTVhhRVRnWTNDWWErZU1vT1k0QzFTTGZyRGgrZHBnbVR2dU1NZFFGeFhyVmZlYnhPQ2xPdXBUK1VZdmNPdmZlRE5OS2YraGdmUEJWRENnPT0K",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.3.6/Metabayn.Studio_4.3.6_x64-setup.nsis.zip"
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.3.6/Metabayn.Studio_4.3.6_x64_en-US.msi.zip"
     }
   }
 }
