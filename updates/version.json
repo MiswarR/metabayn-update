@@ -1,11 +1,11 @@
 {
-  "version": "4.3.6",
+  "version": "4.3.7",
   "notes": "Update perbaikan: Log Scanning, Retry Setting, Optimasi Token, dan Panduan Fitur CSV Baru.",
-  "pub_date": "2025-12-30T10:00:00Z",
+  "pub_date": "2026-01-01T06:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YXhmVFRuZHZWTGVJNE5ETjlkaHl2L2UzWDQ4SlhPeUdhOThuK3ZWaVlCYVhLNDVGVS94ZFVWTHE2em9wYW8rK0FLRGtnY2xJc1k2NWJZTWhLOENQaHcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY3MDg2MDI4CWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMy42X3g2NC1zZXR1cC5uc2lzLnppcAo4OGFjQmdOeEhMVTZpSG9xTEN3aEJsY0tPTVkxQUkvZzlackgvZ0twci96ZUdNS012UW9mMDRNMm81SzBIQlBSOC96ZWsxZnhkMTJJTk52NmhNdEVCdz09Cg==",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.3.6/Metabayn.Studio_4.3.6_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YS9Nb2RCM2ZRV3J5TWY5blUyQTAvTnF5SzhtMFhldDE3S1B3NW9mWUZub1c0di9acFY2K3ZEbEhrS1NBVVdzSUpKQUVJbWFvVU9hSFlZdlFZK21uclFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY3MTQyNTc3CWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMy43X3g2NC1zZXR1cC5uc2lzLnppcApPSS95cDU5enRMZlF2L3FhcEwwbWJPTEtudFpsNnFJVXg0OTRGRGlJejZ0Tnl1TFZMU0x6MEg5REJPVFMxV1hXclBLOG1SdmQzbzhZcWdsMEluWmtEZz09Cg==",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.3.7/Metabayn.Studio_4.3.7_x64-setup.nsis.zip"
     }
   }
 }
