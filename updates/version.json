@@ -1,11 +1,11 @@
 {
-  "version": "4.3.7",
-  "notes": "Update perbaikan: Log Scanning, Retry Setting, Optimasi Token, dan Panduan Fitur CSV Baru.",
-  "pub_date": "2026-01-01T06:00:00Z",
+  "version": "v4.3.8",
+  "notes": "Update v4.3.8: Lean Mode removal, implementation of video tutorial guidance, AI model updates, improved login security, enhanced connection stability, and automatic update notifications during startup.",
+  "pub_date": "2026-01-03T12:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YS9Nb2RCM2ZRV3J5TWY5blUyQTAvTnF5SzhtMFhldDE3S1B3NW9mWUZub1c0di9acFY2K3ZEbEhrS1NBVVdzSUpKQUVJbWFvVU9hSFlZdlFZK21uclFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY3MTQyNTc3CWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMy43X3g2NC1zZXR1cC5uc2lzLnppcApPSS95cDU5enRMZlF2L3FhcEwwbWJPTEtudFpsNnFJVXg0OTRGRGlJejZ0Tnl1TFZMU0x6MEg5REJPVFMxV1hXclBLOG1SdmQzbzhZcWdsMEluWmtEZz09Cg==",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.3.7/Metabayn.Studio_4.3.7_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YXhQTXJGYzJtS1BPZlJJK3FWWHFmbzEzaDRSeDUxN0VaSnBIS3JuWUJGY1NJRnNYTnQzQ0w0dXVFcy9icitCclRSN0JFRWlyK2IzL3gwMlpJdkZLWUFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY3MzkwNTQ1CWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMy44X3g2NF9lbi1VUy5tc2kuemlwCmNRTW00UXV4VDN1eWswUGcwZGlEMThkdEQ0bm1NSXZodFk0UDBBcFN6eTZReDZqWkRHejRIcnlpeXB0NlVyR2xTaWw0TTBxWEZZRnJuaURaQ29ubkRBPT0K",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.3.8/Metabayn.Studio_4.3.8_x64_en-US.msi.zip"
     }
   }
 }
