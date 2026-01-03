@@ -1,11 +1,11 @@
 {
-  "version": "v4.3.8",
-  "notes": "Update v4.3.8: Lean Mode removal, implementation of video tutorial guidance, AI model updates, improved login security, enhanced connection stability, and automatic update notifications during startup.",
-  "pub_date": "2026-01-03T12:00:00Z",
+  "version": "v4.3.9",
+  "notes": "Fix v4.3.9: Fixed the ‘Failed to fetch’ connection issue during new user registration.",
+  "pub_date": "2026-01-03T13:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YXhQTXJGYzJtS1BPZlJJK3FWWHFmbzEzaDRSeDUxN0VaSnBIS3JuWUJGY1NJRnNYTnQzQ0w0dXVFcy9icitCclRSN0JFRWlyK2IzL3gwMlpJdkZLWUFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY3MzkwNTQ1CWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMy44X3g2NF9lbi1VUy5tc2kuemlwCmNRTW00UXV4VDN1eWswUGcwZGlEMThkdEQ0bm1NSXZodFk0UDBBcFN6eTZReDZqWkRHejRIcnlpeXB0NlVyR2xTaWw0TTBxWEZZRnJuaURaQ29ubkRBPT0K",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.3.8/Metabayn.Studio_4.3.8_x64_en-US.msi.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YXpuUlpWdkkzN3J4TzhaLzhYdHJGOEswcDVGQ1FmbnNBbDRoRXc4SExwTUhyZzI5WDV1REpmRnZ1OUpoWWV4Y0VQMWk3allhZVY2b0tiakE5M3hJdmdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY3NDEwNDg5CWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMy45X3g2NF9lbi1VUy5tc2kuemlwCnlDTktlZHM1NjBPRUhJVnR3cmJPYXM0MEZqemdLUHljUnVLY3RXb05mdnFmZHVCZkhDbXpKcTJtdVBWYjNjNncvR0h6NFpxZTE5MkxlTUt4SWFUSUNRPT0K",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.3.9/Metabayn.Studio_4.3.9_x64_en-US.msi.zip"
     }
   }
 }
