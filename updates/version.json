@@ -1,11 +1,11 @@
 {
-  "version": "v4.3.9",
-  "notes": "Fix v4.3.9: Fixed the ‘Failed to fetch’ connection issue during new user registration.",
-  "pub_date": "2026-01-03T14:13:00Z",
+  "version": "4.4.1",
+  "notes": "Update v4.4.1: Registration fixes, login security improvements, and startup update popup.",
+  "pub_date": "2026-01-03T03:41:48Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YXhUVUhoMkY5aWZKUEVnOFpkYStlbHpld1pHM1FwdkZINUR1SStzUi9xalBLRndmTWFaZVJ2di9BY3pZN2xPWTJzQ013QXh6U1E4VnF2NVIzaDg0TWdNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY3NDEzMzA5CWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuMy45X3g2NC1zZXR1cC5uc2lzLnppcApLd1Y4cStzVjRmV3V0bk5TNGxOLzk0YjdnTVNZNDBPOUZXVmxPNmNXbEFMZWJlbmdJYWJ3WFVXN2dma3M4Y0NoS204eWx1L2ZzNmNTNURwYXNqbzREZz09Cg==",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.3.9/Metabayn.Studio_4.3.9_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQ1RwdlZ2Vml1YTFqUnZXL1hwb1ZtWTlRUmUwZmFVWXJYMDNXUXNKK25iREw0U3VFQUl0SXZYbUVjZmVZcGVWTkIxZjJzVFF2OVpiN3ZyT3hOUkpuSUcwait0Z0M5U1FvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY3NDI0MTU3CWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuNC4xX3g2NC1zZXR1cC5uc2lzLnppcApRUE1SdzFsN3c4MHVhdnBocUlPNWFxQ3N1Ukw2YVpjbC9mVkQ4cWE0RGNJUlJ6azRFckxwc3Bxek14c2xYYkNPNjlsVGZtUFZVUzhhcGxPai96QXdCQT09Cg==",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.4.1/Metabayn.Studio_4.4.1_x64-setup.nsis.zip"
     }
   }
 }
