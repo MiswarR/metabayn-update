@@ -213,23 +213,15 @@ jobs:
           
           if (Test-Path $keyPath) {
              Write-Host "Key file created at $keyPath"
-             Add-Content -Path $env:GITHUB_ENV -Value "TAURI_PRIVATE_KEY=$keyPath"
+             
+             # Set TAURI_PRIVATE_KEY env var to the FILE CONTENT (multiline)
+             "TAURI_PRIVATE_KEY<<EOF" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+             Get-Content -Path $keyPath -Raw | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+             "EOF" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
              
              # Debug: Verify key integrity (print checksum, not content)
              $hash = Get-FileHash $keyPath -Algorithm SHA256
              Write-Host "Key SHA256: $($hash.Hash)"
-             
-             # Debug: Try to sign a dummy file to verify key validity on Windows
-             "test" | Out-File test_sign.txt
-             try {
-               $env:TAURI_PRIVATE_KEY=$keyPath
-               $env:TAURI_KEY_PASSWORD=$env:TAURI_KEY_PASSWORD
-               npx tauri signer sign test_sign.txt
-               Write-Host "Debug signing successful!"
-             } catch {
-               Write-Host "Debug signing failed!"
-               $_ | Out-String | Write-Host
-             }
           } else {
              Write-Host "Error: Key file creation failed"
              exit 1
