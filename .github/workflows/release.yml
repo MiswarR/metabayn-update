@@ -96,7 +96,14 @@ jobs:
           # Download FFmpeg (Windows 64-bit)
           Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile "ffmpeg.zip"
           Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_temp -Force
-          Copy-Item "ffmpeg_temp/ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe" "src-tauri/resources/ffmpeg.exe" -Force
+          
+          # Cari ffmpeg.exe secara rekursif agar tidak bergantung pada nama folder
+          $ffmpeg = Get-ChildItem -Path ffmpeg_temp -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
+          if ($ffmpeg) {
+            Copy-Item $ffmpeg.FullName "src-tauri/resources/ffmpeg.exe" -Force
+          } else {
+            Write-Error "FFmpeg executable not found in downloaded zip"
+          }
           
           # Download ExifTool
           Invoke-WebRequest -Uri "https://exiftool.org/exiftool-12.76.zip" -OutFile "exiftool.zip"
