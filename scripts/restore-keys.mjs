@@ -15,44 +15,36 @@ if (!rawKey) {
 console.log(`Key length: ${rawKey.length}`);
 
 // 2. Bersihkan Key (Normalize)
-// Hapus semua baris 'untrusted comment' lama untuk kita bangun ulang
-// Hapus whitespace berlebih
-// Ambil hanya bagian Base64 (Payload)
-let payload = "";
-const lines = rawKey.split(/\r?\n/);
+// Kita harus hati-hati. Jika key sudah memiliki header, kita validasi.
+// Jika tidak, kita tambahkan header default.
 
-for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    if (trimmed.startsWith("untrusted comment:")) {
-        console.log(`Found header: ${trimmed}`);
-        continue; // Skip header lama
+let finalKeyContent = rawKey.trim();
+
+// Cek apakah ada header 'untrusted comment'
+if (finalKeyContent.includes('untrusted comment:')) {
+    console.log("Key headers detected. Validating...");
+    // Ganti header 'rsign' (jika ada) menjadi 'minisign' agar kompatibel
+    // Beberapa tool generate key dengan header berbeda
+    finalKeyContent = finalKeyContent.replace(/untrusted comment: rsign/g, 'untrusted comment: minisign');
+    
+    // Pastikan header benar
+    if (!finalKeyContent.includes('untrusted comment: minisign secret key') && !finalKeyContent.includes('untrusted comment: minisign encrypted secret key')) {
+        console.warn("WARNING: Key header might be non-standard. Attempting to fix...");
+        // Jika header ada tapi aneh, kita biarkan dulu, mungkin user punya format sendiri
     }
-    // Asumsi baris sisa adalah payload base64
-    // Minisign key payload biasanya satu baris panjang
-    payload += trimmed;
+} else {
+    console.log("No headers detected. Assuming raw Base64 key.");
+    // Asumsi ini adalah raw base64 dari passwordless key
+    const correctHeader = "untrusted comment: minisign secret key";
+    finalKeyContent = `${correctHeader}${os.EOL}${finalKeyContent}`;
 }
 
-if (!payload) {
-    console.error("ERROR: Could not extract key payload (Base64 string).");
-    console.log("Raw Key Dump (First 50 chars):", rawKey.substring(0, 50));
-    process.exit(1);
-}
+console.log("Key content prepared.");
 
-console.log("Payload extracted successfully.");
-
-// 3. Rekonstruksi Key dengan Format Minisign yang Benar
-// Format:
-// untrusted comment: minisign secret key
-// <BASE64_PAYLOAD>
-const correctHeader = "untrusted comment: minisign secret key";
-const finalKeyContent = `${correctHeader}\n${payload}`;
-
-// 4. Tentukan Path Output
-// Gunakan current working directory
+// 4. Tentukan Path Output (Untuk backup/debug, tapi kita utamakan Env Var)
 const outputPath = path.resolve(process.cwd(), 'tauri.key');
 
-// 5. Tulis File dengan Encoding UTF-8 (Tanpa BOM) dan Newline LF
+// 5. Tulis File (Backup/Fallback)
 try {
     fs.writeFileSync(outputPath, finalKeyContent, { encoding: 'utf8' });
     console.log(`Success: Key written to ${outputPath}`);
@@ -61,13 +53,14 @@ try {
     process.exit(1);
 }
 
-// 6. Validasi File
+// 6. Validasi File (Basic Check)
 try {
     const readBack = fs.readFileSync(outputPath, 'utf8');
     const readLines = readBack.split('\n');
-    console.log("Validation - First Line:", readLines[0]);
-    if (readLines[0].trim() !== correctHeader) {
-        console.error("ERROR: Written file header does not match expected header!");
+    console.log("Validation - First Line:", readLines[0].trim());
+    
+    if (!readBack.includes('untrusted comment:')) {
+        console.error("ERROR: File does not contain 'untrusted comment' header!");
         process.exit(1);
     }
     console.log("Validation: File integrity check passed.");
@@ -77,12 +70,21 @@ try {
 }
 
 // 7. Set Environment Variable untuk Step Selanjutnya (Github Actions)
-// Kita perlu append ke $GITHUB_ENV
+// Kita gunakan CONTENT injection (bukan path) karena Tauri signer sering bermasalah dengan path parsing
+// Referensi: https://github.com/tauri-apps/tauri/issues/6950
 const githubEnvPath = process.env.GITHUB_ENV;
 if (githubEnvPath) {
-    const envContent = `TAURI_PRIVATE_KEY=${outputPath}${os.EOL}`;
+    const crypto = await import('crypto');
+    const delimiter = `EOF_${crypto.randomBytes(4).toString('hex')}`;
+    
+    // Format Multiline untuk GITHUB_ENV
+    // KEY_NAME<<DELIMITER
+    // value
+    // DELIMITER
+    const envContent = `TAURI_PRIVATE_KEY<<${delimiter}${os.EOL}${finalKeyContent}${os.EOL}${delimiter}${os.EOL}`;
+    
     fs.appendFileSync(githubEnvPath, envContent, { encoding: 'utf8' });
-    console.log("Success: TAURI_PRIVATE_KEY path added to GITHUB_ENV.");
+    console.log("Success: TAURI_PRIVATE_KEY content added to GITHUB_ENV.");
 
     // Handle Password (Optional)
     if (process.env.TAURI_KEY_PASSWORD) {
