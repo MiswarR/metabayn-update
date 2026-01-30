@@ -135,22 +135,29 @@ jobs:
           New-Item -ItemType Directory -Force -Path src-tauri/resources/exiftool_files
 
       - name: Normalize TAURI keys (Windows)
+        env: 
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         run: |
-          if ($env:TAURI_PRIVATE_KEY -match '^untrusted comment') {
+          $privateKey = $env:TAURI_PRIVATE_KEY
+          if ($privateKey -match '^untrusted comment') {
             Write-Host 'Plaintext TAURI_PRIVATE_KEY detected'
           } else {
+            Write-Host 'Decoding Base64 TAURI_PRIVATE_KEY...'
             try {
-              $decoded = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:TAURI_PRIVATE_KEY))
-              if ($decoded) { Add-Content -Path $env:GITHUB_ENV -Value "TAURI_PRIVATE_KEY=$decoded" }
-            } catch { Write-Host 'TAURI_PRIVATE_KEY not base64 or decode failed' }
+              $bytes = [System.Convert]::FromBase64String($privateKey)
+              $privateKey = [System.Text.Encoding]::UTF8.GetString($bytes)
+            } catch {
+              Write-Host 'TAURI_PRIVATE_KEY decode failed or already plain'
+            }
           }
-          if (-not $env:TAURI_KEY_PASSWORD) { Add-Content -Path $env:GITHUB_ENV -Value "TAURI_KEY_PASSWORD=" }
+          Add-Content -Path $env:GITHUB_ENV -Value "TAURI_PRIVATE_KEY<<EOF"
+          Add-Content -Path $env:GITHUB_ENV -Value $privateKey
+          Add-Content -Path $env:GITHUB_ENV -Value "EOF"
+          Add-Content -Path $env:GITHUB_ENV -Value "TAURI_KEY_PASSWORD=$env:TAURI_KEY_PASSWORD"
 
       - name: Build App
         run: npm run tauri build
-        env:
-          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v1
