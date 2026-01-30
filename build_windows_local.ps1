@@ -83,7 +83,31 @@ npm install
 # 4. Build
 Write-Host "4. Memulai Build Tauri (ini mungkin memakan waktu)..."
 # Set environment variable untuk skip password jika key tidak dipassword
-$env:TAURI_KEY_PASSWORD = "" 
+$env:TAURI_KEY_PASSWORD = ""
+
+# Set environment variable untuk PRIVATE KEY dari file local
+if (Test-Path "final.key") {
+    Write-Host "   Mendeteksi file final.key, mengatur TAURI_PRIVATE_KEY..."
+    $env:TAURI_PRIVATE_KEY = Get-Content "final.key" -Raw
+} else {
+    Write-Warning "   File final.key tidak ditemukan! Build mungkin gagal jika updater diaktifkan."
+}
+
+# Patch sementara: nonaktifkan target "updater" saat build lokal
+# Agar bundling .msi/.exe tetap sukses meskipun kunci updater ber-password
+try {
+    $confPath = "src-tauri/tauri.conf.json"
+    $backupPath = "src-tauri/tauri.conf.json.bak"
+    Copy-Item $confPath $backupPath -Force
+    $json = Get-Content $confPath -Raw | ConvertFrom-Json
+    if ($json.tauri.bundle.targets) {
+        $json.tauri.bundle.targets = @($json.tauri.bundle.targets | Where-Object { $_ -ne "updater" })
+    }
+    $json | ConvertTo-Json -Depth 10 | Set-Content $confPath -Encoding UTF8
+} catch {
+    Write-Warning "   Gagal mem-patch tauri.conf.json (updater akan tetap aktif)."
+}
+
 npm run tauri build
 
 if ($LASTEXITCODE -eq 0) {
@@ -95,5 +119,12 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "=== BUILD GAGAL ===" -ForegroundColor Red
     Write-Host "Silakan cek pesan error di atas."
 }
+
+# Pulihkan file konfigurasi asli
+try {
+    if (Test-Path "src-tauri/tauri.conf.json.bak") {
+        Move-Item "src-tauri/tauri.conf.json.bak" "src-tauri/tauri.conf.json" -Force
+    }
+} catch {}
 
 Read-Host "Tekan Enter untuk keluar..."

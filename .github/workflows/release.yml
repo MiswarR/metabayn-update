@@ -73,21 +73,15 @@ jobs:
           # Verify key file exists and has content
           if [ -s tauri.key ]; then
             echo "Key file created successfully."
+            
+            # Fix potential header mismatch (rsign -> minisign)
+            sed -i 's/rsign/minisign/g' tauri.key
+            
             # Set TAURI_PRIVATE_KEY env var to the FILE PATH
             echo "TAURI_PRIVATE_KEY=$(pwd)/tauri.key" >> $GITHUB_ENV
             
-            # Debug: Checksum and dry-run sign
+            # Debug: Checksum
             shasum -a 256 tauri.key
-            echo "test" > test_sign.txt
-            # Export env vars for the debug command immediately
-            export TAURI_PRIVATE_KEY="$(pwd)/tauri.key"
-            export TAURI_KEY_PASSWORD="$TAURI_KEY_PASSWORD"
-            if npx tauri signer sign test_sign.txt; then
-               echo "Debug signing successful!"
-            else
-               echo "Debug signing failed!"
-               # We don't exit here to let the main build step fail with more info if needed
-            fi
           else
             echo "Error: Key file is empty or extraction failed."
             exit 1
@@ -214,10 +208,11 @@ jobs:
           if (Test-Path $keyPath) {
              Write-Host "Key file created at $keyPath"
              
-             # Set TAURI_PRIVATE_KEY env var to the FILE CONTENT (multiline)
-             "TAURI_PRIVATE_KEY<<EOF" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-             Get-Content -Path $keyPath -Raw | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-             "EOF" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+             # Fix potential header mismatch (rsign -> minisign)
+             (Get-Content $keyPath) -replace 'rsign', 'minisign' | Set-Content $keyPath
+
+             # Set TAURI_PRIVATE_KEY env var to the FILE PATH
+             Add-Content -Path $env:GITHUB_ENV -Value "TAURI_PRIVATE_KEY=$keyPath"
              
              # Debug: Verify key integrity (print checksum, not content)
              $hash = Get-FileHash $keyPath -Algorithm SHA256
