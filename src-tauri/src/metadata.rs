@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use serde::{Serialize, Deserialize};
 use std::process::Command;
+#[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::fs;

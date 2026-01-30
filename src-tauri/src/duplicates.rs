@@ -71,8 +71,8 @@ fn hash_video_file(p: &Path) -> anyhow::Result<u64> {
     let out_path = tmp.path().to_path_buf();
     
     // Attempt 1: Seek to 1s
-    let status = Command::new(&ffmpeg)
-        .args([
+    let mut status_cmd = Command::new(&ffmpeg);
+    status_cmd.args([
             "-nostdin", "-y",
             "-ss", "00:00:01",
             "-i", &p.to_string_lossy(),
