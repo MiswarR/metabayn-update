@@ -167,11 +167,13 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
         input_folder.to_string(),
     ];
 
-    let output = Command::new(&exiftool)
-        .args(args)
-        .args(["-api", "LargeFileSupport=1"])
-        .creation_flags(0x08000000)
-        .output()?;
+    let mut cmd = Command::new(&exiftool);
+    cmd.args(args);
+    cmd.args(["-api", "LargeFileSupport=1"]);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+
+    let output = cmd.output()?;
 
     if !output.status.success() {
         return Err(anyhow!("ExifTool failed: {}", String::from_utf8_lossy(&output.stderr)));
@@ -1438,10 +1440,12 @@ pub async fn move_to_rejected_with_metadata(
     
     args.push(dest_path.to_string_lossy().to_string());
     
-    let _ = Command::new(exiftool)
-        .args(args)
-        .creation_flags(0x08000000)
-        .output(); // Ignore error if writing metadata fails, at least file is there
+    let mut cmd = Command::new(exiftool);
+    cmd.args(args);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+
+    let _ = cmd.output(); // Ignore error if writing metadata fails, at least file is there
 
     Ok(())
 }
