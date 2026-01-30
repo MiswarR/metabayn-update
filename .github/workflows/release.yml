@@ -58,24 +58,29 @@ jobs:
           mv src-tauri/tauri.conf.json.tmp src-tauri/tauri.conf.json
 
       - name: Normalize TAURI keys (Mac)
-        run: |
-          if echo "$TAURI_PRIVATE_KEY" | head -n1 | grep -q "^untrusted comment"; then
-            echo "Plaintext TAURI_PRIVATE_KEY detected"
-          else
-            decoded=$(echo "$TAURI_PRIVATE_KEY" | base64 -d || true)
-            if [ -n "$decoded" ]; then
-              echo "TAURI_PRIVATE_KEY=$decoded" >> $GITHUB_ENV
-            fi
-          fi
-          if [ -z "${TAURI_KEY_PASSWORD:-}" ]; then
-            echo "TAURI_KEY_PASSWORD=" >> $GITHUB_ENV
-          fi
-          
-      - name: Build App
-        run: npm run tauri build
         env:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+        run: |
+          if echo "$TAURI_PRIVATE_KEY" | head -n1 | grep -q "^untrusted comment"; then
+            echo "Plaintext TAURI_PRIVATE_KEY detected"
+            echo "TAURI_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
+            echo "$TAURI_PRIVATE_KEY" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+          else
+            echo "Base64 TAURI_PRIVATE_KEY detected, decoding..."
+            decoded=$(echo "$TAURI_PRIVATE_KEY" | base64 -d || true)
+            if [ -n "$decoded" ]; then
+              echo "TAURI_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
+              echo "$decoded" >> $GITHUB_ENV
+              echo "EOF" >> $GITHUB_ENV
+            fi
+          fi
+          echo "TAURI_KEY_PASSWORD=$TAURI_KEY_PASSWORD" >> $GITHUB_ENV
+          
+      - name: Build App
+        run: npm run tauri build
+        # env: TAURI_PRIVATE_KEY and TAURI_KEY_PASSWORD already in ENV from previous step
           
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v1
