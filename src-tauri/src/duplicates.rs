@@ -79,9 +79,11 @@ fn hash_video_file(p: &Path) -> anyhow::Result<u64> {
             "-frames:v", "1",
             "-q:v", "2",
             &out_path.to_string_lossy(),
-        ])
-        .creation_flags(0x08000000)
-        .status()?;
+        ]);
+    #[cfg(target_os = "windows")]
+    status_cmd.creation_flags(0x08000000);
+    
+    let status = status_cmd.status()?;
 
     // Check if output exists and has size
     let success = status.success() && out_path.exists() && fs::metadata(&out_path).map(|m| m.len() > 0).unwrap_or(false);
@@ -89,17 +91,19 @@ fn hash_video_file(p: &Path) -> anyhow::Result<u64> {
     if !success {
         println!("DEBUG: First attempt failed for {:?}, trying fallback", p);
         // Fallback: try at start (0.1s)
-        let _ = Command::new(&ffmpeg)
-            .args([
+        let mut retry_cmd = Command::new(&ffmpeg);
+        retry_cmd.args([
                 "-nostdin", "-y",
                 "-ss", "00:00:00.1",
                 "-i", &p.to_string_lossy(),
                 "-frames:v", "1",
                 "-q:v", "2",
                 &out_path.to_string_lossy(),
-            ])
-            .creation_flags(0x08000000)
-            .status();
+            ]);
+        #[cfg(target_os = "windows")]
+        retry_cmd.creation_flags(0x08000000);
+        
+        let _ = retry_cmd.status();
     }
     
     if !out_path.exists() || fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0) == 0 { 

@@ -332,18 +332,20 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
                                      let et_max = req_template.retries + 1;
                                      loop {
                                          et_attempts += 1;
-                                         let out_et = Command::new(&exiftool)
-                                            .args([
-                                                "-overwrite_original",
-                                                "-m",
-                                                "-api", "LargeFileSupport=1",
-                                                "-ignoreMinorErrors",
-                                                &format!("-SpecialInstructions={}", new_instr),
-                                                &format!("-XMP-photoshop:Instructions={}", new_instr),
-                                                &path_str
-                                            ])
-                                            .creation_flags(0x08000000)
-                                            .output();
+                                         let mut cmd = Command::new(&exiftool);
+                                     cmd.args([
+                                            "-overwrite_original",
+                                            "-m",
+                                            "-api", "LargeFileSupport=1",
+                                            "-ignoreMinorErrors",
+                                            &format!("-SpecialInstructions={}", new_instr),
+                                            &format!("-XMP-photoshop:Instructions={}", new_instr),
+                                            &path_str
+                                        ]);
+                                     #[cfg(target_os = "windows")]
+                                     cmd.creation_flags(0x08000000);
+
+                                     let out_et = cmd.output();
                                          
                                          if let Ok(o) = out_et {
                                              if o.status.success() { break; }
