@@ -1,0 +1,118 @@
+name: Build and Release
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies (Mac)
+        run: |
+          npm install
+          brew install jq
+
+      - name: Setup Mac Resources (FFmpeg & ExifTool)
+        run: |
+          # Create resources dir if not exists
+          mkdir -p src-tauri/resources
+
+          # 1. Download FFmpeg (Static Build)
+          curl -L -o ffmpeg.zip https://evermeet.cx/ffmpeg/ffmpeg-6.1.1.zip
+          unzip ffmpeg.zip
+          mv ffmpeg src-tauri/resources/ffmpeg
+          chmod +x src-tauri/resources/ffmpeg
+
+          # 2. Download ExifTool (Source for portability)
+          curl -L -o exiftool.tar.gz https://exiftool.org/Image-ExifTool-12.76.tar.gz
+          tar -xzf exiftool.tar.gz
+          # Move the perl script and rename to just 'exiftool'
+          cp Image-ExifTool-12.76/exiftool src-tauri/resources/exiftool
+          # Copy the lib directory which exiftool needs
+          cp -r Image-ExifTool-12.76/lib src-tauri/resources/lib
+          chmod +x src-tauri/resources/exiftool
+
+      - name: Patch tauri.conf.json for Mac
+        run: |
+          # We need to change the resources list to point to Mac files
+          # And ensure bundle targets include dmg
+          
+          # Read the file
+          cat src-tauri/tauri.conf.json | jq '
+            .tauri.bundle.resources = ["resources/exiftool", "resources/lib", "resources/ffmpeg"] |
+            .tauri.bundle.targets = ["dmg", "updater"]
+          ' > src-tauri/tauri.conf.json.tmp
+          
+          mv src-tauri/tauri.conf.json.tmp src-tauri/tauri.conf.json
+          
+          # Verify content
+          cat src-tauri/tauri.conf.json
+
+      - name: Build App
+        run: npm run tauri build
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build App
+        run: npm run tauri build
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.exe.sig
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

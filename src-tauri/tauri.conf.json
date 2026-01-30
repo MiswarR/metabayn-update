@@ -1,0 +1,84 @@
+{
+  "package": {
+    "productName": "Metabayn Studio",
+    "version": "4.4.5"
+  },
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devPath": "http://localhost:5173",
+    "distDir": "../dist"
+  },
+  "tauri": {
+    "systemTray": {
+      "iconPath": "icons/icon.ico",
+      "iconAsTemplate": true,
+      "menuOnLeftClick": true
+    },
+    "security": {
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' https: http: wss: ws: blob: data: asset:; img-src 'self' asset: https: blob: data:; connect-src 'self' https: http: wss: ws:;"
+    },
+    "windows": [
+        {
+          "label": "main",
+          "title": "Metabayn Studio",
+          "width": 700,
+          "height": 700,
+          "resizable": true,
+          "decorations": true,
+          "transparent": false,
+          "center": true,
+          "maximized": false,
+          "fullscreen": false
+      }
+    ],
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://raw.githubusercontent.com/MiswarR/metabayn-update/main/updates/version.json"
+      ],
+      "dialog": false,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUwMTBCNDJEOUE5NDI1NkYKUldSdkpaU2FMYlFRNEZPb0hlRVBjaEZrdUNydTZMVi9aaStEN3dSa1VGWXhac0xqank1d3pucjQK"
+    },
+    "allowlist": {
+      "all": false,
+      "process": { "relaunch": true, "exit": true },
+      "window": { "all": true },
+      "fs": { "all": true },
+      "path": { "all": true },
+      "dialog": { "open": true },
+      "shell": {
+        "all": false,
+        "open": true,
+        "execute": true,
+        "sidecar": true,
+        "scope": [
+          { "name": "bin/ffmpeg", "sidecar": true, "args": true },
+          { "name": "resources/ffmpeg", "sidecar": true, "args": true },
+          { "name": "ffmpeg", "sidecar": true, "args": true },
+           { "name": "bin/exiftool", "sidecar": true, "args": true },
+          { "name": "resources/exiftool", "sidecar": true, "args": true },
+          { "name": "exiftool", "sidecar": true, "args": true }
+        ]
+      }
+    },
+    "bundle": {
+      "active": true,
+      "targets": ["msi", "nsis", "updater"],
+      "identifier": "com.metabayn.studio",
+      "icon": [
+        "icons/icon.ico"
+      ],
+      "windows": {
+        "wix": {
+          "language": "en-US"
+        }
+      },
+      "resources": [
+        "resources/exiftool.exe",
+        "resources/exiftool_files",
+        "resources/ffmpeg.exe"
+      ]
+    }
+  }
+}

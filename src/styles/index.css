@@ -1,0 +1,522 @@
+:root {
+  --bg-color: #0f0f0f;
+  --bg-secondary: #1a1a1a;
+  --bg-tertiary: #252525;
+  --accent-color: #b7dadaca;
+  --text-primary: #f0f0f0;
+  --text-secondary: #a0a0a0;
+  --border-color: #333;
+  --input-bg: #0f0f0f; /* Match background to remove boxy look */
+  --input-border: #333;
+  --btn-h: 32px; 
+  --radius-sm: 4px; /* More square/minimalist */
+  --radius-md: 6px;
+  --font-sm: 11px;
+  --font-base: 12px; 
+  --app-height-main: 800px;
+  
+  /* Settings layout */
+  --settings-drawer-width: 200px; /* Reduced to match sidebar */
+  --settings-input-h: 28px; /* Slightly taller for better UX */
+  --settings-gap-y: 10px; /* More breathing room */
+  --settings-grid-gap-x: 12px;
+  --settings-grid-gap-y: 10px; 
+  --bg-input-folder: #000; /* Solid black for inputs */
+}
+
+/* TitleBar Styles - Custom Window Controls */
+.titlebar {
+  height: 32px;
+  background: #0a0a0a; /* Darker than app bg */
+  color: #ccc;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 0 16px;
+  font-size: 12px;
+  flex-shrink: 0;
+  border-bottom: 1px solid #222;
+  user-select: none;
+  z-index: 9999;
+}
+
+.title-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none; /* Critical for drag region to work underneath if needed, though region is on parent */
+}
+
+.title-controls {
+  display: flex;
+  height: 100%;
+  -webkit-app-region: no-drag; /* Ensure buttons are clickable */
+}
+
+.t-btn {
+  background: transparent;
+  border: none;
+  color: #aaa;
+  width: 46px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  outline: none;
+  -webkit-app-region: no-drag; /* Critical for Tauri */
+  z-index: 100000;
+}
+
+.t-btn svg {
+  pointer-events: none; /* Prevent SVG from blocking clicks */
+}
+
+
+.t-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.t-btn.close:hover {
+  background: #c42b1c;
+  color: white;
+}
+
+/* Global reset & base */
+* { box-sizing: border-box; user-select: none; }
+
+/* STRICT CONTENT SIZE LOCK */
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: var(--bg-color);
+  color: var(--text-primary);
+  font-size: var(--font-base);
+  zoom: 1;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
+
+.app {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px;
+}
+
+.dashboard.two-col {
+  display: grid;
+  grid-template-columns: 320px 6px 1fr;
+  gap: 0;
+  height: 100%;
+  overflow: hidden;
+  padding-bottom: 10px;
+}
+
+.resizer {
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.2s;
+  z-index: 10;
+  height: 100%;
+}
+
+.resizer:hover {
+  background: var(--accent-color);
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  height: 100%;
+}
+
+.content-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: hidden;
+  height: 100%;
+  min-width: 0;
+  position: relative; /* For positioning buttons if needed */
+}
+
+/* Override settings width when embedded in sidebar */
+.sidebar .settings {
+  width: 100%;
+  height: auto;
+  padding: 0;
+}
+
+/* App Title - Aligned with Main Header */
+.app-title-container {
+  height: 40px; 
+  display: flex;
+  align-items: center;
+  margin-bottom: 20px; 
+}
+.app-title {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #fff;
+  margin: 0;
+  font-size: 1.3em; /* Increased from 1.1em */
+}
+.ver {
+  font-size: 0.8em; /* Increased from 0.6em */
+  opacity: 0.6;
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+/* Settings Styles */
+.settings {
+  display: flex; flex-direction: column;
+  gap: var(--settings-gap-y);
+}
+
+.settings label {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 10px; 
+  margin-bottom: 2px; /* Closer to input */
+  white-space: nowrap;
+  overflow: visible; /* Changed from hidden to visible to show descenders like 'g' */
+  text-overflow: clip;
+  line-height: 1.2; /* Increased line-height slightly */
+  text-transform: none; /* Normal case */
+  letter-spacing: 0.02em;
+  padding-bottom: 1px; /* Extra space for descenders */
+}
+
+/* Minimalist Input Style - Underline only or subtle border */
+.settings input[type="text"],
+.settings input[type="number"],
+.settings input[type="password"],
+.settings select,
+.settings textarea {
+  background: transparent !important; /* Remove background block */
+  border: none;
+  border-bottom: 1px solid #333; /* Underline style */
+  color: #fff;
+  border-radius: 0;
+  padding: 0 0 4px 0; /* Padding bottom only */
+  font-size: 10px; /* Match label size */
+  font-family: inherit;
+  height: var(--settings-input-h);
+  width: 100%;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.settings textarea {
+  background: rgba(255,255,255,0.03); /* Slight bg for textarea */
+  border: 1px solid #333;
+  border-radius: 4px;
+  height: auto;
+  padding: 6px;
+  resize: vertical;
+  min-height: 50px;
+}
+.settings input:focus, .settings select:focus, .settings textarea:focus {
+  border-color: #505050 !important;
+  box-shadow: none;
+}
+/* Select arrow styling hack could go here but simple is fine */
+.settings select {
+  cursor: pointer;
+}
+.settings select option {
+  background: var(--bg-secondary);
+}
+
+/* Folder Input Group */
+.folder-group {
+  margin-bottom: 0; /* Let parent gap handle spacing */
+}
+.folder-group label {
+  margin-bottom: 0 !important; /* Remove bottom margin to stick to input */
+  line-height: 1; /* Tighten line height */
+}
+.folder {
+  display: flex; gap: 8px; align-items: center; /* Center align items */
+}
+
+/* Login Styles - Added */
+.login {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  background: var(--bg-color);
+}
+
+.login-form {
+  width: 320px;
+  padding: 30px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  display: flex;
+  flex-direction: column;
+}
+
+.login .label {
+  color: var(--text-secondary);
+  font-size: 11px;
+  margin-bottom: 4px;
+  margin-top: 12px;
+}
+
+.login .input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #444;
+  color: #fff;
+  padding: 8px 0;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.login .input:focus {
+  border-color: #4caf50;
+}
+
+.btn-login {
+  margin-top: 24px;
+  width: 100%;
+  padding: 10px;
+  background: #333;
+  color: #fff;
+  border: 1px solid #444;
+  border-radius: 4px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.btn-login:hover {
+  background: #444;
+  border-color: #555;
+}
+
+.btn-login:disabled {
+  background: #333;
+  color: #666;
+  cursor: not-allowed;
+}
+
+.login-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.message {
+  margin-top: 12px;
+  padding: 8px;
+  border-radius: 4px;
+  background: rgba(0,0,0,0.2);
+  text-align: center;
+  font-size: 12px;
+}
+
+/* Menu Toggle Button Style */
+.menu-toggle {
+    transition: background 0.2s;
+}
+.menu-toggle:hover {
+    background: rgba(255,255,255,0.1) !important;
+}
+
+/* Settings Grid Layout */
+.setting-group-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 0;
+}
+
+.setting-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.setting-item label {
+    margin-bottom: 2px;
+}
+
+.checkline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 10px;
+    color: #ccc;
+    padding: 2px 0;
+}
+
+.checkline:hover {
+    color: #fff;
+}
+
+/* Minimalist Icon Button */
+.icon-min {
+    background: transparent !important;
+    border: none;
+    color: #fff;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.2s, color 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+}
+
+.icon-min:hover {
+    background: rgba(255,255,255,0.1) !important;
+    color: #fff;
+}
+
+.icon-min:active {
+    background: rgba(255,255,255,0.2) !important;
+}
+
+.btn-browse {
+    background: #333;
+    color: #fff;
+    border: 1px solid #444;
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 10px;
+    height: var(--settings-input-h);
+    transition: background 0.2s;
+}
+.btn-browse:hover {
+    background: #444;
+}
+
+/* Walking dots animation */
+.typing-dots::after {
+  content: '';
+  animation: typing-dots-anim 2s infinite;
+  margin-left: 2px;
+}
+
+@keyframes typing-dots-anim {
+  0% { content: ''; }
+  16% { content: '.'; }
+  32% { content: '..'; }
+  48% { content: '...'; }
+  64% { content: '....'; }
+  80%, 100% { content: '.....'; }
+}
+
+/* Modal Styles */
+.modal {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.modal.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.modal-content {
+  background: #1e1e1e;
+  width: 600px;
+  max-width: 90vw;
+  max-height: 80vh;
+  border-radius: 8px;
+  border: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+.modal-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #333;
+  font-weight: 600;
+}
+.modal-body {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+.log-scroll {
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+/* Apply Button - Minimalist Dark Mode */
+.btn-apply {
+    background: #333;
+    color: #fff;
+    border: 1px solid #444;
+    padding: 2px 12px; /* Minimal padding */
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    height: 28px; /* Match input height */
+    transition: background 0.2s;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: auto; /* Allow auto width based on content/padding */
+}
+
+.btn-apply:hover {
+    background: #444;
+    border-color: #555;
+}

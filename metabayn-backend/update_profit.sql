@@ -1,0 +1,1 @@
+UPDATE model_prices SET profit_multiplier = 1.6;
