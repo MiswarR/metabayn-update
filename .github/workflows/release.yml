@@ -40,10 +40,11 @@ jobs:
           chmod +x src-tauri/resources/ffmpeg
           
           # ExifTool
-          curl -L -o exiftool.tar.gz https://exiftool.org/Image-ExifTool-12.76.tar.gz
+          curl -L -o exiftool.tar.gz https://exiftool.org/Image-ExifTool-13.10.tar.gz
           tar -xzf exiftool.tar.gz
-          cp Image-ExifTool-12.76/exiftool src-tauri/resources/exiftool
-          cp -r Image-ExifTool-12.76/lib src-tauri/resources/lib
+          # Gunakan wildcard agar tidak tergantung nomor versi folder
+          cp Image-ExifTool-*/exiftool src-tauri/resources/exiftool
+          cp -r Image-ExifTool-*/lib src-tauri/resources/lib
           chmod +x src-tauri/resources/exiftool
           
       - name: Patch tauri.conf.json for Mac
@@ -106,7 +107,7 @@ jobs:
           }
           
           # Download ExifTool
-          Invoke-WebRequest -Uri "https://exiftool.org/exiftool-12.76.zip" -OutFile "exiftool.zip"
+          Invoke-WebRequest -Uri "https://exiftool.org/exiftool-13.10_64.zip" -OutFile "exiftool.zip"
           Expand-Archive -Path exiftool.zip -DestinationPath exiftool_temp -Force
           # Cari file exiftool(-k).exe dan rename
           $exiftool = Get-ChildItem -Path exiftool_temp -Filter "exiftool(-k).exe" -Recurse | Select-Object -First 1
