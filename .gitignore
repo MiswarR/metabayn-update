@@ -17,3 +17,4 @@ src-tauri/resources/*.exe
 src-tauri/resources/ffmpeg
 
 src-tauri/resources/exiftool
+*.key
