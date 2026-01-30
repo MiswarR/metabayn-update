@@ -40,7 +40,7 @@ jobs:
           chmod +x src-tauri/resources/ffmpeg
           
           # ExifTool
-          curl -L -o exiftool.tar.gz https://exiftool.org/Image-ExifTool-13.47.tar.gz
+          curl -L -o exiftool.tar.gz https://downloads.sourceforge.net/project/exiftool/Image-ExifTool-13.47.tar.gz
           tar -xzf exiftool.tar.gz
           # Gunakan wildcard agar tidak tergantung nomor versi folder
           cp Image-ExifTool-*/exiftool src-tauri/resources/exiftool
@@ -106,8 +106,8 @@ jobs:
             Write-Error "FFmpeg executable not found in downloaded zip"
           }
           
-          # Download ExifTool
-          Invoke-WebRequest -Uri "https://exiftool.org/exiftool-13.47_64.zip" -OutFile "exiftool.zip"
+          # Download ExifTool (SourceForge Mirror for reliability)
+          Invoke-WebRequest -Uri "https://downloads.sourceforge.net/project/exiftool/exiftool-13.47_64.zip" -OutFile "exiftool.zip"
           Expand-Archive -Path exiftool.zip -DestinationPath exiftool_temp -Force
           # Cari file exiftool(-k).exe dan rename
           $exiftool = Get-ChildItem -Path exiftool_temp -Filter "exiftool(-k).exe" -Recurse | Select-Object -First 1
