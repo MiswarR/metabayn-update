@@ -38,7 +38,7 @@
         "https://raw.githubusercontent.com/MiswarR/metabayn-update/main/updates/version.json"
       ],
       "dialog": false,
-      "pubkey": "untrusted comment: minisign public key: E010B42D9A94256F\nRWRvJZSaLbQQ4FOoHeEPchFkuCru6LV/Zi+D7wRkUFYxZsLjjy5wznr4"
+      "pubkey": "untrusted comment: minisign public key: 8CBDFF0ACA610957\nRWRXCWHKCv+9jDJCh9gQkCMOJqAR8sQNfhVE4FVWE03acCoyNw9MwOET"
     },
     "allowlist": {
       "all": false,
