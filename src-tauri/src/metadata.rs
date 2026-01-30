@@ -1587,10 +1587,11 @@ pub async fn write_image(req: &crate::api::ImageMetaReq) -> Result<Option<String
     
     args.push(target.to_string_lossy().to_string());
     
-    let out = Command::new(exiftool)
-        .args(args)
-        .creation_flags(0x08000000)
-        .output()?;
+    let mut cmd = Command::new(exiftool);
+    cmd.args(args);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+    let out = cmd.output()?;
         
     if !out.status.success() {
         return Err(anyhow!("{}", String::from_utf8_lossy(&out.stderr)));
