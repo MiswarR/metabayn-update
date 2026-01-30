@@ -56,6 +56,20 @@ jobs:
             .tauri.bundle.targets = ["dmg", "updater"]
           ' > src-tauri/tauri.conf.json.tmp
           mv src-tauri/tauri.conf.json.tmp src-tauri/tauri.conf.json
+
+      - name: Normalize TAURI keys (Mac)
+        run: |
+          if echo "$TAURI_PRIVATE_KEY" | head -n1 | grep -q "^untrusted comment"; then
+            echo "Plaintext TAURI_PRIVATE_KEY detected"
+          else
+            decoded=$(echo "$TAURI_PRIVATE_KEY" | base64 -d || true)
+            if [ -n "$decoded" ]; then
+              echo "TAURI_PRIVATE_KEY=$decoded" >> $GITHUB_ENV
+            fi
+          fi
+          if [ -z "${TAURI_KEY_PASSWORD:-}" ]; then
+            echo "TAURI_KEY_PASSWORD=" >> $GITHUB_ENV
+          fi
           
       - name: Build App
         run: npm run tauri build
@@ -119,6 +133,18 @@ jobs:
           
           # Buat dummy folder untuk exiftool_files jika diperlukan agar tidak error
           New-Item -ItemType Directory -Force -Path src-tauri/resources/exiftool_files
+
+      - name: Normalize TAURI keys (Windows)
+        run: |
+          if ($env:TAURI_PRIVATE_KEY -match '^untrusted comment') {
+            Write-Host 'Plaintext TAURI_PRIVATE_KEY detected'
+          } else {
+            try {
+              $decoded = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:TAURI_PRIVATE_KEY))
+              if ($decoded) { Add-Content -Path $env:GITHUB_ENV -Value "TAURI_PRIVATE_KEY=$decoded" }
+            } catch { Write-Host 'TAURI_PRIVATE_KEY not base64 or decode failed' }
+          }
+          if (-not $env:TAURI_KEY_PASSWORD) { Add-Content -Path $env:GITHUB_ENV -Value "TAURI_KEY_PASSWORD=" }
 
       - name: Build App
         run: npm run tauri build
