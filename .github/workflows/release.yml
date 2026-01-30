@@ -208,9 +208,22 @@ jobs:
           if (Test-Path $keyPath) {
              Write-Host "Key file created at $keyPath"
              
-             # Fix potential header mismatch (rsign -> minisign)
-             (Get-Content $keyPath) -replace 'rsign', 'minisign' | Set-Content $keyPath
+             # Reconstruct key to force correct header and encoding
+             $content = Get-Content $keyPath
+             $payload = $content | Where-Object { $_ -notmatch "^untrusted" } | ForEach-Object { $_.Trim() } | -join ""
+             
+             if (-not $payload) {
+                 Write-Error "Failed to extract key payload"
+                 exit 1
+             }
 
+             # Force LF newlines for minisign compatibility
+             $newContent = "untrusted comment: minisign secret key`n" + $payload
+             
+             # Write with UTF8 (without BOM)
+             $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+             [System.IO.File]::WriteAllText($keyPath, $newContent, $utf8NoBom)
+ 
              # Set TAURI_PRIVATE_KEY env var to the FILE PATH
              Add-Content -Path $env:GITHUB_ENV -Value "TAURI_PRIVATE_KEY=$keyPath"
              
