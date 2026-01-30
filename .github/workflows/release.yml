@@ -61,43 +61,7 @@ jobs:
         env:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-        run: |
-          echo "Processing TAURI_PRIVATE_KEY..."
-          # Decode/Extract key to a file
-          if echo "$TAURI_PRIVATE_KEY" | head -n1 | grep -q "^untrusted comment"; then
-            echo "$TAURI_PRIVATE_KEY" > tauri.key
-          else
-            echo "$TAURI_PRIVATE_KEY" | base64 -d > tauri.key
-          fi
-          
-          # Verify key file exists and has content
-          if [ -s tauri.key ]; then
-            echo "Key file created successfully."
-            
-            # Reconstruct key to force correct header (rsign -> minisign) and avoid sed issues
-            # Use || true to prevent grep exit code 1 from failing the build (pipefail)
-            KEY_PAYLOAD=$(grep -v "^untrusted" tauri.key || true)
-            KEY_PAYLOAD=$(echo "$KEY_PAYLOAD" | tr -d '\n' | tr -d '\r')
-            
-            if [ -z "$KEY_PAYLOAD" ]; then
-              echo "Error: Key payload extraction failed. Key might be empty or invalid."
-              exit 1
-            fi
-            
-            echo "untrusted comment: minisign secret key" > tauri.key
-            echo "$KEY_PAYLOAD" >> tauri.key
-            
-            # Set TAURI_PRIVATE_KEY env var to the FILE PATH
-            echo "TAURI_PRIVATE_KEY=$(pwd)/tauri.key" >> $GITHUB_ENV
-            
-            # Debug: Checksum
-            shasum -a 256 tauri.key
-          else
-            echo "Error: Key file is empty or extraction failed."
-            exit 1
-          fi
-          
-          echo "TAURI_KEY_PASSWORD=$TAURI_KEY_PASSWORD" >> $GITHUB_ENV
+        run: node scripts/restore-keys.mjs
           
       - name: Build App
         run: npm run tauri build
@@ -197,55 +161,7 @@ jobs:
         env: 
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-        run: |
-          $privateKey = $env:TAURI_PRIVATE_KEY
-          $keyPath = "$pwd\tauri.key"
-          
-          if ($privateKey -match '^untrusted comment') {
-            Write-Host 'Plaintext TAURI_PRIVATE_KEY detected'
-            Set-Content -Path $keyPath -Value $privateKey
-          } else {
-            Write-Host 'Decoding Base64 TAURI_PRIVATE_KEY...'
-            try {
-              $bytes = [System.Convert]::FromBase64String($privateKey)
-              [System.IO.File]::WriteAllBytes($keyPath, $bytes)
-            } catch {
-              Write-Host 'TAURI_PRIVATE_KEY decode failed'
-              exit 1
-            }
-          }
-          
-          if (Test-Path $keyPath) {
-             Write-Host "Key file created at $keyPath"
-             
-             # Reconstruct key to force correct header and encoding
-             $content = Get-Content $keyPath
-             $payload = $content | Where-Object { $_ -notmatch "^untrusted" } | ForEach-Object { $_.Trim() } | -join ""
-             
-             if (-not $payload) {
-                 Write-Error "Failed to extract key payload"
-                 exit 1
-             }
-
-             # Force LF newlines for minisign compatibility
-             $newContent = "untrusted comment: minisign secret key`n" + $payload
-             
-             # Write with UTF8 (without BOM)
-             $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-             [System.IO.File]::WriteAllText($keyPath, $newContent, $utf8NoBom)
- 
-             # Set TAURI_PRIVATE_KEY env var to the FILE PATH
-             Add-Content -Path $env:GITHUB_ENV -Value "TAURI_PRIVATE_KEY=$keyPath"
-             
-             # Debug: Verify key integrity (print checksum, not content)
-             $hash = Get-FileHash $keyPath -Algorithm SHA256
-             Write-Host "Key SHA256: $($hash.Hash)"
-          } else {
-             Write-Host "Error: Key file creation failed"
-             exit 1
-          }
-          
-          Add-Content -Path $env:GITHUB_ENV -Value "TAURI_KEY_PASSWORD=$env:TAURI_KEY_PASSWORD"
+        run: node scripts/restore-keys.mjs
 
       - name: Build App
         run: npm run tauri build
