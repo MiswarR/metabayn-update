@@ -74,8 +74,18 @@ jobs:
           if [ -s tauri.key ]; then
             echo "Key file created successfully."
             
-            # Fix potential header mismatch (rsign -> minisign)
-            sed -i 's/rsign/minisign/g' tauri.key
+            # Reconstruct key to force correct header (rsign -> minisign) and avoid sed issues
+            # Use || true to prevent grep exit code 1 from failing the build (pipefail)
+            KEY_PAYLOAD=$(grep -v "^untrusted" tauri.key || true)
+            KEY_PAYLOAD=$(echo "$KEY_PAYLOAD" | tr -d '\n' | tr -d '\r')
+            
+            if [ -z "$KEY_PAYLOAD" ]; then
+              echo "Error: Key payload extraction failed. Key might be empty or invalid."
+              exit 1
+            fi
+            
+            echo "untrusted comment: minisign secret key" > tauri.key
+            echo "$KEY_PAYLOAD" >> tauri.key
             
             # Set TAURI_PRIVATE_KEY env var to the FILE PATH
             echo "TAURI_PRIVATE_KEY=$(pwd)/tauri.key" >> $GITHUB_ENV
