@@ -62,20 +62,24 @@ jobs:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         run: |
+          echo "Processing TAURI_PRIVATE_KEY..."
+          # Decode/Extract key to a file
           if echo "$TAURI_PRIVATE_KEY" | head -n1 | grep -q "^untrusted comment"; then
-            echo "Plaintext TAURI_PRIVATE_KEY detected"
-            echo "TAURI_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
-            echo "$TAURI_PRIVATE_KEY" >> $GITHUB_ENV
-            echo "EOF" >> $GITHUB_ENV
+            echo "$TAURI_PRIVATE_KEY" > tauri.key
           else
-            echo "Base64 TAURI_PRIVATE_KEY detected, decoding..."
-            decoded=$(echo "$TAURI_PRIVATE_KEY" | base64 -d || true)
-            if [ -n "$decoded" ]; then
-              echo "TAURI_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
-              echo "$decoded" >> $GITHUB_ENV
-              echo "EOF" >> $GITHUB_ENV
-            fi
+            echo "$TAURI_PRIVATE_KEY" | base64 -d > tauri.key
           fi
+          
+          # Verify key file exists and has content
+          if [ -s tauri.key ]; then
+            echo "Key file created successfully."
+            # Set TAURI_PRIVATE_KEY env var to the FILE PATH
+            echo "TAURI_PRIVATE_KEY=$(pwd)/tauri.key" >> $GITHUB_ENV
+          else
+            echo "Error: Key file is empty or extraction failed."
+            exit 1
+          fi
+          
           echo "TAURI_KEY_PASSWORD=$TAURI_KEY_PASSWORD" >> $GITHUB_ENV
           
       - name: Build App
@@ -145,20 +149,30 @@ jobs:
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         run: |
           $privateKey = $env:TAURI_PRIVATE_KEY
+          $keyPath = "$pwd\tauri.key"
+          
           if ($privateKey -match '^untrusted comment') {
             Write-Host 'Plaintext TAURI_PRIVATE_KEY detected'
+            Set-Content -Path $keyPath -Value $privateKey
           } else {
             Write-Host 'Decoding Base64 TAURI_PRIVATE_KEY...'
             try {
               $bytes = [System.Convert]::FromBase64String($privateKey)
-              $privateKey = [System.Text.Encoding]::UTF8.GetString($bytes)
+              [System.IO.File]::WriteAllBytes($keyPath, $bytes)
             } catch {
-              Write-Host 'TAURI_PRIVATE_KEY decode failed or already plain'
+              Write-Host 'TAURI_PRIVATE_KEY decode failed'
+              exit 1
             }
           }
-          Add-Content -Path $env:GITHUB_ENV -Value "TAURI_PRIVATE_KEY<<EOF"
-          Add-Content -Path $env:GITHUB_ENV -Value $privateKey
-          Add-Content -Path $env:GITHUB_ENV -Value "EOF"
+          
+          if (Test-Path $keyPath) {
+             Write-Host "Key file created at $keyPath"
+             Add-Content -Path $env:GITHUB_ENV -Value "TAURI_PRIVATE_KEY=$keyPath"
+          } else {
+             Write-Host "Error: Key file creation failed"
+             exit 1
+          }
+          
           Add-Content -Path $env:GITHUB_ENV -Value "TAURI_KEY_PASSWORD=$env:TAURI_KEY_PASSWORD"
 
       - name: Build App
