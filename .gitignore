@@ -11,3 +11,9 @@ src-tauri/target
 metabayn-backend/.dev.vars
 
 *.backup_secrets
+
+src-tauri/resources/*.exe
+
+src-tauri/resources/ffmpeg
+
+src-tauri/resources/exiftool
