@@ -34,9 +34,9 @@ if (finalKeyContent.includes('untrusted comment:')) {
     }
 } else {
     console.log("No headers detected. Assuming raw Base64 key.");
-    // Asumsi ini adalah raw base64 dari passwordless key
-    const correctHeader = "untrusted comment: minisign secret key";
-    finalKeyContent = `${correctHeader}${os.EOL}${finalKeyContent}`;
+    const hasPwd = (process.env.TAURI_KEY_PASSWORD || '').replace(/\r?\n/g, '').trim().length > 0;
+    const header = hasPwd ? "untrusted comment: minisign encrypted secret key" : "untrusted comment: minisign secret key";
+    finalKeyContent = `${header}${os.EOL}${finalKeyContent}`;
 }
 
 console.log("Key content prepared.");
@@ -94,10 +94,33 @@ try {
         console.log("Success: TAURI_PRIVATE_KEY (Payload Only) added to GITHUB_ENV.");
 
         // Handle Password (Optional)
-    if (process.env.TAURI_KEY_PASSWORD) {
-        fs.appendFileSync(githubEnvPath, `TAURI_KEY_PASSWORD=${process.env.TAURI_KEY_PASSWORD}${os.EOL}`, { encoding: 'utf8' });
-        console.log("Success: TAURI_KEY_PASSWORD added to GITHUB_ENV.");
+    const pwdRaw = process.env.TAURI_KEY_PASSWORD;
+    if (pwdRaw && pwdRaw.length > 0) {
+        const pwd = pwdRaw.replace(/\r?\n/g, '').trim();
+        fs.appendFileSync(githubEnvPath, `TAURI_KEY_PASSWORD=${pwd}${os.EOL}`, { encoding: 'utf8' });
+        console.log(`Success: TAURI_KEY_PASSWORD added to GITHUB_ENV. Length: ${pwd.length}`);
     }
 } else {
     console.warn("WARNING: GITHUB_ENV not detected. Assuming local run.");
+}
+
+try {
+    const confPath = path.resolve(process.cwd(), 'src-tauri', 'tauri.conf.json');
+    const confRaw = fs.readFileSync(confPath, 'utf8');
+    const conf = JSON.parse(confRaw);
+    const pub = process.env.TAURI_PUBLIC_KEY;
+    if (pub && pub.trim().length > 0) {
+        conf.tauri.updater.pubkey = pub.trim();
+    }
+    const disable = (process.env.DISABLE_UPDATER || '').toLowerCase() === 'true';
+    if (disable) {
+        conf.tauri.updater.active = false;
+        if (Array.isArray(conf.tauri.bundle.targets)) {
+            conf.tauri.bundle.targets = conf.tauri.bundle.targets.filter(t => t !== 'updater');
+        }
+    }
+    fs.writeFileSync(confPath, JSON.stringify(conf, null, 2));
+    console.log('Patched tauri.conf.json');
+} catch (e) {
+    console.log(`Skip patch tauri.conf.json: ${e.message}`);
 }
