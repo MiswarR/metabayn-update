@@ -69,24 +69,31 @@ try {
     process.exit(1);
 }
 
-// 7. Set Environment Variable untuk Step Selanjutnya (Github Actions)
-// Kita gunakan CONTENT injection (bukan path) karena Tauri signer sering bermasalah dengan path parsing
-// Referensi: https://github.com/tauri-apps/tauri/issues/6950
-const githubEnvPath = process.env.GITHUB_ENV;
-if (githubEnvPath) {
-    const crypto = await import('crypto');
-    const delimiter = `EOF_${crypto.randomBytes(4).toString('hex')}`;
-    
-    // Format Multiline untuk GITHUB_ENV
-    // KEY_NAME<<DELIMITER
-    // value
-    // DELIMITER
-    const envContent = `TAURI_PRIVATE_KEY<<${delimiter}${os.EOL}${finalKeyContent}${os.EOL}${delimiter}${os.EOL}`;
-    
-    fs.appendFileSync(githubEnvPath, envContent, { encoding: 'utf8' });
-    console.log("Success: TAURI_PRIVATE_KEY content added to GITHUB_ENV.");
+    // 7. Set Environment Variable untuk Step Selanjutnya (Github Actions)
+    // Kita gunakan RAW BASE64 CONTENT injection karena Tauri signer di GitHub Actions
+    // sering bermasalah dengan parsing header "untrusted comment" (Invalid symbol 32 error).
+    const githubEnvPath = process.env.GITHUB_ENV;
+    if (githubEnvPath) {
+        const crypto = await import('crypto');
+        const delimiter = `EOF_${crypto.randomBytes(4).toString('hex')}`;
+        
+        // Ekstrak hanya payload Base64 untuk Environment Variable
+        // Hapus header 'untrusted comment' agar tidak ada spasi yang menyebabkan error parsing
+        const lines = finalKeyContent.split(/\r?\n/);
+        const base64Payload = lines
+            .filter(line => line.trim() !== '' && !line.startsWith('untrusted comment:'))
+            .join('')
+            .trim();
 
-    // Handle Password (Optional)
+        console.log("Injecting Base64 Payload into GITHUB_ENV (Header removed for compatibility)...");
+
+        // Format Multiline untuk GITHUB_ENV
+        const envContent = `TAURI_PRIVATE_KEY<<${delimiter}${os.EOL}${base64Payload}${os.EOL}${delimiter}${os.EOL}`;
+        
+        fs.appendFileSync(githubEnvPath, envContent, { encoding: 'utf8' });
+        console.log("Success: TAURI_PRIVATE_KEY (Payload Only) added to GITHUB_ENV.");
+
+        // Handle Password (Optional)
     if (process.env.TAURI_KEY_PASSWORD) {
         fs.appendFileSync(githubEnvPath, `TAURI_KEY_PASSWORD=${process.env.TAURI_KEY_PASSWORD}${os.EOL}`, { encoding: 'utf8' });
         console.log("Success: TAURI_KEY_PASSWORD added to GITHUB_ENV.");
