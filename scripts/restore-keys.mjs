@@ -112,7 +112,7 @@ try {
     if (pub && pub.trim().length > 0) {
         conf.tauri.updater.pubkey = pub.trim();
     }
-    const disable = (process.env.DISABLE_UPDATER || '').toLowerCase() === 'true';
+    const disable = (process.env.DISABLE_UPDATER || 'true').toLowerCase() === 'true';
     if (disable) {
         conf.tauri.updater.active = false;
         if (Array.isArray(conf.tauri.bundle.targets)) {
