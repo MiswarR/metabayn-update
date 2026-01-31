@@ -61,6 +61,8 @@ jobs:
         env:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          TAURI_PUBLIC_KEY: ${{ secrets.TAURI_PUBLIC_KEY }}
+          DISABLE_UPDATER: ${{ secrets.DISABLE_UPDATER }}
         run: node scripts/restore-keys.mjs
           
       - name: Build App
@@ -161,6 +163,8 @@ jobs:
         env: 
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          TAURI_PUBLIC_KEY: ${{ secrets.TAURI_PUBLIC_KEY }}
+          DISABLE_UPDATER: ${{ secrets.DISABLE_UPDATER }}
         run: node scripts/restore-keys.mjs
 
       - name: Build App
