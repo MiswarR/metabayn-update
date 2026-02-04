@@ -1,0 +1,11 @@
+{
+  "version": "v4.4.5",
+  "notes": "Update v4.4.5: Perbaikan sistem dan peningkatan performa.",
+  "pub_date": "2026-02-04T12:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbnVRaGZGUnNvd0tJM1l3ZjlYck95N3VOMFBIMXZKVHlFUTFNTTdoUnhwWDJYcWo3bCtwVHREMFp4d1ZyR1BUQTRsY1ZoUjBzWWNENUNrc05FRXViYUtDOUJKZ216S1FnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcwMjAxMTUxCWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuNC41X3g2NC1zZXR1cC5uc2lzLnppcApGYXhMRTVyTWVkYjdxVDBGQUYxWkdmai9EL09CMVhLTHM4TDUzQzNGa0tOREZVYnUvaDE4ZGg3OEdabGZ6TnROL0VIc2lQYjZ2VC9uZFJaa2ZrZk5BQT09Cg==",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.4.5/Metabayn.Studio_4.4.5_x64-setup.nsis.zip"
+    }
+  }
+}
