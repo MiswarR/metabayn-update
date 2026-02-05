@@ -112,11 +112,20 @@ try {
     if (pub && pub.trim().length > 0) {
         conf.tauri.updater.pubkey = pub.trim();
     }
-    const disable = (process.env.DISABLE_UPDATER || 'true').toLowerCase() === 'true';
+    const disable = (process.env.DISABLE_UPDATER || 'false').toLowerCase() === 'true';
     if (disable) {
         conf.tauri.updater.active = false;
         if (Array.isArray(conf.tauri.bundle.targets)) {
             conf.tauri.bundle.targets = conf.tauri.bundle.targets.filter(t => t !== 'updater');
+        }
+    } else {
+        // FORCE ENABLE UPDATER if not disabled
+        console.log("Enabling updater in tauri.conf.json...");
+        conf.tauri.updater.active = true;
+        if (Array.isArray(conf.tauri.bundle.targets)) {
+             if (!conf.tauri.bundle.targets.includes('updater')) {
+                 conf.tauri.bundle.targets.push('updater');
+             }
         }
     }
     fs.writeFileSync(confPath, JSON.stringify(conf, null, 2));
