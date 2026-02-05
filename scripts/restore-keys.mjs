@@ -19,13 +19,11 @@ console.log(`Key length: ${rawKey.length}`);
 // We extract ONLY the Base64 body and Prepend a fresh header.
 
 // Check password status
-const pwdCheck = (process.env.TAURI_KEY_PASSWORD || '').replace(/\r?\n/g, '').trim();
-const hasPwd = pwdCheck.length > 0;
-const expectedHeader = hasPwd 
-    ? "untrusted comment: minisign encrypted secret key" 
-    : "untrusted comment: minisign secret key";
+// FORCE NO PASSWORD as per user request
+const hasPwd = false;
+const expectedHeader = "untrusted comment: minisign secret key";
 
-console.log(`Password detected: ${hasPwd ? 'YES' : 'NO'}`);
+console.log(`Password detected: ${hasPwd ? 'YES' : 'NO'} (Forced NO)`);
 console.log(`Expected Header: ${expectedHeader}`);
 
 // Extract Base64 Body
@@ -45,13 +43,11 @@ if (!match) {
 const keyBody = match[1].trim();
 console.log("Extracted Key Body (first 10 chars):", keyBody.substring(0, 10) + "...");
 
-// Reconstruct Key (RAW BASE64 ONLY)
-// The error "Invalid symbol 32, offset 9" implies the parser is trying to decode
-// the "untrusted comment..." header as Base64 and failing at the space (ASCII 32).
-// This suggests we should provide the raw Base64 body only.
-const finalKeyContent = keyBody;
+// Reconstruct Key (Header + Base64)
+// We explicitly reconstruct the file with the unencrypted header.
+const finalKeyContent = `${expectedHeader}${os.EOL}${keyBody}${os.EOL}`;
 
-console.log("Key Reconstructed (Raw Base64, No Header).");
+console.log("Key Reconstructed (Header + Base64).");
 
 
 console.log("Key content prepared.");
