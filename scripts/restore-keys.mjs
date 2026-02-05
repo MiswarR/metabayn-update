@@ -94,13 +94,9 @@ try {
         fs.appendFileSync(githubEnvPath, envContent, { encoding: 'utf8' });
         console.log(`Success: TAURI_PRIVATE_KEY set to path: ${outputPath}`);
 
-        // Handle Password (Optional)
-        const pwdRaw = process.env.TAURI_KEY_PASSWORD;
-    if (pwdRaw && pwdRaw.length > 0) {
-        const pwd = pwdRaw.replace(/\r?\n/g, '').trim();
-        fs.appendFileSync(githubEnvPath, `TAURI_KEY_PASSWORD=${pwd}${os.EOL}`, { encoding: 'utf8' });
-        console.log(`Success: TAURI_KEY_PASSWORD added to GITHUB_ENV. Length: ${pwd.length}`);
-    }
+        // Handle Password: force empty since key is NOT encrypted
+        fs.appendFileSync(githubEnvPath, `TAURI_KEY_PASSWORD=${''}${os.EOL}`, { encoding: 'utf8' });
+        console.log("Success: TAURI_KEY_PASSWORD forced to empty (no password)");
 } else {
     console.warn("WARNING: GITHUB_ENV not detected. Assuming local run.");
 }
