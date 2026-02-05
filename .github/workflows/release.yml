@@ -40,7 +40,8 @@ jobs:
           chmod +x src-tauri/resources/ffmpeg
           
           # ExifTool
-          curl -L -o exiftool.tar.gz https://downloads.sourceforge.net/project/exiftool/Image-ExifTool-13.47.tar.gz
+          # Gunakan versi valid (13.17) karena 13.47 belum ada
+          curl -L -o exiftool.tar.gz https://exiftool.org/Image-ExifTool-13.17.tar.gz
           tar -xzf exiftool.tar.gz
           # Gunakan wildcard agar tidak tergantung nomor versi folder
           cp Image-ExifTool-*/exiftool src-tauri/resources/exiftool
@@ -132,10 +133,10 @@ jobs:
           if (Test-Path "src-tauri/resources/exiftool.exe") {
              Write-Host "ExifTool already exists. Skipping download."
           } else {
-             # Download ExifTool (SourceForge Mirror for reliability)
+             # Download ExifTool (Official Site)
              Write-Host "Downloading ExifTool..."
              try {
-               Invoke-WebRequest -Uri "https://downloads.sourceforge.net/project/exiftool/exiftool-13.47_64.zip" -OutFile "exiftool.zip"
+               Invoke-WebRequest -Uri "https://exiftool.org/exiftool-13.17_64.zip" -OutFile "exiftool.zip"
                Write-Host "Extracting ExifTool..."
                Expand-Archive -Path exiftool.zip -DestinationPath exiftool_temp -Force
                
