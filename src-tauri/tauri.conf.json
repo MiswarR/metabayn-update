@@ -19,17 +19,17 @@
       "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' https: http: wss: ws: blob: data: asset:; img-src 'self' asset: https: blob: data:; connect-src 'self' https: http: wss: ws:;"
     },
     "windows": [
-        {
-          "label": "main",
-          "title": "Metabayn Studio",
-          "width": 700,
-          "height": 700,
-          "resizable": true,
-          "decorations": true,
-          "transparent": false,
-          "center": true,
-          "maximized": false,
-          "fullscreen": false
+      {
+        "label": "main",
+        "title": "Metabayn Studio",
+        "width": 700,
+        "height": 700,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "center": true,
+        "maximized": false,
+        "fullscreen": false
       }
     ],
     "updater": {
@@ -38,33 +38,72 @@
         "https://raw.githubusercontent.com/MiswarR/metabayn-update/main/updates/version.json"
       ],
       "dialog": false,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMwMjgxQjE1NUYwOEI5RTcKUldUbnVRaGZGUnNvd0VpdlBxNHJWeHlqTTJSbmhUY2pTT3JIUVBPQTQvUTZmYmJmbDFZTWllbGMK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc2Qzg0QzI4N0ZBNkM1MTUKUldRVnhhWi9LRXpJZHJ1NHpHdEgzcWRwMXlreG5LMEREakYrSzM2VFdpNEZ5d3VpV2h1UkFQMFcK"
     },
     "allowlist": {
       "all": false,
-      "process": { "relaunch": true, "exit": true },
-      "window": { "all": true },
-      "fs": { "all": true },
-      "path": { "all": true },
-      "dialog": { "open": true },
+      "process": {
+        "relaunch": true,
+        "exit": true
+      },
+      "window": {
+        "all": true
+      },
+      "fs": {
+        "all": true
+      },
+      "path": {
+        "all": true
+      },
+      "dialog": {
+        "open": true
+      },
       "shell": {
         "all": false,
         "open": true,
         "execute": true,
         "sidecar": true,
         "scope": [
-          { "name": "bin/ffmpeg", "sidecar": true, "args": true },
-          { "name": "resources/ffmpeg", "sidecar": true, "args": true },
-          { "name": "ffmpeg", "sidecar": true, "args": true },
-           { "name": "bin/exiftool", "sidecar": true, "args": true },
-          { "name": "resources/exiftool", "sidecar": true, "args": true },
-          { "name": "exiftool", "sidecar": true, "args": true }
+          {
+            "name": "bin/ffmpeg",
+            "sidecar": true,
+            "args": true
+          },
+          {
+            "name": "resources/ffmpeg",
+            "sidecar": true,
+            "args": true
+          },
+          {
+            "name": "ffmpeg",
+            "sidecar": true,
+            "args": true
+          },
+          {
+            "name": "bin/exiftool",
+            "sidecar": true,
+            "args": true
+          },
+          {
+            "name": "resources/exiftool",
+            "sidecar": true,
+            "args": true
+          },
+          {
+            "name": "exiftool",
+            "sidecar": true,
+            "args": true
+          }
         ]
       }
     },
     "bundle": {
       "active": true,
-      "targets": ["msi", "nsis", "updater"],
+      "targets": [
+        "msi",
+        "nsis",
+        "updater"
+      ],
       "identifier": "com.metabayn.studio",
       "icon": [
         "icons/icon.ico"
