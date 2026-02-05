@@ -2,88 +2,105 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-console.log("Starting Key Restoration (Smart Decode Mode)...");
+console.log("Starting Key Restoration (Aggressive Reformat Mode)...");
 
-// 1. Ambil Key dari Environment Variable
 const rawKey = process.env.TAURI_PRIVATE_KEY;
-
 if (!rawKey) {
-  console.error("ERROR: TAURI_PRIVATE_KEY environment variable is not set!");
+  console.error("ERROR: TAURI_PRIVATE_KEY is missing!");
   process.exit(1);
 }
 
-// 2. Tentukan Path Output
 const outputPath = path.resolve(process.cwd(), 'tauri.key');
 
-// 3. Process Content
-let finalContent = rawKey;
+function reformatKey(input) {
+    let content = input.trim();
+    
+    // Normalisasi: Hapus semua carriage return (\r)
+    content = content.replace(/\r/g, '');
 
-// Cek apakah ini Base64?
-// Base64 biasanya tidak punya spasi (kecuali newline), dan hanya karakter A-Za-z0-9+/=
-// Header minisign "untrusted comment" pasti punya spasi.
-if (!rawKey.includes("untrusted comment")) {
-    console.log("Input does not look like raw Minisign key (no header). Trying Base64 decode...");
-    try {
-        const decoded = Buffer.from(rawKey, 'base64').toString('utf8');
-        if (decoded.includes("untrusted comment")) {
-            console.log("Success: Base64 decoded to Minisign key.");
-            finalContent = decoded;
-        } else {
-            console.warn("Warning: Decoded content does not have Minisign header. Writing original content.");
-            // Mungkin format lain, biarkan saja.
+    // Coba deteksi header dan body menggunakan Regex
+    // Mencari "untrusted comment: ... key" diikuti oleh karakter Base64
+    // Flag 's' (dotAll) agar . bisa match newline jika ada
+    // Kita gunakan logic manual parsing agar lebih aman
+    
+    const headerPrefix = "untrusted comment:";
+    const headerSuffix = "key";
+    
+    const headerStartIndex = content.indexOf(headerPrefix);
+    if (headerStartIndex !== -1) {
+        // Cari akhir header (kata "key" pertama setelah prefix)
+        // Perhatikan: isi comment bisa mengandung kata key, tapi format standar biasanya berakhiran " secret key" atau " public key"
+        // Kita cari " key" (spasi key) untuk lebih aman, atau newline.
+        
+        // Asumsi standar: Header ada di baris pertama.
+        // Jika ada newline, split di sana.
+        if (content.includes('\n')) {
+             const lines = content.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+             if (lines.length >= 2) {
+                 console.log("Input has multiple lines. Using first as header, second as body.");
+                 return `${lines[0]}\n${lines[1]}`;
+             }
         }
-    } catch (e) {
-        console.warn("Base64 decode failed or invalid. Writing original content.");
+
+        // Jika tidak ada newline (satu baris panjang), kita harus menebak di mana header berakhir.
+        // Kita cari pola " key" diikuti oleh karakter Base64 (R, R, ... biasanya Minisign mulai dengan R)
+        // Atau kita cari posisi " key" terakhir sebelum string base64 panjang.
+        
+        // Minisign secret key standard comment: "untrusted comment: minisign secret key" atau "rsign encrypted secret key"
+        const knownSuffixes = [" secret key", " public key"];
+        let splitIndex = -1;
+        
+        for (const suffix of knownSuffixes) {
+            const idx = content.indexOf(suffix);
+            if (idx !== -1) {
+                // Potensi akhir header. Cek apakah setelahnya ada body.
+                // index akhir header adalah idx + suffix.length
+                splitIndex = idx + suffix.length;
+                break;
+            }
+        }
+        
+        if (splitIndex !== -1) {
+            const header = content.substring(0, splitIndex).trim();
+            const body = content.substring(splitIndex).trim();
+            
+            console.log(`Split single-line input. Header: "${header}"`);
+            return `${header}\n${body}`;
+        }
     }
-} else {
-    console.log("Input looks like raw Minisign key.");
+    
+    // Jika tidak ketemu pola header standar, tapi terlihat seperti Base64 murni
+    if (/^[a-zA-Z0-9+/=]+$/.test(content) && content.length > 40) {
+        console.warn("No header detected. Assuming raw Base64. Adding default Minisign header.");
+        return `untrusted comment: rsign encrypted secret key\n${content}`;
+    }
+
+    // Fallback terakhir: kembalikan apa adanya (mungkin user sudah format benar tapi regex kita luput)
+    console.log("Returning input as-is (no restructure applied).");
+    return content;
 }
 
-// Normalize Line Endings to LF (\n)
-// Minisign/Tauri di Linux/Mac mungkin sensitif terhadap CRLF
-finalContent = finalContent.replace(/\r\n/g, '\n');
+const finalContent = reformatKey(rawKey);
 
-// 4. Tulis File
-try {
-    fs.writeFileSync(outputPath, finalContent, { encoding: 'utf8' });
-    console.log(`Success: Key written to ${outputPath}`);
-} catch (err) {
-    console.error(`ERROR: Failed to write key file: ${err.message}`);
-    process.exit(1);
-}
+fs.writeFileSync(outputPath, finalContent, { encoding: 'utf8' });
+console.log(`Key written to ${outputPath}`);
+console.log("Content preview:");
+console.log(finalContent.substring(0, 50) + "...");
 
-// 5. Set Environment Variable untuk Github Actions
+// Setup Env
 const githubEnvPath = process.env.GITHUB_ENV;
 if (githubEnvPath) {
-    console.log("Injecting Key PATH into GITHUB_ENV...");
-    
-    const envContent = `TAURI_PRIVATE_KEY=${outputPath}${os.EOL}`;
-    fs.appendFileSync(githubEnvPath, envContent, { encoding: 'utf8' });
-    
-    // Pass through password logic (user sets TAURI_KEY_PASSWORD in secrets)
-    // No need to force empty here.
-} else {
-    console.warn("WARNING: GITHUB_ENV not detected.");
+    fs.appendFileSync(githubEnvPath, `TAURI_PRIVATE_KEY=${outputPath}${os.EOL}`, { encoding: 'utf8' });
 }
 
-// 6. Force Enable Updater in tauri.conf.json (Safety Net)
+// Ensure Updater Active
 try {
     const confPath = path.resolve(process.cwd(), 'src-tauri', 'tauri.conf.json');
     if (fs.existsSync(confPath)) {
-        const confRaw = fs.readFileSync(confPath, 'utf8');
-        const conf = JSON.parse(confRaw);
-        
-        let changed = false;
+        const conf = JSON.parse(fs.readFileSync(confPath, 'utf8'));
         if (!conf.tauri.updater.active) {
             conf.tauri.updater.active = true;
-            changed = true;
-        }
-        
-        if (changed) {
-             console.log("Enabling updater in tauri.conf.json...");
-             fs.writeFileSync(confPath, JSON.stringify(conf, null, 2));
+            fs.writeFileSync(confPath, JSON.stringify(conf, null, 2));
         }
     }
-} catch (e) {
-    console.log(`Skip patch tauri.conf.json: ${e.message}`);
-}
+} catch (e) {}
