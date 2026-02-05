@@ -39,11 +39,11 @@ jobs:
           mv ffmpeg src-tauri/resources/ffmpeg
           chmod +x src-tauri/resources/ffmpeg
           
-          # ExifTool (Gunakan file lokal dari repo agar tidak perlu download)
-          # Kita gunakan script Perl yang sudah ada di src-tauri/resources/exiftool_files
-          echo "Using local ExifTool from repo..."
-          cp src-tauri/resources/exiftool_files/exiftool.pl src-tauri/resources/exiftool
-          cp -r src-tauri/resources/exiftool_files/lib src-tauri/resources/lib
+          # ExifTool (Gunakan file lokal dari repo "for MAC")
+          echo "Using provided Mac ExifTool..."
+          tar -xzf "src-tauri/resources/for MAC/Image-ExifTool-13.49.tar.gz"
+          mv Image-ExifTool-13.49/exiftool src-tauri/resources/exiftool
+          mv Image-ExifTool-13.49/lib src-tauri/resources/lib
           chmod +x src-tauri/resources/exiftool
           
       - name: Patch tauri.conf.json for Mac
