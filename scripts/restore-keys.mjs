@@ -45,11 +45,13 @@ if (!match) {
 const keyBody = match[1].trim();
 console.log("Extracted Key Body (first 10 chars):", keyBody.substring(0, 10) + "...");
 
-// Reconstruct Key Strictly
-// Note: We use \n (Line Feed) explicitly for consistency across platforms (macOS needs \n)
-const finalKeyContent = `${expectedHeader}\n${keyBody}`;
+// Reconstruct Key (RAW BASE64 ONLY)
+// The error "Invalid symbol 32, offset 9" implies the parser is trying to decode
+// the "untrusted comment..." header as Base64 and failing at the space (ASCII 32).
+// This suggests we should provide the raw Base64 body only.
+const finalKeyContent = keyBody;
 
-console.log("Key Reconstructed Successfully.");
+console.log("Key Reconstructed (Raw Base64, No Header).");
 
 
 console.log("Key content prepared.");
@@ -67,17 +69,15 @@ try {
 }
 
 // 6. Validasi File (Basic Check)
-try {
-    const readBack = fs.readFileSync(outputPath, 'utf8');
-    const readLines = readBack.split('\n');
-    console.log("Validation - First Line:", readLines[0].trim());
-    
-    if (!readBack.includes('untrusted comment:')) {
-        console.error("ERROR: File does not contain 'untrusted comment' header!");
-        process.exit(1);
-    }
-    console.log("Validation: File integrity check passed.");
-} catch (err) {
+    try {
+        const readBack = fs.readFileSync(outputPath, 'utf8');
+        console.log("Validation - First 20 chars:", readBack.substring(0, 20));
+        
+        // Removed check for 'untrusted comment' as we are now intentionally excluding it
+        // to avoid Base64 decoding errors in Tauri/Minisign parser.
+        
+        console.log("Validation: File written successfully.");
+    } catch (err) {
     console.error(`ERROR: Validation failed: ${err.message}`);
     process.exit(1);
 }
