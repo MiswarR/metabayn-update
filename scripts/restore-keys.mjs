@@ -24,8 +24,17 @@ let finalKeyContent = rawKey.trim();
 if (finalKeyContent.includes('untrusted comment:')) {
     console.log("Key headers detected. Validating...");
     // Ganti header 'rsign' (jika ada) menjadi 'minisign' agar kompatibel
-    // Beberapa tool generate key dengan header berbeda
     finalKeyContent = finalKeyContent.replace(/untrusted comment: rsign/g, 'untrusted comment: minisign');
+
+    // FORCE FIX: Jika password kosong, pastikan header TIDAK mengandung "encrypted"
+    // Ini penting karena rsign/minisign sering salah mengartikan "encrypted" jika password kosong
+    const pwdCheck = (process.env.TAURI_KEY_PASSWORD || '').replace(/\r?\n/g, '').trim();
+    if (pwdCheck.length === 0) {
+        if (finalKeyContent.includes('encrypted secret key')) {
+             console.log("No password detected, but header says 'encrypted'. Fixing header to 'secret key'...");
+             finalKeyContent = finalKeyContent.replace('encrypted secret key', 'secret key');
+        }
+    }
     
     // Pastikan header benar
     if (!finalKeyContent.includes('untrusted comment: minisign secret key') && !finalKeyContent.includes('untrusted comment: minisign encrypted secret key')) {
@@ -70,31 +79,22 @@ try {
 }
 
     // 7. Set Environment Variable untuk Step Selanjutnya (Github Actions)
-    // Kita gunakan RAW BASE64 CONTENT injection karena Tauri signer di GitHub Actions
-    // sering bermasalah dengan parsing header "untrusted comment" (Invalid symbol 32 error).
     const githubEnvPath = process.env.GITHUB_ENV;
     if (githubEnvPath) {
         const crypto = await import('crypto');
         const delimiter = `EOF_${crypto.randomBytes(4).toString('hex')}`;
         
-        // Ekstrak hanya payload Base64 untuk Environment Variable
-        // Hapus header 'untrusted comment' agar tidak ada spasi yang menyebabkan error parsing
-        const lines = finalKeyContent.split(/\r?\n/);
-        const base64Payload = lines
-            .filter(line => line.trim() !== '' && !line.startsWith('untrusted comment:'))
-            .join('')
-            .trim();
-
-        console.log("Injecting Base64 Payload into GITHUB_ENV (Header removed for compatibility)...");
+        console.log("Injecting Full Key Content into GITHUB_ENV...");
 
         // Format Multiline untuk GITHUB_ENV
-        const envContent = `TAURI_PRIVATE_KEY<<${delimiter}${os.EOL}${base64Payload}${os.EOL}${delimiter}${os.EOL}`;
+        // Pastikan kita menggunakan format yang benar dengan delimiter
+        const envContent = `TAURI_PRIVATE_KEY<<${delimiter}${os.EOL}${finalKeyContent}${os.EOL}${delimiter}${os.EOL}`;
         
         fs.appendFileSync(githubEnvPath, envContent, { encoding: 'utf8' });
-        console.log("Success: TAURI_PRIVATE_KEY (Payload Only) added to GITHUB_ENV.");
+        console.log("Success: TAURI_PRIVATE_KEY added to GITHUB_ENV.");
 
         // Handle Password (Optional)
-    const pwdRaw = process.env.TAURI_KEY_PASSWORD;
+        const pwdRaw = process.env.TAURI_KEY_PASSWORD;
     if (pwdRaw && pwdRaw.length > 0) {
         const pwd = pwdRaw.replace(/\r?\n/g, '').trim();
         fs.appendFileSync(githubEnvPath, `TAURI_KEY_PASSWORD=${pwd}${os.EOL}`, { encoding: 'utf8' });

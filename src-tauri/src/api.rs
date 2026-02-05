@@ -233,6 +233,31 @@ pub async fn generate_metadata_batch(req: BatchReq) -> Result<Vec<crate::metadat
 }
 
 #[tauri::command]
+pub async fn move_file_to_rejected(
+    file_path: String,
+    output_folder: String,
+    reasons: Vec<String>,
+    main_reason: String,
+) -> Result<(), String> {
+    crate::metadata::move_to_rejected(&file_path, &output_folder, &reasons, &main_reason)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn move_file_to_rejected_with_meta(
+    file_path: String,
+    output_folder: String,
+    reasons: Vec<String>,
+    main_reason: String,
+    gen: crate::metadata::Generated,
+) -> Result<(), String> {
+    crate::metadata::move_to_rejected_with_metadata(&file_path, &output_folder, &reasons, &main_reason, &gen)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
     crate::settings::load_settings().map_err(|e| e.to_string())
 }

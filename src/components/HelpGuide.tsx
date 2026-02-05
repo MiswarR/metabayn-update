@@ -9,9 +9,8 @@ type Lang = 'en' | 'id';
 // Contoh ID: UCgQY2sphgIAw7GrXYPQnYUw
 const YOUTUBE_CHANNEL_ID = 'UC1FhWKSh0NzrwOkMrnS_lxA'; 
 
-export default function HelpGuide({ onClose }: { onClose: () => void }) {
+export default function HelpGuide({ onClose, lang, onLangChange }: { onClose: () => void, lang: 'en' | 'id', onLangChange: (l: 'en' | 'id') => void }) {
   const [activeTab, setActiveTab] = useState('settings');
-  const [lang, setLang] = useState<Lang>('en');
 
   // Manual Playlist (Fallback jika Channel ID kosong atau error)
   const MANUAL_VIDEOS = [
@@ -364,7 +363,7 @@ export default function HelpGuide({ onClose }: { onClose: () => void }) {
             {/* Language Switcher */}
             <div style={{display:'flex', background: '#333', borderRadius: 6, padding: 3}}>
                 <button 
-                    onClick={() => setLang('en')}
+                    onClick={() => onLangChange('en')}
                     style={{
                         background: lang === 'en' ? '#4caf50' : 'transparent',
                         color: lang === 'en' ? '#fff' : '#888',
@@ -376,7 +375,7 @@ export default function HelpGuide({ onClose }: { onClose: () => void }) {
                     EN
                 </button>
                 <button 
-                    onClick={() => setLang('id')}
+                    onClick={() => onLangChange('id')}
                     style={{
                         background: lang === 'id' ? '#4caf50' : 'transparent',
                         color: lang === 'id' ? '#fff' : '#888',

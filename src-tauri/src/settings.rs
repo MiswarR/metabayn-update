@@ -27,6 +27,7 @@ pub struct AppSettings {
   pub auth_email: String,
   pub auth_token: String,
   pub selection_enabled: bool,
+  pub server_selection_enabled: bool,
   // pub check_anatomy_defect: bool, // Deprecated, covered by human/animal defects
   // pub check_human_animal_similarity: bool, // Deprecated, moved to sub-options
   pub check_human_presence: bool,
@@ -118,6 +119,7 @@ pub fn load_settings() -> Result<AppSettings> {
       ai_provider: "Gemini".into()
       ,auth_email: String::new(), auth_token: String::new(),
       selection_enabled: false,
+      server_selection_enabled: false,
       // check_anatomy_defect: false,
       // check_human_animal_similarity: false,
       check_human_presence: false,

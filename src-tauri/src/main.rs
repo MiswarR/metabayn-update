@@ -67,7 +67,9 @@ fn main() {
             crate::api::activate_subscription_mock,
             crate::api::log_audit_event,
             crate::api::test_api_connection,
-            crate::api::run_ai_clustering
+            crate::api::run_ai_clustering,
+            crate::api::move_file_to_rejected,
+            crate::api::move_file_to_rejected_with_meta
         ])
         .setup(|app| {
             #[cfg(target_os = "windows")]

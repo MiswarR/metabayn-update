@@ -14,9 +14,11 @@ import TopUpModal from '../components/TopUpModal'
 import HelpGuide from '../components/HelpGuide'
 import { apiGetBalance, getApiUrl, clearTokenLocal } from '../api/backend'
 import { decryptApiKey } from '../utils/crypto'
+import { translations } from '../utils/translations'
 
 const isTauri = typeof (window as any).__TAURI_IPC__ === 'function'
 export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isActive}:{token:string,onSettings:()=>void,onAdmin?:()=>void,onProcessChange?:(isProcessing:boolean)=>void,isActive?:boolean}){
+  const [lang, setLang] = useState<'en' | 'id'>('en')
   const [logs,setLogs]=useState<any[]>([])
   const [progress,setProgress]=useState<number>(0)
   const [balance,setBalance]=useState<number>(0)
@@ -641,8 +643,8 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
                 }
                 const fileName = g.file.split(/[\\/]/).pop();
 
-                if (g.source === 'error' || g.title === 'ERROR') {
-                    const isRejection = String(g.description).startsWith('Rejected:');
+                if (g.source === 'error' || g.title === 'ERROR' || g.selection_status === 'rejected') {
+                    const isRejection = String(g.description).startsWith('Rejected:') || g.selection_status === 'rejected';
                     
                     // Construct detail with token stats for rejected/failed files
                     let detailMsg = g.description;
@@ -678,6 +680,24 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
                          setStats(st=>({...st, failed: st.failed+1}));
                     } else {
                          setStats(st=>({...st, rejected: st.rejected+1}));
+                         try {
+                             if (s.selection_enabled && s.output_folder) {
+                                 const sep = String(s.output_folder).includes('\\') ? '\\' : '/';
+                                 const baseDir = String(s.output_folder).endsWith(sep) ? s.output_folder : s.output_folder + sep;
+                                 const failList = Array.isArray((g as any).failed_checks) ? (g as any).failed_checks : [];
+                                 const mainReason = String((g as any).reason || g.description || 'Rejected');
+                                 await invoke('move_file_to_rejected', {
+                                    filePath: g.file,
+                                    outputFolder: baseDir,
+                                    reasons: failList,
+                                    mainReason: mainReason
+                                });
+                                 fileRemoved = true;
+                                 setLogs(l=>[...l, {text:`→ Move to rejected: ${fileName}`, color:'#ff9800', hidden:true}]);
+                             }
+                         } catch(e) {
+                             setLogs(l=>[...l, {text:`[Warning] Failed to move to rejected: ${fileName}`, detail: String(e||''), color:'#ff9800'}]);
+                         }
                     }
                     // filesStayingInInputCount will be incremented in finally block since fileRemoved is false
                     
@@ -712,23 +732,23 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
                                  const f = fail.toLowerCase();
                                  
                                  // Brand/Watermark
-                                if (f.includes('trademarked logo') || f.includes('brand logo') || f.includes('specific trademarked logo')) return 'Brand_Logo';
-                                if (f.includes('watermark') || f.includes('copyright stamp')) return 'Watermark';
-                                
-                                // Quality
-                                if (f.includes('blurry') || f.includes('blur') || f.includes('out of focus')) return 'Blurry';
-                                if (f.includes('pixelated') || f.includes('low resolution') || f.includes('low quality')) return 'Low_Quality';
-                                if (f.includes('artifact') || f.includes('distortion')) return 'Artifacts';
+                            if (f.includes('trademarked logo') || f.includes('brand logo') || f.includes('specific trademarked logo') || f.includes('brand_logo')) return 'Brand_Logo';
+                            if (f.includes('watermark') || f.includes('copyright stamp')) return 'Watermark';
+                            
+                            // Quality
+                            if (f.includes('blurry') || f.includes('blur') || f.includes('out of focus')) return 'Blurry';
+                            if (f.includes('pixelated') || f.includes('low resolution') || f.includes('low quality')) return 'Low_Quality';
+                            if (f.includes('artifact') || f.includes('distortion')) return 'Artifacts';
 
-                                // Text
-                                if (f.includes('gibberish')) return 'Text_Gibberish';
-                                if (f.includes('non-english')) return 'Text_Non_English';
-                                if (f.includes('irrelevant')) return 'Text_Irrelevant';
-                                if (f.includes('relevant-text')) return 'Text_Relevant';
-                                if (f.includes('text') || f.includes('words') || f.includes('letters') || f.includes('overlay')) return 'Text_Overlay';
-                                 
-                                 // Human
-                                 if (f.includes('human')) {
+                            // Text
+                            if (f.includes('gibberish')) return 'Text_Gibberish';
+                            if (f.includes('non-english')) return 'Text_Non_English';
+                            if (f.includes('irrelevant')) return 'Text_Irrelevant';
+                            if (f.includes('relevant-text') || f.includes('relevant_text')) return 'Text_Relevant';
+                            if (f.includes('text') || f.includes('words') || f.includes('letters') || f.includes('overlay')) return 'Text_Overlay';
+                             
+                            // Human
+                            if (f.includes('human')) {
                                      if (f.includes('full body') || f.includes('full_body')) return 'Human_Full_Body';
                                      if (f.includes('no head') || f.includes('no_head')) return 'Human_No_Head';
                                      if (f.includes('partial body (perfect') || f.includes('partial_perfect')) return 'Human_Partial_Perfect';
@@ -1057,7 +1077,7 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
         setLogs(l => [...l, { id: logId, text: `[CSV Gen] Generating from ${inputDir}... (AI Checking & Filling Missing Metadata)`, color: '#aaa', animating: true }]);
         
         // Output folder is same as input folder
-        const res = await invoke('generate_csv_from_folder', { input_folder: inputDir, output_folder: inputDir, api_key: apiKey, token });
+        const res = await invoke('generate_csv_from_folder', { inputFolder: inputDir, outputFolder: inputDir, apiKey: apiKey, token });
         
         // Log: Success (Update previous log to stop animation, add new success log)
         setLogs(l => l.map(x => x.id === logId ? { ...x, animating: false } : x));
@@ -1108,7 +1128,7 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
         const inputDir = await dialogOpen({
             directory: true,
             multiple: false,
-            title: "Select Folder for AI Clustering"
+            title: translations[lang].dashboard.aiClusterTitle
         });
         if (!inputDir) return;
 
@@ -1153,7 +1173,7 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
           {/* LEFT: Toggle + Title */}
           <div style={{display:'flex', alignItems:'center', gap: 16}}>
                {/* Toggle Button */}
-               <div onClick={()=>setIsSidebarOpen(!isSidebarOpen)} style={{cursor:'pointer', padding:4, display:'flex', alignItems:'center', justifyContent:'center', opacity: 0.8, transition: 'opacity 0.2s'}} title={isSidebarOpen ? "Close Sidebar" : "Open Sidebar"}>
+               <div onClick={()=>setIsSidebarOpen(!isSidebarOpen)} style={{cursor:'pointer', padding:4, display:'flex', alignItems:'center', justifyContent:'center', opacity: 0.8, transition: 'opacity 0.2s'}} title={isSidebarOpen ? translations[lang].dashboard.closeSidebar : translations[lang].dashboard.openSidebar}>
                     <div style={{display:'flex', flexDirection:'column', gap:4}}>
                         <div style={{width: 18, height: 2, background: '#fff'}}></div>
                         <div style={{width: 18, height: 2, background: '#fff'}}></div>
@@ -1165,6 +1185,26 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
                  <span title="Metabayn" style={{display:'inline-flex', alignItems:'center'}}>
                    <img src={appIconUrl} alt="Metabayn" style={{height:18, width:18}} />
                  </span>
+
+                 {/* Language Toggle */}
+                 <div 
+                     onClick={() => setLang(l => l === 'en' ? 'id' : 'en')}
+                     style={{
+                         cursor: 'pointer', 
+                         fontSize: '10px', 
+                         fontWeight: 'bold', 
+                         color: lang === 'en' ? '#35a4e5' : '#F049A9', 
+                         border: `1px solid ${lang === 'en' ? '#35a4e5' : '#F049A9'}`, 
+                         padding: '1px 5px', 
+                         borderRadius: '4px',
+                         marginLeft: '4px',
+                         userSelect: 'none'
+                     }}
+                     title={lang === 'en' ? "Switch to Bahasa Indonesia" : "Switch to English"}
+                 >
+                     {lang.toUpperCase()}
+                 </div>
+
                  {userEmail ? (
                    <span style={{fontSize:12, color:'#bbb', display:'inline-flex', alignItems:'center', gap:6}}>
                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1215,7 +1255,7 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
                       background: 'transparent', color: '#4caf50', 
                       padding: '4px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2
                     }}
-                    title="Top Up"
+                    title={translations[lang].dashboard.topUp}
                  >
                    <div style={{
                        width: 18, height: 18, background: '#4caf50', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '14px', fontWeight: 'bold'
@@ -1229,7 +1269,7 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
                       background: 'transparent', color: '#2196f3', 
                       padding: '4px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2
                     }}
-                    title="Panduan / Help"
+                    title={translations[lang].dashboard.help}
                  >
                    <div style={{
                        width: 18, height: 18, background: '#2196f3', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '14px', fontWeight: 'bold'
@@ -1240,7 +1280,7 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
                     <button 
                       className="icon-min" 
                       onClick={onAdmin}
-                      title="Admin Panel"
+                      title={translations[lang].dashboard.admin}
                       style={{
                          background: 'rgba(255, 193, 7, 0.1)', 
                          color: '#ffc107', 
@@ -1283,7 +1323,7 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
               paddingTop: 16,
               paddingLeft: 16
           }}>
-            <Settings onBack={()=>{}} embedded={true} />
+            <Settings onBack={()=>{}} embedded={true} lang={lang} />
           </div>
           
           {/* RESIZER */}
@@ -1421,6 +1461,7 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
             <TopUpModal 
                 isOpen={showTopUp} 
                 onClose={() => setShowTopUp(false)} 
+                lang={lang}
                 token={token} 
                 userId={userId}
                 usdRate={usdRate}
@@ -1447,8 +1488,8 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
                     <div style={{background:'#1e1e1e', padding:30, borderRadius:12, maxWidth:460, width:'90vw', textAlign:'left', border:'1px solid #333'}}>
                         <div style={{ fontWeight: 700, fontSize: 18, color: '#4caf50' }}>
                             {successNotification.type === 'subscription'
-                              ? (successNotification.source === 'voucher' ? 'Subscription Voucher Activated' : 'Subscription Activated')
-                              : (successNotification.source === 'voucher' ? 'Voucher Redeemed' : 'Payment Successful')}
+                              ? (successNotification.source === 'voucher' ? translations[lang].settings.voucherActivated : translations[lang].settings.subActivated)
+                              : (successNotification.source === 'voucher' ? translations[lang].settings.voucherRedeemed : translations[lang].settings.paymentSuccess)}
                         </div>
                         <div style={{ marginTop: 10, color: '#ccc', fontSize: 13, lineHeight: 1.6 }}>
                             {successNotification.type === 'token' && (
@@ -1456,13 +1497,13 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
                                   {successNotification.source === 'voucher'
                                     ? (
                                         typeof successNotification.amount === 'number' && successNotification.amount > 0
-                                          ? `${successNotification.amount.toLocaleString()} tokens have been added to your account.`
-                                          : 'Your token voucher has been redeemed and tokens have been added.'
+                                          ? `${successNotification.amount.toLocaleString()} ${translations[lang].settings.tokensAdded}`
+                                          : translations[lang].settings.voucherTokensAdded
                                       )
                                     : (
                                         typeof successNotification.amount === 'number' && successNotification.amount > 0
-                                          ? `${successNotification.amount.toLocaleString()} tokens have been added to your account.`
-                                          : 'Your tokens have been added to your account.'
+                                          ? `${successNotification.amount.toLocaleString()} ${translations[lang].settings.tokensAdded}`
+                                          : translations[lang].settings.tokensAddedSimple
                                       )}
                                 </>
                             )}
@@ -1471,19 +1512,19 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
                                   {successNotification.source === 'voucher'
                                     ? (
                                         successNotification.expiry
-                                          ? `Your API Key mode is active until ${new Date(successNotification.expiry).toLocaleString()}.`
-                                          : 'Your API Key mode has been activated.'
+                                          ? `${translations[lang].settings.apiKeyModeActiveUntil}${new Date(successNotification.expiry).toLocaleString()}.`
+                                          : translations[lang].settings.apiKeyModeActivated
                                       )
                                     : (
                                         successNotification.expiry
-                                          ? `Your API Key mode is active until ${new Date(successNotification.expiry).toLocaleString()}.`
-                                          : 'Your API Key mode has been activated.'
+                                          ? `${translations[lang].settings.apiKeyModeActiveUntil}${new Date(successNotification.expiry).toLocaleString()}.`
+                                          : translations[lang].settings.apiKeyModeActivated
                                       )}
                                 </>
                             )}
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-                            <button onClick={() => setSuccessNotification(null)} style={{ padding: '10px 14px', background: '#333', color: '#fff', border: '1px solid #444', borderRadius: 6, cursor: 'pointer' }}>Close</button>
+                            <button onClick={() => setSuccessNotification(null)} style={{ padding: '10px 14px', background: '#333', color: '#fff', border: '1px solid #444', borderRadius: 6, cursor: 'pointer' }}>{translations[lang].settings.close}</button>
                         </div>
                     </div>
                 </div>
@@ -1492,6 +1533,8 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
             {/* Help Guide Modal */}
             {showHelp && <HelpGuide 
                 onClose={() => setShowHelp(false)} 
+                lang={lang}
+                onLangChange={setLang}
             />}
             
             <div style={{flex:1, display:'flex', gap: 12, overflow:'hidden'}}>
@@ -1506,34 +1549,34 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
                     flexDirection: 'column', gap: 6, minHeight: 60
                 }}>
                      <div style={{display:'flex', gap:16, alignItems:'center', justifyContent:'center'}}>
-                         <button className="icon-min" onClick={start} aria-label="Start" title="Start">
+                         <button className="icon-min" onClick={start} aria-label={translations[lang].dashboard.start} title={translations[lang].dashboard.start}>
                            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M8 5v14l11-7z"/></svg>
                          </button>
-                         <button className="icon-min" onClick={pauseProcess} aria-label="Pause" title="Pause">
+                         <button className="icon-min" onClick={pauseProcess} aria-label={translations[lang].dashboard.pause} title={translations[lang].dashboard.pause}>
                            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
                          </button>
-                         <button className="icon-min" onClick={stopProcess} aria-label="Stop" title="Stop">
+                         <button className="icon-min" onClick={stopProcess} aria-label={translations[lang].dashboard.stop} title={translations[lang].dashboard.stop}>
                            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M6 6h12v12H6z"/></svg>
                          </button>
                      </div>
                      <div style={{display:'flex', gap: 16, alignItems:'center', justifyContent:'center', fontSize:'11px'}}>
-                         <span style={{color:'#aaa'}}>Total: <span style={{color:'#fff'}}>{stats.total}</span></span>
-                         <span style={{color:'#aaa'}}>Success: <span style={{color:'#4caf50'}}>{stats.success}</span></span>
-                         <span style={{color:'#aaa'}}>Reject: <span style={{color:'#ff9800'}}>{stats.rejected}</span></span>
-                         <span style={{color:'#aaa'}}>Failed: <span style={{color:'#f44336'}}>{stats.failed}</span></span>
-                         <span style={{color:'#aaa'}}>Done: <span style={{color:'#fff'}}>{stats.done}</span></span>
+                         <span style={{color:'#aaa'}}>{translations[lang].dashboard.total}: <span style={{color:'#fff'}}>{stats.total}</span></span>
+                         <span style={{color:'#aaa'}}>{translations[lang].dashboard.success}: <span style={{color:'#4caf50'}}>{stats.success}</span></span>
+                         <span style={{color:'#aaa'}}>{translations[lang].dashboard.reject}: <span style={{color:'#ff9800'}}>{stats.rejected}</span></span>
+                         <span style={{color:'#aaa'}}>{translations[lang].dashboard.failed}: <span style={{color:'#f44336'}}>{stats.failed}</span></span>
+                         <span style={{color:'#aaa'}}>{translations[lang].dashboard.done}: <span style={{color:'#fff'}}>{stats.done}</span></span>
                      </div>
                 </div>
 
                 <ProgressBar value={progress} />
                 {/* LogPanel with removed top border radius to attach to header */}
                 <div style={{flex:1, display:'flex', flexDirection:'column', overflowY:'auto', marginTop:-1}}>
-                    <LogPanel logs={logs} />
+                    <LogPanel logs={logs} lang={lang} />
                 </div>
                 
                 <div style={{display:'flex', justifyContent:'flex-end', alignItems:'center', marginTop: 4, paddingLeft: 2}}>
                     <div style={{display:'flex', gap:4}}>
-                      <button className="icon-min" onClick={generateCSV} aria-label="CSV" title="Generate CSV from Folder">
+                      <button className="icon-min" onClick={generateCSV} aria-label={translations[lang].dashboard.csv} title={translations[lang].dashboard.csv}>
                          <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <path d="M7 5C7 3.89543 7.89543 3 9 3H21L29 11V29C29 30.1046 28.1046 31 27 31H9C7.89543 31 7 30.1046 7 29V5Z" fill="#1e293b" stroke="#334155" strokeWidth="1.5"/>
                             <rect x="3" y="7" width="16" height="9" rx="2" fill="#10b981"/>
@@ -1541,7 +1584,7 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
                             <path d="M19 25C19 25 24 25 26 25M26 25V18M26 25L17 16" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
                         </svg>
                       </button>
-                      <button className="icon-min" onClick={openDupConfig} aria-label="Duplicate Detection" title="Detect Duplicates (Images/Videos)">
+                      <button className="icon-min" onClick={openDupConfig} aria-label={translations[lang].dashboard.duplicate} title={translations[lang].dashboard.duplicate}>
                          <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <path d="M7 5C7 3.89543 7.89543 3 9 3H21L29 11V29C29 30.1046 28.1046 31 27 31H9C7.89543 31 7 30.1046 7 29V5Z" fill="#1e293b" stroke="#334155" strokeWidth="1.5"/>
                             <rect x="3" y="7" width="16" height="9" rx="2" fill="#38bdf8"/>
@@ -1549,7 +1592,7 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
                             <path d="M19 25L24 20M24 20L26 22M24 20L22 18" stroke="#38bdf8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
                         </svg>
                       </button>
-                      <button className="icon-min" onClick={runAiCluster} aria-label="AI Clustering" title="AI Media Clustering (Group by Visual Similarity)">
+                      <button className="icon-min" onClick={runAiCluster} aria-label={translations[lang].dashboard.aiCluster} title={translations[lang].dashboard.aiCluster}>
                          <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <path d="M7 5C7 3.89543 7.89543 3 9 3H21L29 11V29C29 30.1046 28.1046 31 27 31H9C7.89543 31 7 30.1046 7 29V5Z" fill="#1e293b" stroke="#334155" strokeWidth="1.5"/>
                             <rect x="3" y="7" width="16" height="9" rx="2" fill="#8b5cf6"/>
@@ -1563,7 +1606,7 @@ export default function Dashboard({token,onSettings,onAdmin,onProcessChange,isAc
                             <circle cx="16" cy="27" r="1.5" fill="#8b5cf6"/>
                         </svg>
                       </button>
-                      <button className="icon-min" onClick={()=>setShowLogs(true)} aria-label="Logs" title="Show Logs">
+                      <button className="icon-min" onClick={()=>setShowLogs(true)} aria-label={translations[lang].dashboard.logs} title={translations[lang].dashboard.logs}>
                          <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <path d="M7 5C7 3.89543 7.89543 3 9 3H21L29 11V29C29 30.1046 28.1046 31 27 31H9C7.89543 31 7 30.1046 7 29V5Z" fill="#1e293b" stroke="#334155" strokeWidth="1.5"/>
                             <path d="M11 10H21" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round"/>

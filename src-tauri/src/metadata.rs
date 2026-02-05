@@ -630,34 +630,33 @@ Rules:
 
 fn get_selection_vision_prompt(settings: &crate::settings::AppSettings) -> String {
     let mut checks: Vec<String> = Vec::new();
-    // if settings.check_anatomy_defect { checks.push("check_anatomy_defect".to_string()); }
     
     // Text Vision Logic
     if settings.check_text_or_text_like {
          let mut text_rules = Vec::new();
-         if settings.text_filter_gibberish { text_rules.push("gibberish"); }
-         if settings.text_filter_non_english { text_rules.push("non-english"); }
-         if settings.text_filter_irrelevant { text_rules.push("irrelevant-text"); }
-         if settings.text_filter_relevant { text_rules.push("relevant-text"); }
+         if settings.text_filter_gibberish { text_rules.push("gibberish (meaningless/random letters)"); }
+         if settings.text_filter_non_english { text_rules.push("non-english (valid language other than English)"); }
+         if settings.text_filter_irrelevant { text_rules.push("irrelevant-text (readable but unrelated to image)"); }
+         if settings.text_filter_relevant { text_rules.push("relevant-text (ALL detected text - strict mode)"); }
          if !text_rules.is_empty() {
-             checks.push(format!("Reject if text type is: {:?}", text_rules));
+             checks.push(format!("Reject if text type matches: {:?}", text_rules));
          }
     }
 
-    if settings.check_brand_logo { checks.push("Reject ONLY if specific trademarked logo is visible (ignore clock hands, generic shapes, zippers)".to_string()); }
-    if settings.check_watermark { checks.push("Reject ONLY if digital watermark/copyright stamp visible (ignore natural text)".to_string()); }
+    if settings.check_brand_logo { checks.push("brand_logo: Reject if specific trademarked logo is visible (ignore clock hands, generic shapes, zippers)".to_string()); }
+    if settings.check_watermark { checks.push("watermark: Reject if digital watermark/copyright stamp visible (ignore natural text)".to_string()); }
     
     // Human Vision Logic
     if settings.check_human_presence {
         let mut human_rules = Vec::new();
-        if settings.human_filter_full_face { human_rules.push("full_body_perfect"); }
-        if settings.human_filter_no_head { human_rules.push("no_head"); }
-        if settings.human_filter_partial_perfect { human_rules.push("partial_perfect"); }
-        if settings.human_filter_partial_defect { human_rules.push("partial_defect"); }
-        if settings.human_filter_back_view { human_rules.push("back_view"); }
-        if settings.human_filter_unclear { human_rules.push("unclear_hybrid"); }
-        if settings.human_filter_face_only { human_rules.push("face_only"); }
-        if settings.human_filter_nudity { human_rules.push("nudity_nsfw"); }
+        if settings.human_filter_full_face { human_rules.push("full_body_perfect: Full human body visible with distinct face"); }
+        if settings.human_filter_no_head { human_rules.push("no_head: Human body present but head cut off/missing"); }
+        if settings.human_filter_partial_perfect { human_rules.push("partial_perfect: Realistic/perfect human body parts (hands, legs, torso)"); }
+        if settings.human_filter_partial_defect { human_rules.push("partial_defect: Deformed/distorted/unnatural human body parts"); }
+        if settings.human_filter_back_view { human_rules.push("back_view: Human subject facing away from camera"); }
+        if settings.human_filter_unclear { human_rules.push("unclear_hybrid: Distorted/hybrid/alien-like human subject"); }
+        if settings.human_filter_face_only { human_rules.push("face_only: Close-up human face without significant body"); }
+        if settings.human_filter_nudity { human_rules.push("nudity_nsfw: Nudity, sexual content, or inappropriate material"); }
         if !human_rules.is_empty() {
              checks.push(format!("Reject if human matches: {:?}", human_rules));
         }
@@ -666,29 +665,26 @@ fn get_selection_vision_prompt(settings: &crate::settings::AppSettings) -> Strin
     // Animal Vision Logic
     if settings.check_animal_presence {
         let mut animal_rules = Vec::new();
-        if settings.animal_filter_full_face { animal_rules.push("full_body_perfect"); }
-        if settings.animal_filter_no_head { animal_rules.push("no_head"); }
-        if settings.animal_filter_partial_perfect { animal_rules.push("partial_perfect"); }
-        if settings.animal_filter_partial_defect { animal_rules.push("partial_defect"); }
-        if settings.animal_filter_back_view { animal_rules.push("back_view"); }
-        if settings.animal_filter_unclear { animal_rules.push("unclear_hybrid"); }
-        if settings.animal_filter_face_only { animal_rules.push("face_only"); }
-        if settings.animal_filter_nudity { animal_rules.push("mating_genitals"); }
+        if settings.animal_filter_full_face { animal_rules.push("full_body_perfect: Complete realistic animal body"); }
+        if settings.animal_filter_no_head { animal_rules.push("no_head: Animal body visible but head missing/cut off"); }
+        if settings.animal_filter_partial_perfect { animal_rules.push("partial_perfect: Realistic animal parts (paws, tails, torso)"); }
+        if settings.animal_filter_partial_defect { animal_rules.push("partial_defect: Deformed/distorted animal body parts"); }
+        if settings.animal_filter_back_view { animal_rules.push("back_view: Animal seen from behind"); }
+        if settings.animal_filter_unclear { animal_rules.push("unclear_hybrid: Distorted/hybrid/monster-like animal"); }
+        if settings.animal_filter_face_only { animal_rules.push("face_only: Close-up animal face without body"); }
+        if settings.animal_filter_nudity { animal_rules.push("mating_genitals: Animals mating or visible genitals"); }
         if !animal_rules.is_empty() {
              checks.push(format!("Reject if animal matches: {:?}", animal_rules));
         }
     }
 
-    // if settings.check_human_animal_similarity { checks.push("check_human_animal_similarity".to_string()); } // Deprecated
-    if settings.check_deformed_object { checks.push("Reject if primary subject is anatomically incorrect or physically impossible (bad hands, extra limbs, melting objects). Ignore artistic abstraction.".to_string()); }
-    if settings.check_unrecognizable_subject { checks.push("Reject if the main subject is indistinguishable or too abstract to identify. Ignore abstract art styles.".to_string()); }
-    if settings.check_famous_trademark { checks.push("Reject if famous trademark/IP is clearly visible (e.g., Disney, Marvel, Ferrari, Apple logo, Coca-Cola). Ignore generic objects, cars without badges, or common architectural elements.".to_string()); }
+    // Other Filters
+    if settings.check_deformed_object { checks.push("deformed_object: Reject if primary subject is anatomically incorrect or physically impossible".to_string()); }
+    if settings.check_unrecognizable_subject { checks.push("unrecognizable: Reject if main subject is indistinguishable/too abstract".to_string()); }
+    if settings.check_famous_trademark { checks.push("famous_trademark: Reject if famous IP/logo (Disney, Marvel, Apple, etc) is clearly visible".to_string()); }
     
     format!(
-        "You are an AI Image Quality Inspector. Analyze this image for stock compliance.
-        Enabled Checks: {:?}
-        If ANY check fails, REJECT the image.
-        Output JSON: {{ \"status\": \"accepted\" | \"rejected\", \"reason\": \"...\", \"failed_checks\": [...] }}",
+        "You are an AI Image Quality Inspector. Analyze the image for stock compliance. \nEnabled checks:\n{:#?}\n\nIf ANY check fails, return rejected. \nRespond with ONLY a JSON object: {{\"status\":\"accepted\"|\"rejected\",\"reason\":\"...\",\"failed_checks\":[\"code1\",...]}}. \nIMPORTANT: Use ONLY the short code prefix (part before colon) for failed_checks (e.g. 'full_body_perfect', 'brand_logo').",
         checks
     )
 }
@@ -708,7 +704,7 @@ async fn call_ai_base(
     // Construct System/User messages
     let messages = if let Some((b64, mime)) = &image_b64 {
         serde_json::json!([
-            { "role": "system", "content": "You are a helpful assistant. Output JSON." },
+            { "role": "system", "content": "Respond with ONLY a JSON object. No code fences. No extra text." },
             { 
                 "role": "user", 
                 "content": [
@@ -719,7 +715,7 @@ async fn call_ai_base(
         ])
     } else {
         serde_json::json!([
-            { "role": "system", "content": "You are a helpful assistant. Output JSON." },
+            { "role": "system", "content": "Respond with ONLY a JSON object. No code fences. No extra text." },
             { "role": "user", "content": prompt }
         ])
     };
@@ -736,10 +732,9 @@ async fn call_ai_base(
              } else if m_lower.contains("gemini-3") {
                  current_model = "gemini-2.5-flash-lite".to_string();
              } else if m_lower.contains("gemini-2.5") || m_lower.contains("gemini-1.5") {
-                 current_model = "gemini-2.0-flash-lite-preview-02-05".to_string();
+                 current_model = "gemini-2.5-flash-lite".to_string();
              } else {
-                 // Default fallback
-                 current_model = "gemini-2.0-flash-lite-preview-02-05".to_string();
+                 current_model = "gemini-2.5-flash-lite".to_string();
              }
              println!("Retrying with Fallback Model: {}", current_model);
         }
@@ -799,12 +794,14 @@ async fn call_ai_base(
             let base = url.trim_end_matches('/');
             let (b64, mime) = image_b64.clone().unwrap_or_default();
             
+            let is_selection = prompt.starts_with("You are an AI Image Quality Inspector");
             let body = serde_json::json!({
                 "model": current_model,
                 "messages": messages, // For OpenAI/Groq
                 "prompt": prompt,     // For Gemini
                 "image": b64,
-                "mimeType": mime
+                "mimeType": mime,
+                "selectionMode": is_selection
             });
 
             let resp = client.post(format!("{}/ai/generate", base))
@@ -916,7 +913,7 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
             Ok((sel_txt, usage, _, cost)) => {
                  add_usage(&mut acc_vis_usage, &mut acc_vis_cost, usage, cost);
                  let sel_res = parse_selection_json(&sel_txt);
-                 if sel_res.status == "accepted" {
+                if sel_res.status == "accepted" {
                      let prompt = get_primary_prompt(req, None);
                      match call_ai_base(vision_model, &prompt, img_data.clone(), req).await {
                           Ok((txt, usage, prov, cost)) => {
@@ -925,10 +922,36 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
                           },
                           Err(e) => last_error = e.to_string(),
                      }
-                 } else {
-                     last_error = format!("Rejected: {}", sel_res.reason);
-                     move_to_rejected(f, &settings.output_folder, &sel_res.failed_checks, &sel_res.reason).await.ok();
-                 }
+                } else {
+                    last_error = format!("Rejected: {}", sel_res.reason);
+                    let total_input = acc_vis_usage.prompt_tokens + acc_text_usage.prompt_tokens;
+                    let total_output = acc_vis_usage.completion_tokens + acc_text_usage.completion_tokens;
+                    let total_cost = acc_vis_cost + acc_text_cost;
+                    generated = Some(Generated {
+                        file: f.clone(),
+                        file_path: f.clone(),
+                        title: "ERROR".into(),
+                        description: format!("Rejected: {}", sel_res.reason),
+                        keywords: vec![],
+                        category: String::new(),
+                        source: vision_model.to_string(),
+                        selection_status: Some("rejected".into()),
+                        failed_checks: Some(sel_res.failed_checks.clone()),
+                        reason: Some(sel_res.reason.clone()),
+                        gen_provider: None,
+                        input_tokens: Some(total_input),
+                        output_tokens: Some(total_output),
+                        cost: Some(total_cost),
+                        vision_input_tokens: Some(acc_vis_usage.prompt_tokens),
+                        vision_output_tokens: Some(acc_vis_usage.completion_tokens),
+                        vision_cost: Some(acc_vis_cost),
+                        text_input_tokens: Some(acc_text_usage.prompt_tokens),
+                        text_output_tokens: Some(acc_text_usage.completion_tokens),
+                        text_cost: Some(acc_text_cost),
+                        vision_model: Some(vision_model.to_string()),
+                        text_model: None,
+                    });
+                }
             },
             Err(e) => last_error = e.to_string(),
         }
@@ -940,6 +963,7 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
             Ok((txt, usage, prov, cost)) => {
                 add_usage(&mut acc_vis_usage, &mut acc_vis_cost, usage, cost);
                 let mut temp_gen = parse_generated_json(&txt, f, vision_model, prov, acc_vis_usage.clone(), acc_vis_cost, acc_text_usage.clone(), acc_text_cost, req, Some(vision_model.to_string()), None);
+                let parsed_ok = temp_gen.is_some();
                 
           if let Some(ref mut _g) = temp_gen {
               if selection_on && selection_order == "after" {
@@ -952,19 +976,105 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
                            if sel_res.status == "accepted" {
                                generated = temp_gen;
                            } else {
+                               // FIX: Write metadata even if rejected (for After Generate mode)
+                                if let Some(ref mut g_data) = temp_gen {
+                                    let meta_req = crate::api::ImageMetaReq {
+                                        file: f.clone(),
+                                        output_file: None,
+                                        title: g_data.title.clone(),
+                                        description: g_data.description.clone(),
+                                        keywords: g_data.keywords.clone(),
+                                        creator: String::new(),
+                                        copyright: String::new(),
+                                        overwrite: true,
+                                        auto_embed: true,
+                                        category: Some(g_data.category.clone()),
+                                    };
+                                    
+                                    // Attempt to write/embed metadata
+                                    // If file was renamed (due to rename settings), update the path
+                                    if let Ok(Some(new_path)) = write_image(&meta_req).await {
+                                        g_data.file = new_path.clone();
+                                        g_data.file_path = new_path;
+                                    }
+                                }
+
                                last_error = format!("Rejected: {}", sel_res.reason);
-                               if let Some(ref g) = temp_gen {
-                                   move_to_rejected_with_metadata(f, &settings.output_folder, &sel_res.failed_checks, &sel_res.reason, g).await.ok();
+                               if let Some(ref mut g2) = temp_gen {
+                                   g2.selection_status = Some("rejected".into());
+                                   g2.failed_checks = Some(sel_res.failed_checks.clone());
+                                   g2.reason = Some(sel_res.reason.clone());
+                                   generated = temp_gen;
                                } else {
-                                   move_to_rejected(f, &settings.output_folder, &sel_res.failed_checks, &sel_res.reason).await.ok();
+                                   generated = Some(Generated {
+                                       file: f.clone(),
+                                       file_path: f.clone(),
+                                       title: String::new(),
+                                       description: String::new(),
+                                       keywords: vec![],
+                                       category: String::new(),
+                                       source: vision_model.to_string(),
+                                       selection_status: Some("rejected".into()),
+                                       failed_checks: Some(sel_res.failed_checks.clone()),
+                                       reason: Some(sel_res.reason.clone()),
+                                       gen_provider: None,
+                                       input_tokens: Some(acc_vis_usage.prompt_tokens + acc_text_usage.prompt_tokens),
+                                       output_tokens: Some(acc_vis_usage.completion_tokens + acc_text_usage.completion_tokens),
+                                       cost: Some(acc_vis_cost + acc_text_cost),
+                                       vision_input_tokens: Some(acc_vis_usage.prompt_tokens),
+                                       vision_output_tokens: Some(acc_vis_usage.completion_tokens),
+                                       vision_cost: Some(acc_vis_cost),
+                                       text_input_tokens: Some(acc_text_usage.prompt_tokens),
+                                       text_output_tokens: Some(acc_text_usage.completion_tokens),
+                                       text_cost: Some(acc_text_cost),
+                                       vision_model: Some(vision_model.to_string()),
+                                       text_model: None,
+                                   });
                                }
-                               generated = None;
                            }
                        },
                        Err(e) => last_error = e.to_string(),
                    }
               } else {
                   generated = temp_gen;
+              }
+          }
+          // If parsing failed, still run selection to ensure proper reject handling
+          if !parsed_ok && selection_on && selection_order == "after" {
+              let sel_prompt = get_selection_vision_prompt(&settings);
+              match call_ai_base(vision_model, &sel_prompt, img_data.clone(), req).await {
+                  Ok((sel_txt, usage2, _, cost2)) => {
+                      add_usage(&mut acc_vis_usage, &mut acc_vis_cost, usage2, cost2);
+                      let sel_res = parse_selection_json(&sel_txt);
+                      if sel_res.status != "accepted" {
+                          last_error = format!("Rejected: {}", sel_res.reason);
+                          generated = Some(Generated {
+                              file: f.clone(),
+                              file_path: f.clone(),
+                              title: String::new(),
+                              description: String::new(),
+                              keywords: vec![],
+                              category: String::new(),
+                              source: vision_model.to_string(),
+                              selection_status: Some("rejected".into()),
+                              failed_checks: Some(sel_res.failed_checks.clone()),
+                              reason: Some(sel_res.reason.clone()),
+                              gen_provider: None,
+                              input_tokens: Some(acc_vis_usage.prompt_tokens + acc_text_usage.prompt_tokens),
+                              output_tokens: Some(acc_vis_usage.completion_tokens + acc_text_usage.completion_tokens),
+                              cost: Some(acc_vis_cost + acc_text_cost),
+                              vision_input_tokens: Some(acc_vis_usage.prompt_tokens),
+                              vision_output_tokens: Some(acc_vis_usage.completion_tokens),
+                              vision_cost: Some(acc_vis_cost),
+                              text_input_tokens: Some(acc_text_usage.prompt_tokens),
+                              text_output_tokens: Some(acc_text_usage.completion_tokens),
+                              text_cost: Some(acc_text_cost),
+                              vision_model: Some(vision_model.to_string()),
+                              text_model: None,
+                          });
+                      }
+                  },
+                  Err(e) => { last_error = e.to_string(); }
               }
           }
             },
@@ -983,23 +1093,52 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
                out.push(g);
            }
       } else {
-           // Push Error Result with accumulated usage/cost
-           out.push(Generated {
-                file: f.clone(), file_path: f.clone(),
-                title: "ERROR".into(), description: last_error, keywords: vec![], category: "".into(),
-                source: "error".into(), selection_status: None, failed_checks: None, reason: None, gen_provider: None, 
-                input_tokens: Some(acc_vis_usage.prompt_tokens + acc_text_usage.prompt_tokens), 
-                output_tokens: Some(acc_vis_usage.completion_tokens + acc_text_usage.completion_tokens), 
-                cost: Some(acc_vis_cost + acc_text_cost),
-                vision_input_tokens: Some(acc_vis_usage.prompt_tokens),
-                vision_output_tokens: Some(acc_vis_usage.completion_tokens),
-                vision_cost: Some(acc_vis_cost),
-                text_input_tokens: Some(acc_text_usage.prompt_tokens),
-                text_output_tokens: Some(acc_text_usage.completion_tokens),
-                text_cost: Some(acc_text_cost),
-                vision_model: if acc_vis_usage.total_tokens > 0 { Some(vision_model.to_string()) } else { None },
-                text_model: None,
-           });
+           // Check if the error was a Safety Block (common with Gemini)
+           let is_safety = last_error.to_lowercase().contains("safety") 
+                || last_error.to_lowercase().contains("blocked")
+                || last_error.contains("400");
+                
+           if is_safety && selection_on {
+                // Treat as Rejected (NSFW/Safety)
+                out.push(Generated {
+                    file: f.clone(), file_path: f.clone(),
+                    title: "ERROR".into(), description: format!("Rejected: Safety Block: {}", last_error), keywords: vec![], category: "".into(),
+                    source: vision_model.to_string(), 
+                    selection_status: Some("rejected".into()), 
+                    failed_checks: Some(vec!["nudity_nsfw".into(), "safety_block".into()]), 
+                    reason: Some(format!("Safety Block: {}", last_error)), 
+                    gen_provider: None, 
+                    input_tokens: Some(acc_vis_usage.prompt_tokens + acc_text_usage.prompt_tokens), 
+                    output_tokens: Some(acc_vis_usage.completion_tokens + acc_text_usage.completion_tokens), 
+                    cost: Some(acc_vis_cost + acc_text_cost),
+                    vision_input_tokens: Some(acc_vis_usage.prompt_tokens),
+                    vision_output_tokens: Some(acc_vis_usage.completion_tokens),
+                    vision_cost: Some(acc_vis_cost),
+                    text_input_tokens: Some(acc_text_usage.prompt_tokens),
+                    text_output_tokens: Some(acc_text_usage.completion_tokens),
+                    text_cost: Some(acc_text_cost),
+                    vision_model: if acc_vis_usage.total_tokens > 0 { Some(vision_model.to_string()) } else { None },
+                    text_model: None,
+                });
+           } else {
+               // Push Error Result with accumulated usage/cost
+               out.push(Generated {
+                    file: f.clone(), file_path: f.clone(),
+                    title: "ERROR".into(), description: last_error, keywords: vec![], category: "".into(),
+                    source: "error".into(), selection_status: None, failed_checks: None, reason: None, gen_provider: None, 
+                    input_tokens: Some(acc_vis_usage.prompt_tokens + acc_text_usage.prompt_tokens), 
+                    output_tokens: Some(acc_vis_usage.completion_tokens + acc_text_usage.completion_tokens), 
+                    cost: Some(acc_vis_cost + acc_text_cost),
+                    vision_input_tokens: Some(acc_vis_usage.prompt_tokens),
+                    vision_output_tokens: Some(acc_vis_usage.completion_tokens),
+                    vision_cost: Some(acc_vis_cost),
+                    text_input_tokens: Some(acc_text_usage.prompt_tokens),
+                    text_output_tokens: Some(acc_text_usage.completion_tokens),
+                    text_cost: Some(acc_text_cost),
+                    vision_model: if acc_vis_usage.total_tokens > 0 { Some(vision_model.to_string()) } else { None },
+                    text_model: None,
+               });
+           }
       }
   }
   Ok(out)
@@ -1058,38 +1197,141 @@ fn parse_generated_json(
             text_model: t_model,
         })
     } else {
-        None
+        if let Some(start) = clean.find('{') {
+            if let Some(end) = clean.rfind('}') {
+                if end > start {
+                    let potential_json = &clean[start..=end];
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(potential_json) {
+                        return Some(Generated {
+                            file: file.to_string(),
+                            file_path: file.to_string(),
+                            title: parsed["title"].as_str().unwrap_or("").to_string(),
+                            description: parsed["description"].as_str().unwrap_or("").to_string(),
+                            keywords: normalize_keywords(&parsed["keywords"], req.keywords_min_count, req.keywords_max_count, &req.banned_words),
+                            category: if let Some(arr) = parsed["category"].as_array() { arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(",") } else { parsed["category"].as_str().unwrap_or("").to_string() },
+                            source: model.to_string(),
+                            selection_status: None,
+                            failed_checks: None,
+                            reason: None,
+                            gen_provider: provider.clone(),
+                            input_tokens: Some(total_input),
+                            output_tokens: Some(total_output),
+                            cost: Some(total_cost),
+                            vision_input_tokens: Some(v_usage.prompt_tokens),
+                            vision_output_tokens: Some(v_usage.completion_tokens),
+                            vision_cost: Some(v_cost),
+                            text_input_tokens: Some(t_usage.prompt_tokens),
+                            text_output_tokens: Some(t_usage.completion_tokens),
+                            text_cost: Some(t_cost),
+                            vision_model: v_model.clone(),
+                            text_model: t_model.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        // let lower = clean.to_lowercase(); // Unused variable
+        let mut title = String::new();
+        let mut description = String::new();
+        let mut keywords_raw: Vec<String> = Vec::new();
+        let mut category = String::new();
+        for line in clean.lines() {
+            let l = line.trim();
+            if title.is_empty() && (l.starts_with("title:") || l.starts_with("Title:")) {
+                title = l.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
+            } else if description.is_empty() && (l.starts_with("description:") || l.starts_with("Description:")) {
+                description = l.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
+            } else if keywords_raw.is_empty() && (l.starts_with("keywords:") || l.starts_with("Keywords:")) {
+                let ks = l.splitn(2, ':').nth(1).unwrap_or("");
+                keywords_raw = ks.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            } else if category.is_empty() && (l.starts_with("category:") || l.starts_with("Category:")) {
+                category = l.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
+            }
+        }
+        let keywords_val = serde_json::Value::Array(keywords_raw.iter().map(|s| serde_json::Value::String(s.clone())).collect());
+        let keywords = normalize_keywords(&keywords_val, req.keywords_min_count, req.keywords_max_count, &req.banned_words);
+        if title.is_empty() { title = Path::new(file).file_stem().and_then(|s| s.to_str()).unwrap_or("Untitled").to_string(); }
+        Some(Generated {
+            file: file.to_string(),
+            file_path: file.to_string(),
+            title,
+            description,
+            keywords,
+            category,
+            source: model.to_string(),
+            selection_status: None,
+            failed_checks: None,
+            reason: None,
+            gen_provider: provider,
+            input_tokens: Some(total_input),
+            output_tokens: Some(total_output),
+            cost: Some(total_cost),
+            vision_input_tokens: Some(v_usage.prompt_tokens),
+            vision_output_tokens: Some(v_usage.completion_tokens),
+            vision_cost: Some(v_cost),
+            text_input_tokens: Some(t_usage.prompt_tokens),
+            text_output_tokens: Some(t_usage.completion_tokens),
+            text_cost: Some(t_cost),
+            vision_model: v_model,
+            text_model: t_model,
+        })
     }
 }
 
 fn parse_selection_json(txt: &str) -> SelectionResult {
     let clean = txt.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(clean) {
-        SelectionResult {
+        return SelectionResult {
             status: parsed["status"].as_str().unwrap_or("rejected").to_string(),
             failed_checks: parsed["failed_checks"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<String>>()).unwrap_or_default(),
             reason: parsed["reason"].as_str().unwrap_or("").to_string(),
             usage: None
-        }
-    } else {
-        // Try to find JSON object {} if surrounded by text
-        if let Some(start) = clean.find('{') {
-            if let Some(end) = clean.rfind('}') {
-                if end > start {
-                    let potential_json = &clean[start..=end];
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(potential_json) {
-                         return SelectionResult {
-                            status: parsed["status"].as_str().unwrap_or("rejected").to_string(),
-                            failed_checks: parsed["failed_checks"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<String>>()).unwrap_or_default(),
-                            reason: parsed["reason"].as_str().unwrap_or("").to_string(),
-                            usage: None
-                        };
-                    }
+        };
+    }
+
+    if let Some(start) = clean.find('{') {
+        if let Some(end) = clean.rfind('}') {
+            if end > start {
+                let potential_json = &clean[start..=end];
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(potential_json) {
+                    return SelectionResult {
+                        status: parsed["status"].as_str().unwrap_or("rejected").to_string(),
+                        failed_checks: parsed["failed_checks"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<String>>()).unwrap_or_default(),
+                        reason: parsed["reason"].as_str().unwrap_or("").to_string(),
+                        usage: None
+                    };
                 }
             }
         }
-        SelectionResult { status: "rejected".into(), failed_checks: vec![], reason: "Unrecognized Response".into(), usage: None }
     }
+
+    let lower = clean.to_lowercase();
+    if lower.contains("accepted") && !lower.contains("reject") {
+        return SelectionResult { status: "accepted".into(), failed_checks: vec![], reason: String::new(), usage: None };
+    }
+
+    let mut fails: Vec<String> = Vec::new();
+    let known = [
+        "gibberish","non-english","irrelevant-text","relevant-text",
+        "full_body_perfect","no_head","partial_perfect","partial_defect","back_view","unclear_hybrid","face_only","nudity_nsfw","mating_genitals",
+        "watermark","trademarked logo","brand_logo","brand logo",
+        "deformed_object","unrecognizable","famous_trademark"
+    ];
+    for k in known.iter() {
+        if lower.contains(k) { fails.push((*k).to_string()); }
+    }
+
+    let mut reason = String::new();
+    if let Some(i) = lower.find("reason:") {
+        let r = &clean[i+7..];
+        reason = r.lines().next().unwrap_or("").trim().to_string();
+    } else if !fails.is_empty() {
+        reason = format!("Matched: {:?}", fails);
+    } else if lower.contains("reject") || lower.contains("not compliant") || lower.contains("fail") {
+        reason = "Policy match".to_string();
+    }
+
+    SelectionResult { status: "rejected".into(), failed_checks: fails, reason, usage: None }
 }
 
 fn normalize_keywords(v: &serde_json::Value, _min_c: u32, max_c: u32, banned_str: &str) -> Vec<String> {
@@ -1243,10 +1485,10 @@ async fn prepare_image_data(path: &str, _model: &str) -> Result<(String, String)
     let img = image::load_from_memory(&buf)?;
     let (w, h) = img.dimensions();
     
-    // Target 768px max dimension for optimal AI analysis while keeping size small
-    let (nw, nh) = if w > 768 || h > 768 {
-        if w > h { (768, (768.0 * h as f32 / w as f32) as u32) }
-        else { ((768.0 * w as f32 / h as f32) as u32, 768) }
+    // Target 512px max dimension to save tokens (Gemini 1.5 Flash 8B/Lite sensitive to size)
+    let (nw, nh) = if w > 512 || h > 512 {
+        if w > h { (512, (512.0 * h as f32 / w as f32) as u32) }
+        else { ((512.0 * w as f32 / h as f32) as u32, 512) }
     } else { (w, h) };
     
     // Always resize/re-encode to ensure consistent JPEG format for API
@@ -1322,7 +1564,7 @@ fn map_failure_to_tag(fail: &str) -> String {
     if f.contains("unrecognizable") { return "Unrecognizable".to_string(); }
     if f.contains("famous") { return "Famous_Trademark".to_string(); }
 
-    if f.contains("json parse error") || f.contains("unrecognized response") { return "AI_Response_Error".to_string(); }
+    if f.contains("json parse error") || f.contains("unrecognized response") || f.contains("parse failed") { return "Selection_Parse_Failed".to_string(); }
 
     String::new()
 }
@@ -1334,8 +1576,15 @@ pub async fn move_to_rejected_with_metadata(
     main_reason: &str,
     gen: &Generated
 ) -> Result<()> {
-    if output_folder.is_empty() { return Ok(()); }
-    let rej_dir = PathBuf::from(output_folder).join("rejected");
+    let rej_dir = if output_folder.is_empty() {
+        PathBuf::from(file_path)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("rejected")
+    } else {
+        PathBuf::from(output_folder).join("rejected")
+    };
     std::fs::create_dir_all(&rej_dir)?;
     
     // Get original extension
@@ -1451,8 +1700,15 @@ pub async fn move_to_rejected_with_metadata(
 }
 
 pub async fn move_to_rejected(file_path: &str, output_folder: &str, reasons: &[String], main_reason: &str) -> Result<()> {
-    if output_folder.is_empty() { return Ok(()); }
-    let rej_dir = PathBuf::from(output_folder).join("rejected");
+    let rej_dir = if output_folder.is_empty() {
+        PathBuf::from(file_path)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("rejected")
+    } else {
+        PathBuf::from(output_folder).join("rejected")
+    };
     std::fs::create_dir_all(&rej_dir)?;
     
     // Get original extension

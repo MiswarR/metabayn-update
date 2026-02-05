@@ -1,6 +1,8 @@
 import React, { useEffect, useRef } from 'react'
+import { translations } from '../utils/translations';
 
-export default function LogPanel({logs}:{logs:any[]}){
+export default function LogPanel({logs, lang = 'en'}:{logs:any[], lang?: 'en' | 'id'}){
+  const t = translations[lang].logPanel;
   const endRef = useRef<HTMLDivElement>(null)
   const [expandedIndex, setExpandedIndex] = React.useState<number | null>(null);
 
@@ -49,7 +51,7 @@ export default function LogPanel({logs}:{logs:any[]}){
                         gap: '6px'
                     }}
                     onClick={() => hasDetail && toggleExpand(i)}
-                    title={hasDetail ? "Click for details" : ""}
+                    title={hasDetail ? t.clickDetails : ""}
                  >
                     {hasDetail && <span style={{fontSize:'0.8em', opacity:0.7}}>{isExpanded ? '▼' : '▶'}</span>}
                     <span>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { apiCreatePaypal, apiGetBalance, apiCheckPaypalStatus, apiRedeemVoucher, getMachineHash } from '../api/backend';
+import { translations } from '../utils/translations';
 import paypalLogoUrl from '../assets/payments/paypal.svg';
 import lynkLogoUrl from '../assets/payments/lynk.svg';
 import token20000Img from '../assets/payments/token20000.png';
@@ -20,9 +21,11 @@ interface TopUpModalProps {
   onSuccess: (addedAmount?: number, purchaseType?: 'token' | 'subscription', expiry?: string, source?: 'paypal' | 'voucher') => void;
   initialTab?: 'topup' | 'redeem';
   initialPurchaseType?: 'token' | 'subscription';
+  lang?: 'en' | 'id';
 }
 
-const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose, token, userId, usdRate, onSuccess, initialTab = 'topup', initialPurchaseType = 'token' }) => {
+const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose, token, userId, usdRate, onSuccess, initialTab = 'topup', initialPurchaseType = 'token', lang = 'en' }) => {
+  const t = translations[lang].topUp;
   const [activeTab, setActiveTab] = useState<'topup' | 'redeem'>(initialTab);
   
   useEffect(() => {
@@ -72,7 +75,7 @@ const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose, token, userId,
       
       onClose();
     } catch (e: any) {
-      setRedeemError(e.message || "Redemption failed");
+      setRedeemError(e.message || t.redemptionFailed);
     } finally {
       setRedeemLoading(false);
     }
@@ -163,7 +166,7 @@ const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose, token, userId,
 
   const startPaypal = async (type: 'token' | 'subscription', amt: number, tokensPack?: number) => {
     if (type === 'subscription' && !amt) {
-      setError("Invalid subscription amount");
+      setError(t.invalidSubAmount);
       return;
     }
     setLoading(true);
@@ -179,7 +182,7 @@ const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose, token, userId,
         startPolling(res.transactionId, type, tokensPack);
       }
     } catch (e: any) {
-      setError(e.message || "Payment creation failed");
+      setError(e.message || t.paymentFailed);
     } finally {
       setLoading(false);
     }
@@ -240,7 +243,7 @@ const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose, token, userId,
       // amount berasal dari konversi kurs USD, tidak ada minimum $3
     } else {
       if (!subscriptionPrices[subscriptionDuration]) {
-        setError("Invalid subscription duration");
+        setError(t.invalidSubDuration);
         return;
       }
     }
@@ -259,7 +262,7 @@ const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose, token, userId,
           startPolling(res.transactionId, purchaseType);
       }
     } catch (e: any) {
-      setError(e.message || "Payment creation failed");
+      setError(e.message || t.paymentFailed);
     } finally {
       setLoading(false);
     }
@@ -276,13 +279,13 @@ const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose, token, userId,
       }} onClick={e=>e.stopPropagation()}>
         
         <div style={{display:'flex', borderBottom:'1px solid #333', marginBottom:15}}>
-            <div style={{padding:10, cursor:'pointer', borderBottom: activeTab==='topup'?'2px solid #4caf50':'none', color: activeTab==='topup'?'#fff':'#888'}} onClick={()=>setActiveTab('topup')}>Top Up</div>
-            <div style={{padding:10, cursor:'pointer', borderBottom: activeTab==='redeem'?'2px solid #4caf50':'none', color: activeTab==='redeem'?'#fff':'#888'}} onClick={()=>setActiveTab('redeem')}>Redeem Voucher</div>
+            <div style={{padding:10, cursor:'pointer', borderBottom: activeTab==='topup'?'2px solid #4caf50':'none', color: activeTab==='topup'?'#fff':'#888'}} onClick={()=>setActiveTab('topup')}>{t.title}</div>
+            <div style={{padding:10, cursor:'pointer', borderBottom: activeTab==='redeem'?'2px solid #4caf50':'none', color: activeTab==='redeem'?'#fff':'#888'}} onClick={()=>setActiveTab('redeem')}>{t.redeemTitle}</div>
         </div>
 
         {activeTab === 'topup' ? (
           <>
-            <h3 style={{marginTop:0}}>Top Up</h3>
+            <h3 style={{marginTop:0}}>{t.title}</h3>
 
             {error && <div style={{color:'#f44336', marginBottom:10, fontSize:12}}>{error}</div>}
 
@@ -291,6 +294,11 @@ const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose, token, userId,
                 <p style={{margin:0}}>{result.message}</p>
               </div>
             )}
+
+            <div style={{marginBottom:15, padding:10, background:'#2a2a2a', borderRadius:4, fontSize:10, color:'#cccccc99', textAlign:'center', fontStyle:'italic', maxWidth:'100%', boxSizing:'border-box'}}>
+              <p style={{margin:0, whiteSpace:'normal', overflowWrap:'anywhere', wordBreak:'break-word'}}>{t.instructionEmail}</p>
+              <p style={{margin:'6px 0 0 0', color:'#ffb84d92', whiteSpace:'normal', overflowWrap:'anywhere', wordBreak:'break-word'}}>{t.instructionSupport}</p>
+            </div>
 
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(260px, 1fr))', gap:14}}>
               <div style={{border:'1px solid #444', borderRadius:8, background:'#2a2a2a', padding:10}}>
@@ -312,7 +320,7 @@ const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose, token, userId,
 
               <div style={{border:'1px solid #444', borderRadius:8, background:'#2a2a2a', padding:10}}>
                 <ImageSquare src={token50000Img} alt="Metabayn Token Voucher 50.000 – Credit Top-Up for Metadata Processing" />
-                <div style={{marginTop:12, fontWeight:600}}>Metabayn Token Voucher 50.000 – Credit Top-Up for Metadata Processing</div>
+                <div style={{marginTop:12, fontWeight:600}}>{t.tokenDesc.replace('{amount}', '50.000')}</div>
                 <div style={{display:'flex', justifyContent:'space-between', fontSize:12, color:'#ccc', marginTop:8}}>
                   <span style={{fontWeight:700, color:'#fff'}}>Rp {tokenIdr50.toLocaleString('id-ID')}</span>
                   <span style={{fontWeight:700, color:'#fff'}}>{usdRate && usdRate>0 ? `$${usdFromIdr(tokenIdr50).toFixed(1)}` : 'USD N/A'}</span>
@@ -346,7 +354,7 @@ const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose, token, userId,
 
               <div style={{border:'1px solid #444', borderRadius:8, background:'#2a2a2a', padding:10}}>
                 <ImageSquare src={token150000Img} alt="Metabayn Token Voucher 150.000 – Credit Top-Up for Metadata Processing" />
-                <div style={{marginTop:12, fontWeight:600}}>Metabayn Token Voucher 150.000 – Credit Top-Up for Metadata Processing</div>
+                <div style={{marginTop:12, fontWeight:600}}>{t.tokenDesc.replace('{amount}', '150.000')}</div>
                 <div style={{display:'flex', justifyContent:'space-between', fontSize:12, color:'#ccc', marginTop:8}}>
                   <span style={{fontWeight:700, color:'#fff'}}>Rp {tokenIdr150.toLocaleString('id-ID')}</span>
                   <span style={{fontWeight:700, color:'#fff'}}>{usdRate && usdRate>0 ? `$${usdFromIdr(tokenIdr150).toFixed(1)}` : 'USD N/A'}</span>
@@ -363,7 +371,7 @@ const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose, token, userId,
 
               <div style={{border:'1px solid #444', borderRadius:8, background:'#2a2a2a', padding:10}}>
                 <ImageSquare src={sub30Img} alt="Metabayn API Key Mode Subscription - 30 Days" />
-                <div style={{marginTop:12, fontWeight:600}}>Metabayn API Key Mode Subscription - 30 Days</div>
+                <div style={{marginTop:12, fontWeight:600}}>{t.subDesc.replace('{duration}', '30 ' + t.days)}</div>
                 <div style={{display:'flex', justifyContent:'space-between', fontSize:12, color:'#ccc', marginTop:8}}>
                   <span style={{color:'#aaa', textDecoration:'line-through'}}>Rp {subIdrOld[30].toLocaleString('id-ID')}</span>
                   <span style={{color:'#aaa', textDecoration:'line-through'}}>{usdRate && usdRate>0 ? `$${usdFromIdr(subIdrOld[30]).toFixed(1)}` : 'USD N/A'}</span>
@@ -405,7 +413,7 @@ const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose, token, userId,
 
               <div style={{border:'1px solid #444', borderRadius:8, background:'#2a2a2a', padding:10}}>
                 <ImageSquare src={sub180Img} alt="Metabayn API Key Mode Subscription - 6 Months" />
-                <div style={{marginTop:12, fontWeight:600}}>Metabayn API Key Mode Subscription - 6 Months</div>
+                <div style={{marginTop:12, fontWeight:600}}>{t.subDesc.replace('{duration}', '6 ' + t.months)}</div>
                 <div style={{display:'flex', justifyContent:'space-between', fontSize:12, color:'#ccc', marginTop:8}}>
                   <span style={{color:'#aaa', textDecoration:'line-through'}}>Rp {subIdrOld[180].toLocaleString('id-ID')}</span>
                   <span style={{color:'#aaa', textDecoration:'line-through'}}>{usdRate && usdRate>0 ? `$${usdFromIdr(subIdrOld[180]).toFixed(1)}` : 'USD N/A'}</span>
@@ -446,20 +454,17 @@ const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose, token, userId,
               </div>
             </div>
 
-            <div style={{marginTop:10, padding:10, background:'#2a2a2a', borderRadius:4, fontSize:10, color:'#cccccc99', textAlign:'center', fontStyle:'italic', maxWidth:'100%', boxSizing:'border-box'}}>
-              <p style={{margin:0, whiteSpace:'normal', overflowWrap:'anywhere', wordBreak:'break-word'}}>Please enter a valid and active email during checkout as the voucher code will be sent to this email.</p>
-              <p style={{margin:'6px 0 0 0', color:'#ffb84d92', whiteSpace:'normal', overflowWrap:'anywhere', wordBreak:'break-word'}}>If you encounter any issues, please contact the admin via WhatsApp at +628996701661.</p>
-            </div>
+{null}
           </>
         ) : (
           <>
-            <h3 style={{marginTop:0}}>Redeem Voucher</h3>
+            <h3 style={{marginTop:0}}>{t.redeemTitle}</h3>
             <div style={{marginBottom:15}}>
-                <label style={{display:'block', marginBottom:5, fontSize:12, color:'#888'}}>Voucher Code</label>
+                <label style={{display:'block', marginBottom:5, fontSize:12, color:'#888'}}>{t.voucherCode}</label>
                 <input 
                     type="text" 
                     style={{width:'100%', padding:10, background:'#333', color:'#fff', border:'1px solid #444', borderRadius:4}}
-                    placeholder="Enter Code"
+                    placeholder={t.enterCode}
                     value={redeemCode}
                     onChange={e => setRedeemCode(e.target.value)}
                 />
@@ -470,7 +475,7 @@ const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose, token, userId,
             <button disabled={redeemLoading} onClick={handleRedeem} style={{
                 width:'100%', padding:12, background:'#4caf50', color:'#fff', border:'none', borderRadius:4, cursor:redeemLoading?'wait':'pointer', fontWeight:'bold'
             }}>
-                {redeemLoading ? 'Redeeming...' : 'Redeem'}
+                {redeemLoading ? t.redeeming : t.redeem}
             </button>
           </>
         )}

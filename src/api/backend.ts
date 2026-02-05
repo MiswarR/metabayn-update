@@ -5,6 +5,12 @@ const DEFAULT_API_URL = "https://metabayn-backend.metabayn.workers.dev";
 
 // Helper to get the dynamic API URL from settings
 export async function getApiUrl(): Promise<string> {
+    // Check if running in browser context without Tauri
+    // @ts-ignore
+    if (typeof window !== 'undefined' && !window.__TAURI_IPC__) {
+        return DEFAULT_API_URL;
+    }
+
     try {
         const s = await invoke<any>('get_settings');
         // Remove trailing slash if present

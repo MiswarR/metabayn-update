@@ -7,8 +7,10 @@ import { encryptApiKey, decryptApiKey } from '../utils/crypto'
 import { logAudit } from '../utils/audit'
 import { getApiUrl, getTokenLocal } from '../api/backend'
 import TopUpModal from '../components/TopUpModal'
+import { translations } from '../utils/translations'
 
-export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, embedded?: boolean, onSave?:()=>void}){
+export default function Settings({onBack, embedded, onSave, lang='en'}:{onBack:()=>void, embedded?: boolean, onSave?:()=>void, lang?:'en'|'id'}){
+  const t = translations[lang].settings;
   const [server,setServer]=useState('')
   const [model,setModel]=useState('gemini-2.0-flash-exp')
   const [overwrite,setOverwrite]=useState(true)
@@ -156,8 +158,8 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
          const apiUrl = await getApiUrl();
          const token = getTokenLocal();
          if (!token) return;
-         // Use the same endpoint as AdminTopup
-         const res = await fetch(`${apiUrl}/admin/model-prices`, {
+         // Use the public config endpoint (requires auth but not admin)
+         const res = await fetch(`${apiUrl}/config/models`, {
             headers: { 'Authorization': `Bearer ${token}` }
          });
          if (res.ok) {
@@ -285,7 +287,7 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
 
   async function testConnection() {
       if (!apiKey.trim()) {
-          showToast('API key is empty', 'error')
+          showToast(t.apiKeyEmpty, 'error')
           return
       }
       if (apiKeyError) {
@@ -295,10 +297,10 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
       setTestingConnection(true)
       try {
           const res = await invoke<string>('test_api_connection', { provider, apiKey })
-          showToast(res === 'Success' ? 'Connected successfully' : `Connected: ${res}`, 'success')
+          showToast(res === 'Success' ? t.connectedSuccess : `${t.connected}${res}`, 'success')
       } catch (e:any) {
           const msg = String(e).replace('Error: ', '')
-          showToast(`Connection failed: ${msg}`, 'error')
+          showToast(`${t.connectionFailed}${msg}`, 'error')
       } finally {
           setTestingConnection(false)
       }
@@ -307,11 +309,11 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
   async function saveApiKey() {
       // Validate format
       if (apiKey.trim().length < 5) {
-          showToast('API Key tidak valid', 'error')
+          showToast(t.apiKeyInvalid, 'error')
           return
       }
       if (provider === 'OpenAI' && !apiKey.startsWith('sk-proj-')) {
-          showToast('OpenAI API keys must start with sk-proj-', 'error')
+          showToast(t.openaiKeyInvalid, 'error')
           return
       }
 
@@ -321,10 +323,10 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
           localStorage.setItem('metabayn_api_key_iv', iv)
           setApiKeyEncrypted(data)
           logAudit('ApiKeyUsage', 'Save API Key', 'Success');
-          showToast('API key saved', 'success')
+          showToast(t.apiKeySaved, 'success')
       } catch (e:any) {
           logAudit('Error', 'Save API Key Failed', String(e));
-          showToast(`Failed to save API key: ${String(e).replace('Error: ', '')}`, 'error')
+          showToast(`${t.saveFailed}${String(e).replace('Error: ', '')}`, 'error')
       }
   }
 
@@ -336,6 +338,12 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
   }
 
   async function load(){
+    // @ts-ignore
+    if (typeof window !== 'undefined' && !window.__TAURI_IPC__) {
+        console.log("Browser mode detected: Skipping Tauri settings load");
+        return;
+    }
+
     try {
       const s=await invoke<any>('get_settings')
       setServer(s.server_url||''); 
@@ -476,7 +484,7 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
 
   async function applySettings() {
     await saveSilent()
-    showToast("Settings applied successfully", 'success')
+    showToast(t.successApplied, 'success')
   }
 
   return (
@@ -503,11 +511,8 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
             display:'flex', alignItems:'center', justifyContent:'center'
         }}>
             <div style={{background:'#1e1e1e', padding:30, borderRadius:12, maxWidth:400, textAlign:'center', border:'1px solid #333'}}>
-                <h3 style={{marginTop:0, color:'#ff5252'}}>Subscription Required</h3>
-                <p style={{color:'#ccc', lineHeight:1.5}}>
-                    API Key Mode is only available for subscribed users.<br/>
-                    Your subscription has expired or is not active.
-                </p>
+                <h3 style={{marginTop:0, color:'#ff5252'}}>{t.subscriptionRequired}</h3>
+                <p style={{color:'#ccc', lineHeight:1.5}} dangerouslySetInnerHTML={{__html: t.subPopupMsg}}></p>
                 <div style={{display:'flex', flexDirection:'column', gap:10, marginTop:20}}>
                     <button 
                         onClick={()=>{ 
@@ -517,7 +522,7 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
                             setShowTopUpModal(true);
                         }}
                         style={{background:'#4caf50', padding:'12px', border:'none', borderRadius:6, color:'white', cursor:'pointer', fontWeight:'bold'}}>
-                        Enter Subscription Voucher
+                        {t.enterVoucher}
                     </button>
                     <button 
                         onClick={()=>{ 
@@ -527,12 +532,12 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
                             setShowTopUpModal(true);
                         }} {...pressHandlers}
                         style={{background:'#0070ba', padding:'12px', border:'none', borderRadius:6, color:'white', cursor:'pointer', fontWeight:'bold'}}>
-                        Subscribe
+                        {t.subscribe}
                     </button>
                     <button 
                         onClick={()=>{ setShowSubPopup(false); if(connectionMode==='direct') setConnectionMode('server'); }} {...pressHandlers}
                         style={{background:'#444', padding:'10px', border:'none', borderRadius:6, color:'white', cursor:'pointer'}}>
-                        Close
+                        {t.close}
                     </button>
                 </div>
             </div>
@@ -541,45 +546,45 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
       {!embedded && (
         <div className="settings-header" style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
           <button className="icon-btn" onClick={onBack} aria-label="Back">←</button>
-          <h2 style={{margin:0}}>Settings</h2>
+          <h2 style={{margin:0}}>{t.title}</h2>
         </div>
       )}
 
 
 
       <div className="folder-group">
-        <label>Input Folder {inputError && <span style={{color:'red', marginLeft:10}}>Folder not found!</span>}</label>
+        <label>{t.inputFolder} {inputError && <span style={{color:'red', marginLeft:10}}>{t.folderNotFound}</span>}</label>
         <div className="folder">
             <input type="text" value={input} onChange={e=>setInput(e.target.value)} style={{borderColor: inputError ? 'red' : ''}} />
             <button className="btn-browse" onClick={async()=>{
-                const r=await pick({directory:true}); 
+                const r=await pick({directory:true, title: t.selectInputFolder}); 
                 if(typeof r==='string') { 
                     const exists = await invoke('file_exists', {path: r});
-                    if(!exists) { alert("Selected folder does not exist!"); return; }
+                    if(!exists) { alert(t.folderNotFound); return; }
                     setInput(r); 
                     saveSilent({input_folder:r}) 
                 }
-            }}>Browse</button>
+            }}>{t.browse}</button>
         </div>
       </div>
       <div className="folder-group">
-        <label>Output Folder {outputError && <span style={{color:'red', marginLeft:10}}>Folder not found!</span>}</label>
+        <label>{t.outputFolder} {outputError && <span style={{color:'red', marginLeft:10}}>{t.folderNotFound}</span>}</label>
         <div className="folder">
             <input type="text" value={output} onChange={e=>setOutput(e.target.value)} style={{borderColor: outputError ? 'red' : ''}} />
             <button className="btn-browse" onClick={async()=>{
-                const r=await pick({directory:true}); 
+                const r=await pick({directory:true, title: t.selectOutputFolder}); 
                 if(typeof r==='string') { 
                     const exists = await invoke('file_exists', {path: r});
-                    if(!exists) { alert("Selected folder does not exist!"); return; }
+                    if(!exists) { alert(t.folderNotFound); return; }
                     setOutput(r); 
                     saveSilent({output_folder:r}) 
                 }
-            }}>Browse</button>
+            }}>{t.browse}</button>
         </div>
       </div>
 
       <div className="setting-row">
-        <label>AI Provider</label>
+        <label>{t.aiProvider}</label>
         <select value={provider} onChange={e=>{
           const p = e.target.value;
           setProvider(p); 
@@ -593,7 +598,7 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
       </div>
 
       <div className="setting-row">
-        <label>Model</label>
+        <label>{t.model}</label>
         <select value={model} onChange={e=>setModel(e.target.value)}>
           {getModels(provider).map(m=> (<option key={m.value} value={m.value}>{m.label}</option>))}
         </select>
@@ -602,11 +607,11 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
       {/* Api Key Toggle */}
       <div className="setting-row" style={{display:'flex', justifyContent:'space-between', alignItems:'center', opacity: subscriptionStatus.is_active ? 1 : 0.5}}>
         <div>
-          <label>Api Key</label>
-          {!subscriptionStatus.is_active && <div style={{color:'#ff5252', marginTop:2, fontSize: 10}}>Subscription required</div>}
+          <label>{t.apiKey}</label>
+          {!subscriptionStatus.is_active && <div style={{color:'#ff5252', marginTop:2, fontSize: 10}}>{t.subscriptionRequired}</div>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:6}}>
-          <span style={{fontSize:11, color:'#888', minWidth:20, textAlign:'right'}}>{connectionMode === 'direct' ? 'On' : 'Off'}</span>
+          <span style={{fontSize:11, color:'#888', minWidth:20, textAlign:'right'}}>{connectionMode === 'direct' ? t.on : t.off}</span>
           <button
             onClick={()=>{
                 if (!subscriptionStatus.is_active) {
@@ -649,7 +654,7 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
       {connectionMode === 'direct' && (
           <div style={{marginTop:5, marginBottom:15, background:'#252525', padding:10, borderRadius:8}}>
               <div className="setting-row">
-                  <label>API Key ({provider})</label>
+                  <label>{t.apiKey} ({provider})</label>
                   <div style={{display:'flex', gap:5, flexDirection:'column', flex:1}}>
                       <input 
                         type="text" 
@@ -665,7 +670,7 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
                         }} 
                         onFocus={()=>setIsApiKeyFocused(true)}
                         onBlur={()=>setIsApiKeyFocused(false)}
-                        placeholder={provider === 'OpenAI' ? 'sk-proj-...' : 'AIza...'}
+                        placeholder={t.apiKeyPlaceholder}
                         style={{flex:1, borderColor: apiKeyError ? 'red' : '#ccc', borderStyle:'solid', borderWidth:1, padding:6, borderRadius:6, background:'#1b1b1b', color:'#eee'}}
                       />
                       {apiKeyError && <div style={{color:'#ff5252', fontSize: 10}}>{apiKeyError}</div>}
@@ -673,7 +678,7 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
               </div>
               <div style={{display:'flex', justifyContent:'space-between', marginTop:6}}>
                   <div style={{color:'#777', fontSize: 10}}>
-                      {apiKeyEncrypted ? '✓ Saved (AES-GCM)' : '⚠ Not saved'}
+                      {apiKeyEncrypted ? t.saved : t.notSaved}
                   </div>
                   <div style={{display:'flex', gap:6}}>
                       <button 
@@ -682,14 +687,14 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
                         title="Test API key with provider"
                         style={{background:'#3b74a8', border:'none', color:'#fff', borderRadius:6, padding:'6px 10px', cursor:'pointer', opacity: testingConnection ? 0.7 : 0.9, fontSize: 10}}
                       >
-                        {testingConnection ? 'Testing...' : 'Test API Key'}
+                        {testingConnection ? t.testing : t.testApiKey}
                       </button>
                       <button 
                         onClick={saveApiKey} 
                         title="Save API key securely"
                         style={{background:'#4f8f66', border:'none', color:'#fff', borderRadius:6, padding:'6px 10px', cursor:'pointer', opacity:0.9, fontSize: 10}}
                       >
-                        Save
+                        {t.save}
                       </button>
                   </div>
               </div>
@@ -702,52 +707,52 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
       
       <div className="setting-group-grid">
         <div className="setting-item">
-          <label>Threads</label>
+          <label>{t.threads}</label>
           <input type="number" value={threads} onChange={e=>setThreads(Number(e.target.value))} />
         </div>
         <div className="setting-item">
-          <label>Retry</label>
+          <label>{t.retry}</label>
           <input type="number" value={retry} onChange={e=>setRetry(Number(e.target.value))} />
         </div>
       </div>
 
       <div className="setting-group-grid">
         <div className="setting-item">
-          <label>Title min</label>
+          <label>{t.titleMin}</label>
           <input type="number" value={tmin} onChange={e=>setTmin(Number(e.target.value))} />
         </div>
         <div className="setting-item">
-          <label>Title max</label>
+          <label>{t.titleMax}</label>
           <input type="number" value={tmax} onChange={e=>setTmax(Number(e.target.value))} />
         </div>
       </div>
 
       <div className="setting-group-grid">
         <div className="setting-item">
-          <label>Desc min</label>
+          <label>{t.descMin}</label>
           <input type="number" value={dmin} onChange={e=>setDmin(Number(e.target.value))} />
         </div>
         <div className="setting-item">
-          <label>Desc max</label>
+          <label>{t.descMax}</label>
           <input type="number" value={dmax} onChange={e=>setDmax(Number(e.target.value))} />
         </div>
       </div>
 
       <div className="setting-group-grid">
         <div className="setting-item">
-          <label>Tags min</label>
+          <label>{t.tagsMin}</label>
           <input type="number" value={kmin} onChange={e=>setKmin(Number(e.target.value))} />
         </div>
         <div className="setting-item">
-          <label>Tags max</label>
+          <label>{t.tagsMax}</label>
           <input type="number" value={kmax} onChange={e=>setKmax(Number(e.target.value))} />
         </div>
       </div>
 
       <div className="setting-row" style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-        <label>Image Selection</label>
+        <label>{t.imageSelection}</label>
         <div style={{display:'flex',alignItems:'center',gap:6}}>
-          <span style={{fontSize:11, color:'#888', minWidth:20, textAlign:'right'}}>{selectionEnabled ? 'On' : 'Off'}</span>
+          <span style={{fontSize:11, color:'#888', minWidth:20, textAlign:'right'}}>{selectionEnabled ? t.on : t.off}</span>
           <button
             onClick={()=>setSelectionEnabled(!selectionEnabled)}
             style={{
@@ -780,10 +785,10 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
       {selectionEnabled && (
         <>
         <div className="setting-row">
-          <label>Selection Order</label>
+          <label>{t.selectionOrder}</label>
           <select value={selectionOrder} onChange={e=>setSelectionOrder(e.target.value as any)}>
-            <option value="before">Before Generate</option>
-            <option value="after">After Generate</option>
+            <option value="before">{t.beforeGenerate}</option>
+            <option value="after">{t.afterGenerate}</option>
           </select>
         </div>
         <div className="setting-group" style={{marginTop:8, display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}}>
@@ -804,18 +809,18 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
                  setHumanFilterPartialDefect(false); setHumanFilterBackView(false); setHumanFilterUnclear(false);
                  setHumanFilterFaceOnly(false); setHumanFilterNudity(false);
               }
-            }} /><span>Human Presence Filter</span></label>
+            }} /><span>{t.humanPresence}</span></label>
             
             {checkHumanPresence && <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:4, marginLeft: 20, marginTop: 4}}>
               {[
-                { label: 'Full Body (Perfect Face)', val: humanFilterFullFace, set: setHumanFilterFullFace },
-                { label: 'No Head Visible', val: humanFilterNoHead, set: setHumanFilterNoHead },
-                { label: 'Partial Body (Perfect)', val: humanFilterPartialPerfect, set: setHumanFilterPartialPerfect },
-                { label: 'Partial Body (Defect)', val: humanFilterPartialDefect, set: setHumanFilterPartialDefect },
-                { label: 'Back View', val: humanFilterBackView, set: setHumanFilterBackView },
-                { label: 'Unclear/Hybrid/Alien', val: humanFilterUnclear, set: setHumanFilterUnclear },
-                { label: 'Face Only', val: humanFilterFaceOnly, set: setHumanFilterFaceOnly },
-                { label: 'Nudity/NSFW', val: humanFilterNudity, set: setHumanFilterNudity },
+                { label: t.filters.fullBody, val: humanFilterFullFace, set: setHumanFilterFullFace },
+                { label: t.filters.noHead, val: humanFilterNoHead, set: setHumanFilterNoHead },
+                { label: t.filters.partialPerfect, val: humanFilterPartialPerfect, set: setHumanFilterPartialPerfect },
+                { label: t.filters.partialDefect, val: humanFilterPartialDefect, set: setHumanFilterPartialDefect },
+                { label: t.filters.backView, val: humanFilterBackView, set: setHumanFilterBackView },
+                { label: t.filters.unclear, val: humanFilterUnclear, set: setHumanFilterUnclear },
+                { label: t.filters.faceOnly, val: humanFilterFaceOnly, set: setHumanFilterFaceOnly },
+                { label: t.filters.nudity, val: humanFilterNudity, set: setHumanFilterNudity },
               ].map((opt, i) => (
                 <label key={i} className="checkline sub-check" style={{color:'#aaa'}}><input type="checkbox" checked={opt.val} onChange={e=>opt.set(e.target.checked)} style={{accentColor: '#2bd3d3'}} /><span>{opt.label}</span></label>
               ))}
@@ -836,18 +841,18 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
                  setAnimalFilterPartialDefect(false); setAnimalFilterBackView(false); setAnimalFilterUnclear(false);
                  setAnimalFilterFaceOnly(false); setAnimalFilterNudity(false);
                }
-            }} /><span>Animal Presence Filter</span></label>
+            }} /><span>{t.animalPresence}</span></label>
             
             {checkAnimalPresence && <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:4, marginLeft: 20, marginTop: 4}}>
               {[
-                { label: 'Full Body (Perfect)', val: animalFilterFullFace, set: setAnimalFilterFullFace },
-                { label: 'No Head Visible', val: animalFilterNoHead, set: setAnimalFilterNoHead },
-                { label: 'Partial Body (Perfect)', val: animalFilterPartialPerfect, set: setAnimalFilterPartialPerfect },
-                { label: 'Partial Body (Defect)', val: animalFilterPartialDefect, set: setAnimalFilterPartialDefect },
-                { label: 'Back View', val: animalFilterBackView, set: setAnimalFilterBackView },
-                { label: 'Unclear/Hybrid/Alien', val: animalFilterUnclear, set: setAnimalFilterUnclear },
-                { label: 'Face Only', val: animalFilterFaceOnly, set: setAnimalFilterFaceOnly },
-                { label: 'Mating/Genitals', val: animalFilterNudity, set: setAnimalFilterNudity },
+                { label: t.filters.fullBody, val: animalFilterFullFace, set: setAnimalFilterFullFace },
+                { label: t.filters.noHead, val: animalFilterNoHead, set: setAnimalFilterNoHead },
+                { label: t.filters.partialPerfect, val: animalFilterPartialPerfect, set: setAnimalFilterPartialPerfect },
+                { label: t.filters.partialDefect, val: animalFilterPartialDefect, set: setAnimalFilterPartialDefect },
+                { label: t.filters.backView, val: animalFilterBackView, set: setAnimalFilterBackView },
+                { label: t.filters.unclear, val: animalFilterUnclear, set: setAnimalFilterUnclear },
+                { label: t.filters.faceOnly, val: animalFilterFaceOnly, set: setAnimalFilterFaceOnly },
+                { label: t.filters.mating, val: animalFilterNudity, set: setAnimalFilterNudity },
               ].map((opt, i) => (
                 <label key={i} className="checkline sub-check" style={{color:'#aaa'}}><input type="checkbox" checked={opt.val} onChange={e=>opt.set(e.target.checked)} style={{accentColor: '#2bd3d3'}} /><span>{opt.label}</span></label>
               ))}
@@ -864,26 +869,26 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
               } else {
                 setTextFilterGibberish(false); setTextFilterNonEnglish(false); setTextFilterIrrelevant(false); setTextFilterRelevant(false);
               }
-            }} /><span>Text or Text-like Filter</span></label>
+            }} /><span>{t.textFilter}</span></label>
             
             {checkTextOrTextLike && <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:4, marginLeft: 20, marginTop: 4}}>
               {[
-                { label: 'Gibberish/Meaningless', val: textFilterGibberish, set: setTextFilterGibberish },
-                { label: 'Non-English Text', val: textFilterNonEnglish, set: setTextFilterNonEnglish },
-                { label: 'Irrelevant Meaning', val: textFilterIrrelevant, set: setTextFilterIrrelevant },
-                { label: 'Relevant Meaning', val: textFilterRelevant, set: setTextFilterRelevant },
+                { label: t.filters.gibberish, val: textFilterGibberish, set: setTextFilterGibberish },
+                { label: t.filters.nonEnglish, val: textFilterNonEnglish, set: setTextFilterNonEnglish },
+                { label: t.filters.irrelevant, val: textFilterIrrelevant, set: setTextFilterIrrelevant },
+                { label: t.filters.relevant, val: textFilterRelevant, set: setTextFilterRelevant },
               ].map((opt, i) => (
                 <label key={i} className="checkline sub-check" style={{color:'#aaa'}}><input type="checkbox" checked={opt.val} onChange={e=>opt.set(e.target.checked)} style={{accentColor: '#2bd3d3'}} /><span>{opt.label}</span></label>
               ))}
             </div>}
           </div>
 
-          <label className="checkline"><input type="checkbox" checked={checkDeformedObject} onChange={e=>setCheckDeformedObject(e.target.checked)} /><span>Deformed Object</span></label>
-          <label className="checkline"><input type="checkbox" checked={checkUnrecognizableSubject} onChange={e=>setCheckUnrecognizableSubject(e.target.checked)} /><span>Unrecognizable Subject</span></label>
-          <label className="checkline"><input type="checkbox" checked={checkBrandLogo} onChange={e=>setCheckBrandLogo(e.target.checked)} /><span>Brand Logo</span></label>
-          <label className="checkline"><input type="checkbox" checked={checkFamousTrademark} onChange={e=>setCheckFamousTrademark(e.target.checked)} /><span>Famous Trademark</span></label>
-          <label className="checkline"><input type="checkbox" checked={checkWatermark} onChange={e=>setCheckWatermark(e.target.checked)} /><span>Watermark</span></label>
-          <label className="checkline"><input type="checkbox" checked={checkDuplicateSimilarity} onChange={e=>setCheckDuplicateSimilarity(e.target.checked)} /><span>Duplicate Similarity</span></label>
+          <label className="checkline"><input type="checkbox" checked={checkDeformedObject} onChange={e=>setCheckDeformedObject(e.target.checked)} /><span>{t.deformedObject}</span></label>
+          <label className="checkline"><input type="checkbox" checked={checkUnrecognizableSubject} onChange={e=>setCheckUnrecognizableSubject(e.target.checked)} /><span>{t.unrecognizableSubject}</span></label>
+          <label className="checkline"><input type="checkbox" checked={checkBrandLogo} onChange={e=>setCheckBrandLogo(e.target.checked)} /><span>{t.brandLogo}</span></label>
+          <label className="checkline"><input type="checkbox" checked={checkFamousTrademark} onChange={e=>setCheckFamousTrademark(e.target.checked)} /><span>{t.famousTrademark}</span></label>
+          <label className="checkline"><input type="checkbox" checked={checkWatermark} onChange={e=>setCheckWatermark(e.target.checked)} /><span>{t.watermark}</span></label>
+          <label className="checkline"><input type="checkbox" checked={checkDuplicateSimilarity} onChange={e=>setCheckDuplicateSimilarity(e.target.checked)} /><span>{t.duplicateSimilarity}</span></label>
         </div>
         </>
       )}
@@ -892,14 +897,14 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
 
       {selectionEnabled && checkDuplicateSimilarity && (
         <div className="setting-group" style={{marginTop:8}}>
-          <div className="setting-item" style={{width: '25%'}}><label>Dup dist</label><input type="number" value={duplicateMaxDistance} onChange={e=>setDuplicateMaxDistance(Number(e.target.value))} /></div>
+          <div className="setting-item" style={{width: '25%'}}><label>{t.dupDist}</label><input type="number" value={duplicateMaxDistance} onChange={e=>setDuplicateMaxDistance(Number(e.target.value))} /></div>
         </div>
       )}
       
       <div className="setting-row" style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-        <label>Generate CSV</label>
+        <label>{t.generateCsv}</label>
         <div style={{display:'flex',alignItems:'center',gap:6}}>
-          <span style={{fontSize:11, color:'#888', minWidth:20, textAlign:'right'}}>{generateCsv ? 'On' : 'Off'}</span>
+          <span style={{fontSize:11, color:'#888', minWidth:20, textAlign:'right'}}>{generateCsv ? t.on : t.off}</span>
           <button
             onClick={()=>setGenerateCsv(!generateCsv)}
             style={{
@@ -932,9 +937,9 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
 
       <div style={{ marginBottom: 10 }}>
         <div className="setting-row" style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-          <label>Rename File</label>
+          <label>{t.renameFile}</label>
           <div style={{display:'flex',alignItems:'center',gap:6}}>
-            <span style={{fontSize:11, color:'#888', minWidth:20, textAlign:'right'}}>{renameEnabled ? 'On' : 'Off'}</span>
+            <span style={{fontSize:11, color:'#888', minWidth:20, textAlign:'right'}}>{renameEnabled ? t.on : t.off}</span>
             <button
               onClick={()=>setRenameEnabled(!renameEnabled)}
               style={{
@@ -961,7 +966,7 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
                     onChange={()=>setRenameMode('title')}
                     style={{accentColor: '#2bd3d3'}}
                   />
-                  <span>Rename with Title file</span>
+                  <span>{t.renameTitle}</span>
               </label>
               <label className="checkline sub-check" style={{color:'#aaa'}}>
                   <input
@@ -970,7 +975,7 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
                     onChange={()=>setRenameMode('datetime')}
                     style={{accentColor: '#2bd3d3'}}
                   />
-                  <span>Rename with Date/Time</span>
+                  <span>{t.renameDateTime}</span>
               </label>
               <label className="checkline sub-check" style={{color:'#aaa'}}>
                   <input
@@ -979,14 +984,14 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
                     onChange={()=>setRenameMode('custom')}
                     style={{accentColor: '#2bd3d3'}}
                   />
-                  <span>Rename with Custom Name</span>
+                  <span>{t.renameCustom}</span>
               </label>
               {renameMode === 'custom' && (
                   <input 
                       type="text" 
                       value={renameCustomText} 
                       onChange={e=>setRenameCustomText(e.target.value)} 
-                      placeholder="Enter custom filename..."
+                      placeholder={t.customNamePlaceholder}
                       style={{marginLeft: 20, padding: '4px 8px', background: '#333', border: '1px solid #555', color: 'white', borderRadius: 4, width: 200}}
                   />
               )}
@@ -994,7 +999,7 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
         )}
       </div>
       
-      <label>Banned Words (comma or newline separated)</label>
+      <label>{t.bannedWords}</label>
       <textarea value={banned} onChange={e=>setBanned(e.target.value)} rows={3} />
       
       <div style={{marginTop:10, display:'flex', gap:10, justifyContent:'flex-end'}}>
@@ -1002,11 +1007,11 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
               <button 
                   className="btn-apply"
                   onClick={applySettings} 
-                  title="Apply and Save Settings"
+                  title={t.applyTooltip}
               >
-                  Apply
+                  {t.apply}
               </button>
-              {!embedded && <button onClick={onBack} style={{padding:'6px 10px', cursor:'pointer', fontSize:11, borderRadius:6, border:'1px solid #666', background:'transparent', color:'#ccc'}}>Back</button>}
+              {!embedded && <button onClick={onBack} style={{padding:'6px 10px', cursor:'pointer', fontSize:11, borderRadius:6, border:'1px solid #666', background:'transparent', color:'#ccc'}}>{t.back}</button>}
           </div>
         </div>
 
@@ -1035,6 +1040,7 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
         }}
         initialTab={topUpInitialTab}
         initialPurchaseType={topUpPurchaseType}
+        lang={lang}
       />
 
       {successNotification && (
@@ -1046,8 +1052,8 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
             <div style={{background:'#1e1e1e', padding:30, borderRadius:12, maxWidth:460, width:'90vw', textAlign:'left', border:'1px solid #333'}}>
                 <div style={{ fontWeight: 700, fontSize: 18, color: '#4caf50' }}>
                     {successNotification.type === 'subscription'
-                      ? (successNotification.source === 'voucher' ? 'Subscription Voucher Activated' : 'Subscription Activated')
-                      : (successNotification.source === 'voucher' ? 'Voucher Redeemed' : 'Payment Successful')}
+                      ? (successNotification.source === 'voucher' ? t.voucherActivated : t.subActivated)
+                      : (successNotification.source === 'voucher' ? t.voucherRedeemed : t.paymentSuccess)}
                 </div>
                 <div style={{ marginTop: 10, color: '#ccc', fontSize: 13, lineHeight: 1.6 }}>
                     {successNotification.type === 'token' && (
@@ -1055,26 +1061,26 @@ export default function Settings({onBack, embedded, onSave}:{onBack:()=>void, em
                           {successNotification.source === 'voucher'
                             ? (
                                 typeof successNotification.amount === 'number' && successNotification.amount > 0
-                                  ? `${successNotification.amount.toLocaleString()} tokens have been added to your account.`
-                                  : 'Your token voucher has been redeemed and tokens have been added.'
+                                  ? `${successNotification.amount.toLocaleString()} ${t.tokensAdded}`
+                                  : t.voucherTokensAdded
                               )
                             : (
                                 typeof successNotification.amount === 'number' && successNotification.amount > 0
-                                  ? `${successNotification.amount.toLocaleString()} tokens have been added to your account.`
-                                  : 'Your tokens have been added to your account.'
+                                  ? `${successNotification.amount.toLocaleString()} ${t.tokensAdded}`
+                                  : t.tokensAddedSimple
                               )}
                         </>
                     )}
                     {successNotification.type === 'subscription' && (
                         <>
                           {successNotification.expiry
-                            ? `Your API Key mode is active until ${new Date(successNotification.expiry).toLocaleString()}.`
-                            : 'Your API Key mode has been activated.'}
+                            ? `${t.apiKeyModeActiveUntil}${new Date(successNotification.expiry).toLocaleString()}.`
+                            : t.apiKeyModeActivated}
                         </>
                     )}
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-                    <button onClick={() => setSuccessNotification(null)} style={{ padding: '10px 14px', background: '#333', color: '#fff', border: '1px solid #444', borderRadius: 6, cursor: 'pointer' }}>Close</button>
+                    <button onClick={() => setSuccessNotification(null)} style={{ padding: '10px 14px', background: '#333', color: '#fff', border: '1px solid #444', borderRadius: 6, cursor: 'pointer' }}>{t.close}</button>
                 </div>
             </div>
         </div>
