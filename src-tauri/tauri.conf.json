@@ -38,7 +38,7 @@
         "https://raw.githubusercontent.com/MiswarR/metabayn-update/main/updates/version.json"
       ],
       "dialog": false,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc2Qzg0QzI4N0ZBNkM1MTUKUldRVnhhWi9LRXpJZHJ1NHpHdEgzcWRwMXlreG5LMEREakYrSzM2VFdpNEZ5d3VpV2h1UkFQMFcK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNCRDk5QUQ4NkFDOUZERkIKUldUNy9jbHEySnJaTzVHbEtpZjJ2bWROUGNsVGN4NXBKLzVyenN1bFNVcC9TMlNMUzVHbmpkN0EK"
     },
     "allowlist": {
       "all": false,
