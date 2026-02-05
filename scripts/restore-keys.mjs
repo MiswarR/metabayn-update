@@ -15,49 +15,42 @@ if (!rawKey) {
 console.log(`Key length: ${rawKey.length}`);
 
 // 2. Bersihkan Key (Normalize)
-// Kita harus hati-hati. Jika key sudah memiliki header, kita validasi.
-// Jika tidak, kita tambahkan header default.
+// REWRITE: Reconstruct key strictly to avoid "Invalid symbol" errors.
+// We extract ONLY the Base64 body and Prepend a fresh header.
 
-let finalKeyContent = rawKey.trim();
+// Check password status
+const pwdCheck = (process.env.TAURI_KEY_PASSWORD || '').replace(/\r?\n/g, '').trim();
+const hasPwd = pwdCheck.length > 0;
+const expectedHeader = hasPwd 
+    ? "untrusted comment: minisign encrypted secret key" 
+    : "untrusted comment: minisign secret key";
 
-// Cek apakah ada header 'untrusted comment'
-if (finalKeyContent.includes('untrusted comment:')) {
-    console.log("Key headers detected. Validating...");
-    // Ganti header 'rsign' (jika ada) menjadi 'minisign' agar kompatibel
-    finalKeyContent = finalKeyContent.replace(/untrusted comment: rsign/g, 'untrusted comment: minisign');
+console.log(`Password detected: ${hasPwd ? 'YES' : 'NO'}`);
+console.log(`Expected Header: ${expectedHeader}`);
 
-    // FORCE FIX: Jika password kosong, pastikan header TIDAK mengandung "encrypted"
-    // Ini penting karena rsign/minisign sering salah mengartikan "encrypted" jika password kosong
-    const pwdCheck = (process.env.TAURI_KEY_PASSWORD || '').replace(/\r?\n/g, '').trim();
-    if (pwdCheck.length === 0) {
-        if (finalKeyContent.includes('encrypted secret key')) {
-             console.log("No password detected, but header says 'encrypted'. Fixing header to 'secret key'...");
-             finalKeyContent = finalKeyContent.replace('encrypted secret key', 'secret key');
-        }
-    }
-    
-    // Pastikan header benar
-    if (!finalKeyContent.includes('untrusted comment: minisign secret key') && !finalKeyContent.includes('untrusted comment: minisign encrypted secret key')) {
-        console.warn("WARNING: Key header might be non-standard. Attempting to fix...");
-        // Jika header ada tapi aneh, kita biarkan dulu, mungkin user punya format sendiri
-    }
+// Extract Base64 Body
+// Pattern: Cari string Base64 yang panjang (50+ chars).
+// Ini mengabaikan header lama yang mungkin rusak/salah spasi.
+const base64Pattern = /([a-zA-Z0-9+/=]{40,})/;
+const match = rawKey.match(base64Pattern);
 
-    // Fix Formatting: Ensure header and body are on separate lines
-    // Jika key digabung satu baris (misal copy paste error), kita split
-    // Regex mencari: (Header...) (Base64...)
-    const oneLineRegex = /^(untrusted comment: .+? key)\s+([a-zA-Z0-9+/=]{10,})$/;
-    const match = finalKeyContent.match(oneLineRegex);
-    if (match) {
-        console.log("Detected one-line key format. Splitting into two lines...");
-        finalKeyContent = `${match[1]}${os.EOL}${match[2]}`;
-    }
-
-} else {
-    console.log("No headers detected. Assuming raw Base64 key.");
-    const hasPwd = (process.env.TAURI_KEY_PASSWORD || '').replace(/\r?\n/g, '').trim().length > 0;
-    const header = hasPwd ? "untrusted comment: minisign encrypted secret key" : "untrusted comment: minisign secret key";
-    finalKeyContent = `${header}${os.EOL}${finalKeyContent}`;
+if (!match) {
+    console.error("CRITICAL ERROR: Could not find valid Base64 key body in the provided secret!");
+    // Fallback: Use rawKey trimmed, maybe it's short?
+    // But usually minisign keys are longer.
+    console.error("Raw Key Dump (First 20 chars):", rawKey.substring(0, 20));
+    process.exit(1);
 }
+
+const keyBody = match[1].trim();
+console.log("Extracted Key Body (first 10 chars):", keyBody.substring(0, 10) + "...");
+
+// Reconstruct Key Strictly
+// Note: We use \n (Line Feed) explicitly for consistency across platforms (macOS needs \n)
+const finalKeyContent = `${expectedHeader}\n${keyBody}`;
+
+console.log("Key Reconstructed Successfully.");
+
 
 console.log("Key content prepared.");
 
