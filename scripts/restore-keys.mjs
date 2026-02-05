@@ -43,11 +43,13 @@ if (!match) {
 const keyBody = match[1].trim();
 console.log("Extracted Key Body (first 10 chars):", keyBody.substring(0, 10) + "...");
 
-// Reconstruct Key (Header + Base64)
-// We explicitly reconstruct the file with the unencrypted header.
-const finalKeyContent = `${expectedHeader}${os.EOL}${keyBody}${os.EOL}`;
+// Reconstruct Key (RAW BASE64 ONLY)
+// The error "Invalid symbol 32, offset 9" implies the parser is trying to decode
+// the "untrusted comment..." header as Base64 and failing at the space (ASCII 32).
+// This suggests we should provide the raw Base64 body only.
+const finalKeyContent = keyBody;
 
-console.log("Key Reconstructed (Header + Base64).");
+console.log("Key Reconstructed (Raw Base64, No Header).");
 
 
 console.log("Key content prepared.");
