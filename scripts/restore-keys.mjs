@@ -41,6 +41,17 @@ if (finalKeyContent.includes('untrusted comment:')) {
         console.warn("WARNING: Key header might be non-standard. Attempting to fix...");
         // Jika header ada tapi aneh, kita biarkan dulu, mungkin user punya format sendiri
     }
+
+    // Fix Formatting: Ensure header and body are on separate lines
+    // Jika key digabung satu baris (misal copy paste error), kita split
+    // Regex mencari: (Header...) (Base64...)
+    const oneLineRegex = /^(untrusted comment: .+? key)\s+([a-zA-Z0-9+/=]{10,})$/;
+    const match = finalKeyContent.match(oneLineRegex);
+    if (match) {
+        console.log("Detected one-line key format. Splitting into two lines...");
+        finalKeyContent = `${match[1]}${os.EOL}${match[2]}`;
+    }
+
 } else {
     console.log("No headers detected. Assuming raw Base64 key.");
     const hasPwd = (process.env.TAURI_KEY_PASSWORD || '').replace(/\r?\n/g, '').trim().length > 0;
