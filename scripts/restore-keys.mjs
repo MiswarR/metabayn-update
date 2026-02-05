@@ -85,17 +85,14 @@ try {
     // 7. Set Environment Variable untuk Step Selanjutnya (Github Actions)
     const githubEnvPath = process.env.GITHUB_ENV;
     if (githubEnvPath) {
-        const crypto = await import('crypto');
-        const delimiter = `EOF_${crypto.randomBytes(4).toString('hex')}`;
+        console.log("Injecting Key PATH (not content) into GITHUB_ENV to avoid parsing errors...");
         
-        console.log("Injecting Full Key Content into GITHUB_ENV...");
-
-        // Format Multiline untuk GITHUB_ENV
-        // Pastikan kita menggunakan format yang benar dengan delimiter
-        const envContent = `TAURI_PRIVATE_KEY<<${delimiter}${os.EOL}${finalKeyContent}${os.EOL}${delimiter}${os.EOL}`;
+        // Use the absolute path to the file we just wrote
+        // This avoids "Invalid symbol 32" errors caused by Env Var parsing issues
+        const envContent = `TAURI_PRIVATE_KEY=${outputPath}${os.EOL}`;
         
         fs.appendFileSync(githubEnvPath, envContent, { encoding: 'utf8' });
-        console.log("Success: TAURI_PRIVATE_KEY added to GITHUB_ENV.");
+        console.log(`Success: TAURI_PRIVATE_KEY set to path: ${outputPath}`);
 
         // Handle Password (Optional)
         const pwdRaw = process.env.TAURI_KEY_PASSWORD;
