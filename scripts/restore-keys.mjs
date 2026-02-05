@@ -46,18 +46,38 @@ try {
     // Mari kita coba strategi "Hanya Base64 Body" lagi, tapi kali ini untuk key yang TERENKRIPSI.
     
     console.log("Processing Key Content...");
-    let keyContentToWrite = rawKey;
-
-    // Cek apakah ada header
-    if (rawKey.includes("untrusted comment:")) {
-        console.log("Header detected. Attempting to extract Base64 body only to avoid 'Invalid symbol 32'...");
-        const base64Match = rawKey.match(/([a-zA-Z0-9+/=]{50,})/);
-        if (base64Match) {
-            keyContentToWrite = base64Match[1];
-            console.log("Extracted Base64 Body successfully.");
-        } else {
-            console.warn("WARNING: Header detected but could not extract Base64 body. Writing raw content.");
-        }
+    
+    // STRATEGI BARU:
+    // Error "invalid utf-8 sequence of 1 bytes from index 6"
+    // Ini biasanya terjadi jika kita memberikan file BINARY (raw bytes) ke sesuatu yang mengharapkan STRING (utf-8),
+    // ATAU sebaliknya, kita memberikan STRING Base64 ke sesuatu yang mengharapkan BINARY DECODED.
+    //
+    // Jika kita memberikan Base64 string ke `tauri build` melalui file, tauri CLI akan membacanya.
+    //
+    // Mari kita coba pendekatan paling standar: Tulis persis apa adanya dari ENV,
+    // TAPI pastikan encoding file adalah UTF-8 dan tidak ada BOM atau karakter aneh.
+    //
+    // Namun, error "Invalid symbol 32" sebelumnya menunjukkan bahwa parser TIDAK SUKA header.
+    // Dan sekarang "invalid utf-8" mungkin karena kita memotong header tapi menyisakan karakter sampah,
+    // atau karena kunci terenkripsi (binary) tidak valid jika dibaca sebagai utf-8.
+    
+    // KITA AKAN COBA REKONSTRUKSI ULANG DENGAN HEADER LENGKAP TAPI PASTI BENAR.
+    // Kita tahu kuncinya adalah:
+    // untrusted comment: rsign encrypted secret key
+    // <BASE64>
+    
+    let keyContentToWrite = rawKey.trim();
+    
+    // Jika user mengcopy-paste dengan spasi berantakan, kita rapikan.
+    const base64Match = rawKey.match(/([a-zA-Z0-9+/=]{50,})/);
+    if (base64Match) {
+        const body = base64Match[1];
+        // Kita paksa format standar Minisign/Rsign
+        // Note: Gunakan \n (LF) bukan \r\n (CRLF) untuk aman di Linux/Mac runner.
+        keyContentToWrite = `untrusted comment: rsign encrypted secret key\n${body}`;
+        console.log("Reconstructed Key with correct header (LF line endings).");
+    } else {
+        console.warn("Could not find Base64 body to reconstruct. Writing raw.");
     }
 
     fs.writeFileSync(outputPath, keyContentToWrite, { encoding: 'utf8' });
