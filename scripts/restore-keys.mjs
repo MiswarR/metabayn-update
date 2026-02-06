@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-console.log("Starting Key Restoration (Raw Key Body Mode)...");
+console.log("Starting Key Restoration (Base64 Passthrough Mode)...");
 
 const rawKey = process.env.TAURI_PRIVATE_KEY;
 if (!rawKey) {
@@ -13,45 +13,22 @@ if (!rawKey) {
 const outputPath = path.resolve(process.cwd(), 'tauri.key');
 
 try {
-    // 1. Decode the GitHub Secret (Base64 -> Text)
-    // Expectation: The secret contains the FULL file content (Header + Key) encoded in Base64
-    let decodedContent = Buffer.from(rawKey.trim(), 'base64').toString('utf-8');
-    console.log("Decoded key content length:", decodedContent.length);
-
-    // 2. Extract ONLY the Key Body (remove headers/comments)
-    // The error "Invalid symbol 32, offset 9" happens because Tauri is trying to Base64-decode
-    // the text "untrusted comment..." and fails at the space (symbol 32) at offset 9.
-    // Solution: Give it ONLY the Base64 key data.
+    // The user has confirmed they provided the Base64 string: "dW50cnVzdGVk..."
+    // The error "Invalid symbol 32, offset 9" (space character) confirms that the 
+    // Tauri signer is receiving "untrusted comment: ..." (Text) but expecting Base64.
+    // Therefore, we must NOT decode the key here. We must write the Base64 string directly to the file.
     
-    let keyBody = decodedContent;
-    const lines = decodedContent.split(/\r?\n/);
-    
-    // Find the line that looks like a key (long, no spaces, not a comment)
-    const keyLine = lines.find(line => 
-        line.trim().length > 20 && 
-        !line.startsWith('untrusted comment:') && 
-        !line.includes(' ')
-    );
-
-    if (keyLine) {
-        console.log("Found raw key body in file content. extracting...");
-        keyBody = keyLine.trim();
-    } else {
-        console.warn("Could not identify key body line. Using full content (risky).");
-        // Fallback: maybe the content IS just the key?
-        keyBody = decodedContent.trim();
-    }
-
-    // 3. Write ONLY the key body to the file
-    fs.writeFileSync(outputPath, keyBody, { encoding: 'utf8' });
-    console.log(`Raw Key Body written to ${outputPath}`);
+    // Write the RAW Base64 content to the file.
+    // The Tauri signer will read this file, find the Base64 string, and decode it internally.
+    fs.writeFileSync(outputPath, rawKey.trim(), { encoding: 'utf8' });
+    console.log(`Base64 Key written to ${outputPath}`);
 
 } catch (e) {
-    console.error("Error processing key:", e);
+    console.error("Error writing key:", e);
     process.exit(1);
 }
 
-// 4. Export to GITHUB_ENV
+// Export to GITHUB_ENV
 const githubEnvPath = process.env.GITHUB_ENV;
 if (githubEnvPath) {
     console.log("Injecting Key PATH into GITHUB_ENV...");
@@ -62,7 +39,7 @@ if (githubEnvPath) {
     console.log("Success: TAURI_KEY_PASSWORD set to empty");
 }
 
-// 5. Ensure Updater Active
+// Ensure Updater Active
 try {
     const confPath = path.resolve(process.cwd(), 'src-tauri', 'tauri.conf.json');
     if (fs.existsSync(confPath)) {
