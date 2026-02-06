@@ -365,7 +365,7 @@ export default function HelpGuide({ onClose, lang, onLangChange }: { onClose: ()
                 <button 
                     onClick={() => onLangChange('en')}
                     style={{
-                        background: lang === 'en' ? '#4caf50' : 'transparent',
+                        background: lang === 'en' ? '#35a4e5' : 'transparent',
                         color: lang === 'en' ? '#fff' : '#888',
                         border: 'none', borderRadius: 4, padding: '4px 8px',
                         cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', transition: 'all 0.2s'
@@ -377,7 +377,7 @@ export default function HelpGuide({ onClose, lang, onLangChange }: { onClose: ()
                 <button 
                     onClick={() => onLangChange('id')}
                     style={{
-                        background: lang === 'id' ? '#4caf50' : 'transparent',
+                        background: lang === 'id' ? '#F049A9' : 'transparent',
                         color: lang === 'id' ? '#fff' : '#888',
                         border: 'none', borderRadius: 4, padding: '4px 8px',
                         cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', transition: 'all 0.2s'
