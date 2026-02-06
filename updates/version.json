@@ -1,11 +1,15 @@
 {
-  "version": "v4.4.5",
-  "notes": "Update v4.4.5: Perbaikan sistem dan peningkatan performa.",
-  "pub_date": "2026-02-04T12:00:00Z",
+  "version": "v4.4.6",
+  "notes": "Update v4.4.6: Perbaikan sistem dan peningkatan performa.",
+  "pub_date": "2026-02-06T00:00:00Z",
   "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0x3aXBVaVVxUE8yc0taWEFrSnRvWXN3eUVHQXBwY25BaE1zTm0rMmlOQkdheXJjTEZuL1N6eE5wZlBaN0k4bFBGYk5qVXRLUU0rTC9jUmZXbHU5MnJWTFg4UGp6ZGd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcwMzUwMDIxCWZpbGU6TWV0YWJheW4gU3R1ZGlvLmFwcC50YXIuZ3oKalB5b2NuNWRmNU03a1FHUDRma2M5bEE2YlVSemU2OTBPNnhhbmk3cklYUDBDbUt2KzE3aHAvZ0k0ZFhUWGF1Sm5kWk5oNU1TVkd0SStPM0pGZXdRQVE9PQo=",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.4.6/Metabayn.Studio.app.tar.gz"
+    },
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbnVRaGZGUnNvd0tJM1l3ZjlYck95N3VOMFBIMXZKVHlFUTFNTTdoUnhwWDJYcWo3bCtwVHREMFp4d1ZyR1BUQTRsY1ZoUjBzWWNENUNrc05FRXViYUtDOUJKZ216S1FnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcwMjAxMTUxCWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuNC41X3g2NC1zZXR1cC5uc2lzLnppcApGYXhMRTVyTWVkYjdxVDBGQUYxWkdmai9EL09CMVhLTHM4TDUzQzNGa0tOREZVYnUvaDE4ZGg3OEdabGZ6TnROL0VIc2lQYjZ2VC9uZFJaa2ZrZk5BQT09Cg==",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.4.5/Metabayn.Studio_4.4.5_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0x3aXBVaVVxUExPY3NuRmVBNU5nektSdmF3KzVOK285YWtyK2h2dUxuY1NzY204ZE1VZzdhS0NTSE5PcGlKRTkxUEhuOHJPbTU4L2xONG9kd0ViOFZWWmJYTEExRUFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcwMzUwMjUyCWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuNC42X3g2NC1zZXR1cC5uc2lzLnppcAoyUFVRUGRWQnByQXJuRHRnNzBkMmJ0VG83YjIzRTFPa3JHNUdYOVZwa0EzY2ZwVjl3YlMyUkRKOVVEVm5TeGpiL25odlpLc1NCZFJ6eGdoN3ZtdWhEUT09Cg==",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.4.6/Metabayn.Studio_4.4.6_x64-setup.nsis.zip"
     }
   }
 }
