@@ -20,10 +20,6 @@ try {
     // Basic validation to ensure it looks like a Minisign key
     if (!decodedKey.startsWith('untrusted comment:')) {
         console.warn("WARNING: Decoded key does not start with 'untrusted comment'. It might be raw or invalid.");
-        // Fallback: If decoding didn't produce expected text, maybe it wasn't base64? 
-        // Or maybe it was just the raw key body?
-        // We'll write the decoded content anyway, or maybe the raw content if decoding failed to produce text?
-        // Let's assume the plan: User provides Base64, we decode.
     }
 
     fs.writeFileSync(outputPath, decodedKey, { encoding: 'utf8' });
@@ -31,6 +27,19 @@ try {
 } catch (e) {
     console.error("Error decoding/writing key:", e);
     process.exit(1);
+}
+
+// CRITICAL STEP: Export the path to GITHUB_ENV so Tauri CLI can find it
+const githubEnvPath = process.env.GITHUB_ENV;
+if (githubEnvPath) {
+    console.log("Injecting Key PATH into GITHUB_ENV...");
+    fs.appendFileSync(githubEnvPath, `TAURI_PRIVATE_KEY=${outputPath}${os.EOL}`, { encoding: 'utf8' });
+    
+    // Explicitly set empty password for our new key
+    fs.appendFileSync(githubEnvPath, `TAURI_KEY_PASSWORD=${''}${os.EOL}`, { encoding: 'utf8' });
+    console.log("Success: TAURI_KEY_PASSWORD set to empty");
+} else {
+    console.warn("WARNING: GITHUB_ENV not detected. Build might fail if TAURI_PRIVATE_KEY is not set.");
 }
 
 // Ensure Updater Active
