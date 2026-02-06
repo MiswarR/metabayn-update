@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-console.log("Starting Key Restoration (Fresh Start Mode)...");
+console.log("Starting Key Restoration (Raw Key Body Mode)...");
 
 const rawKey = process.env.TAURI_PRIVATE_KEY;
 if (!rawKey) {
@@ -13,36 +13,56 @@ if (!rawKey) {
 const outputPath = path.resolve(process.cwd(), 'tauri.key');
 
 try {
-    // The key in GitHub Secrets is expected to be a Base64 string of the entire key file.
-    // We decode it to get the original Minisign key file content (text).
-    const decodedKey = Buffer.from(rawKey.trim(), 'base64').toString('utf-8');
+    // 1. Decode the GitHub Secret (Base64 -> Text)
+    // Expectation: The secret contains the FULL file content (Header + Key) encoded in Base64
+    let decodedContent = Buffer.from(rawKey.trim(), 'base64').toString('utf-8');
+    console.log("Decoded key content length:", decodedContent.length);
 
-    // Basic validation to ensure it looks like a Minisign key
-    if (!decodedKey.startsWith('untrusted comment:')) {
-        console.warn("WARNING: Decoded key does not start with 'untrusted comment'. It might be raw or invalid.");
+    // 2. Extract ONLY the Key Body (remove headers/comments)
+    // The error "Invalid symbol 32, offset 9" happens because Tauri is trying to Base64-decode
+    // the text "untrusted comment..." and fails at the space (symbol 32) at offset 9.
+    // Solution: Give it ONLY the Base64 key data.
+    
+    let keyBody = decodedContent;
+    const lines = decodedContent.split(/\r?\n/);
+    
+    // Find the line that looks like a key (long, no spaces, not a comment)
+    const keyLine = lines.find(line => 
+        line.trim().length > 20 && 
+        !line.startsWith('untrusted comment:') && 
+        !line.includes(' ')
+    );
+
+    if (keyLine) {
+        console.log("Found raw key body in file content. extracting...");
+        keyBody = keyLine.trim();
+    } else {
+        console.warn("Could not identify key body line. Using full content (risky).");
+        // Fallback: maybe the content IS just the key?
+        keyBody = decodedContent.trim();
     }
 
-    fs.writeFileSync(outputPath, decodedKey, { encoding: 'utf8' });
-    console.log(`Key written to ${outputPath}`);
+    // 3. Write ONLY the key body to the file
+    fs.writeFileSync(outputPath, keyBody, { encoding: 'utf8' });
+    console.log(`Raw Key Body written to ${outputPath}`);
+
 } catch (e) {
-    console.error("Error decoding/writing key:", e);
+    console.error("Error processing key:", e);
     process.exit(1);
 }
 
-// CRITICAL STEP: Export the path to GITHUB_ENV so Tauri CLI can find it
+// 4. Export to GITHUB_ENV
 const githubEnvPath = process.env.GITHUB_ENV;
 if (githubEnvPath) {
     console.log("Injecting Key PATH into GITHUB_ENV...");
     fs.appendFileSync(githubEnvPath, `TAURI_PRIVATE_KEY=${outputPath}${os.EOL}`, { encoding: 'utf8' });
     
-    // Explicitly set empty password for our new key
+    // Explicitly set empty password
     fs.appendFileSync(githubEnvPath, `TAURI_KEY_PASSWORD=${''}${os.EOL}`, { encoding: 'utf8' });
     console.log("Success: TAURI_KEY_PASSWORD set to empty");
-} else {
-    console.warn("WARNING: GITHUB_ENV not detected. Build might fail if TAURI_PRIVATE_KEY is not set.");
 }
 
-// Ensure Updater Active
+// 5. Ensure Updater Active
 try {
     const confPath = path.resolve(process.cwd(), 'src-tauri', 'tauri.conf.json');
     if (fs.existsSync(confPath)) {
