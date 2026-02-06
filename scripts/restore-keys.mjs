@@ -67,8 +67,9 @@ if (githubEnvPath) {
     fs.appendFileSync(githubEnvPath, envContent, { encoding: 'utf8' });
     
     // Force empty password (since we generated a key with empty password)
-    fs.appendFileSync(githubEnvPath, `TAURI_KEY_PASSWORD=${''}${os.EOL}`, { encoding: 'utf8' });
-    console.log("Success: TAURI_KEY_PASSWORD forced to empty");
+    // fs.appendFileSync(githubEnvPath, `TAURI_KEY_PASSWORD=${''}${os.EOL}`, { encoding: 'utf8' });
+    // console.log("Success: TAURI_KEY_PASSWORD forced to empty");
+    console.log("Using existing TAURI_KEY_PASSWORD from environment (not forcing empty).");
 } else {
     console.warn("WARNING: GITHUB_ENV not detected.");
 }
