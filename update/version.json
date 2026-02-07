@@ -1,0 +1,19 @@
+{
+  "version": "4.4.7",
+  "notes": "Update v4.4.7: Perbaikan ikon, dukungan installer Mac & Windows.",
+  "pub_date": "2026-02-07T12:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0x3aXBVaVVxUE1mc1A0bldWQWptKzBGYkFJMlFNTkxIalV5ZS9uTGs5d0d0ZEpORXZHQVdmK2czbThxd1UzZUVzV0o0bmVlbXZPN2E1RlRPRDI5dUdEY00wa1p4VmdRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcwMzkyMzk0CWZpbGU6TWV0YWJheW4gU3R1ZGlvXzQuNC43X3g2NC1zZXR1cC5uc2lzLnppcApWR0NXeCt5djVTbG9reklsMXpuU2FUbkcxY3ppRGJ6d09OSTU1S01WaUxqZmJuY3hvY0w4YTk0emZNTFdLRGoxeFRPaXByK1hCUVE3ZEJUQjRMRzhCdz09Cg==",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.4.7/Metabayn.Studio_4.4.7_x64-setup.nsis.zip"
+    },
+    "darwin-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0x3aXBVaVVxUEJpbTFiRGlQbDlubEVCYnhWS1BQTWtOK2d0VkV4RDE0aFNSSERwWEJSOElQWDc1dUM1QWhhR0J0OEhIazAvVk13UjdDSk02UUV4blI4RndQemNVTlFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcwMzkyMjU3CWZpbGU6TWV0YWJheW4gU3R1ZGlvLmFwcC50YXIuZ3oKdU1SWDdpamNpMmpBczJiQklGL2UxMVYyNi8ya2VLUk5JZWhsWGsyY2xKL3liVHExMExzTTFtbHE5YXhvS0tYY29nblMwcUhSNjREY2tkVUpTT0VKQmc9PQo=",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.4.7/Metabayn.Studio.app.tar.gz"
+    },
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0x3aXBVaVVxUEJpbTFiRGlQbDlubEVCYnhWS1BQTWtOK2d0VkV4RDE0aFNSSERwWEJSOElQWDc1dUM1QWhhR0J0OEhIazAvVk13UjdDSk02UUV4blI4RndQemNVTlFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcwMzkyMjU3CWZpbGU6TWV0YWJheW4gU3R1ZGlvLmFwcC50YXIuZ3oKdU1SWDdpamNpMmpBczJiQklGL2UxMVYyNi8ya2VLUk5JZWhsWGsyY2xKL3liVHExMExzTTFtbHE5YXhvS0tYY29nblMwcUhSNjREY2tkVUpTT0VKQmc9PQo=",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v4.4.7/Metabayn.Studio.app.tar.gz"
+    }
+  }
+}
