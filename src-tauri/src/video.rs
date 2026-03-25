@@ -38,34 +38,52 @@ pub async fn write_video(req: &crate::api::VideoMetaReq) -> Result<Option<String
         }
     }
 
-    if target != source {
+    if target != source && target.exists() && !req.overwrite {
+        return Err(anyhow!("Target file already exists: {}", target.to_string_lossy()));
+    }
+
+    let working_path = if target == source {
+        source.to_path_buf()
+    } else {
         if let Some(parent) = target.parent() { let _ = fs::create_dir_all(parent); }
-        // Copy with retry
+        let ext = target.extension().and_then(|s| s.to_str()).unwrap_or("");
+        let stem = target.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+        let pid = std::process::id();
+        let tmp_name = if ext.is_empty() { format!(".{}.tmp-{}-{}", stem, ms, pid) } else { format!(".{}.tmp-{}-{}.{}", stem, ms, pid, ext) };
+        let tmp_path = target.with_file_name(tmp_name);
         let mut copied = false;
         for _ in 0..3 {
-            if fs::copy(source, &target).is_ok() { copied = true; break; }
+            if fs::copy(source, &tmp_path).is_ok() { copied = true; break; }
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
         if !copied { return Err(anyhow!("Failed to copy video to output")); }
-        
-        // Remove source file after successful copy
-        if let Err(e) = fs::remove_file(source) {
-            eprintln!("Warning: Failed to remove source file {:?}: {}", source, e);
-        }
-    }
+        tmp_path
+    };
 
     // Strategy 1: Embed Metadata into Video
     // We stick to standard fields. Windows Explorer might not show tags, but Microstock will read them.
-    if let Err(e1) = run_exiftool(&target, req) {
+    if let Err(e1) = run_exiftool(&working_path, req) {
         println!("ExifTool failed: {}. Retrying with FFmpeg...", e1);
         
-        if let Err(e2) = run_ffmpeg(&target, req) {
+        if let Err(e2) = run_ffmpeg(&working_path, req) {
+            let _ = if working_path != source { fs::remove_file(&working_path) } else { Ok(()) };
             return Err(anyhow!("Both ExifTool and FFmpeg failed. ExifTool: {}. FFmpeg: {}", e1, e2));
         }
     }
 
+    let final_path = if target == source {
+        target.clone()
+    } else {
+        if fs::rename(&working_path, &target).is_err() {
+            fs::copy(&working_path, &target)?;
+            let _ = fs::remove_file(&working_path);
+        }
+        target.clone()
+    };
+
     // Rename File if enabled
-    let new_path = crate::metadata::apply_file_rename(&target, &req.title)?;
+    let new_path = crate::metadata::apply_file_rename(&final_path, &req.title)?;
     
     if let Some(ref np) = new_path {
         return Ok(Some(np.to_string_lossy().to_string()));
@@ -130,7 +148,15 @@ fn run_exiftool(path: &Path, req: &crate::api::VideoMetaReq) -> Result<()> {
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000);
     
-    let out = cmd.output()?;
+    let out = match cmd.output() {
+        Ok(v) => v,
+        Err(e) => {
+            if e.raw_os_error() == Some(216) {
+                return Err(anyhow!("ExifTool tidak kompatibel atau rusak di Windows ini (os error 216). Solusi: reinstall versi terbaru atau update ke rilis berikutnya."));
+            }
+            return Err(anyhow!("{}", e));
+        }
+    };
         
     if !out.status.success() {
         return Err(anyhow!("{}", String::from_utf8_lossy(&out.stderr)));
@@ -170,7 +196,15 @@ fn run_ffmpeg(path: &Path, req: &crate::api::VideoMetaReq) -> Result<()> {
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000);
 
-    let out = cmd.output()?;
+    let out = match cmd.output() {
+        Ok(v) => v,
+        Err(e) => {
+            if e.raw_os_error() == Some(216) {
+                return Err(anyhow!("FFmpeg tidak kompatibel atau rusak di Windows ini (os error 216). Solusi: reinstall versi terbaru atau update ke rilis berikutnya."));
+            }
+            return Err(anyhow!("{}", e));
+        }
+    };
 
     if !out.status.success() {
         let _ = fs::remove_file(&temp);

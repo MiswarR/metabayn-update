@@ -2399,27 +2399,11 @@ pub async fn write_image(req: &crate::api::ImageMetaReq) -> Result<Option<String
     } else {
         source.to_path_buf()
     };
-    
-    if target != source {
-        if let Some(parent) = target.parent() { let _ = fs::create_dir_all(parent); }
-        if fs::rename(source, &target).is_err() {
-            fs::copy(source, &target)?;
-            if source.exists() {
-                let mut del_attempts = 0;
-                loop {
-                    del_attempts += 1;
-                    match fs::remove_file(source) {
-                        Ok(_) => break,
-                        Err(_) => {
-                            if del_attempts >= 5 { break; }
-                            tokio::time::sleep(Duration::from_millis(500)).await;
-                        }
-                    }
-                }
-            }
-        }
+
+    if target != source && target.exists() && !req.overwrite {
+        return Err(anyhow!("Target file already exists: {}", target.to_string_lossy()));
     }
-    
+
     let exiftool = resolve_exiftool().ok_or(anyhow!("ExifTool not found"))?;
     
     let mut args = vec![
@@ -2456,20 +2440,54 @@ pub async fn write_image(req: &crate::api::ImageMetaReq) -> Result<Option<String
     args.push(format!("-Keywords={}", keywords_str));
     args.push(format!("-Subject={}", keywords_str));
     
-    args.push(target.to_string_lossy().to_string());
+    let working_path = if target == source {
+        source.to_path_buf()
+    } else {
+        if let Some(parent) = target.parent() { let _ = fs::create_dir_all(parent); }
+        let ext = target.extension().and_then(|s| s.to_str()).unwrap_or("");
+        let stem = target.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+        let pid = std::process::id();
+        let tmp_name = if ext.is_empty() { format!(".{}.tmp-{}-{}", stem, ms, pid) } else { format!(".{}.tmp-{}-{}.{}", stem, ms, pid, ext) };
+        let tmp_path = target.with_file_name(tmp_name);
+        fs::copy(source, &tmp_path)?;
+        tmp_path
+    };
+
+    args.push(working_path.to_string_lossy().to_string());
     
     let mut cmd = Command::new(exiftool);
     cmd.args(args);
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000);
-    let out = cmd.output()?;
+    let out = match cmd.output() {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = if working_path != source { fs::remove_file(&working_path) } else { Ok(()) };
+            if e.raw_os_error() == Some(216) {
+                return Err(anyhow!("ExifTool tidak kompatibel atau rusak di Windows ini (os error 216). Solusi: reinstall versi terbaru atau update ke rilis berikutnya."));
+            }
+            return Err(anyhow!("{}", e));
+        }
+    };
         
     if !out.status.success() {
+        let _ = if working_path != source { fs::remove_file(&working_path) } else { Ok(()) };
         return Err(anyhow!("{}", String::from_utf8_lossy(&out.stderr)));
     }
+
+    let final_path = if target == source {
+        target.clone()
+    } else {
+        if fs::rename(&working_path, &target).is_err() {
+            fs::copy(&working_path, &target)?;
+            let _ = fs::remove_file(&working_path);
+        }
+        target.clone()
+    };
     
     // Rename File if enabled
-    let new_path = apply_file_rename(&target, &req.title)?;
+    let new_path = apply_file_rename(&final_path, &req.title)?;
     
     if let Some(ref np) = new_path {
         return Ok(Some(np.to_string_lossy().to_string()));
