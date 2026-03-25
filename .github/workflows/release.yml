@@ -99,63 +99,96 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path src-tauri/resources
           
-          Write-Host "Downloading FFmpeg..."
-          try {
-            Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile "ffmpeg.zip"
-            Write-Host "Extracting FFmpeg..."
-            Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_temp -Force
-            
-            $ffmpeg = Get-ChildItem -Path ffmpeg_temp -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
-            if ($ffmpeg) {
-              Copy-Item $ffmpeg.FullName "src-tauri/resources/ffmpeg.exe" -Force
-              Write-Host "FFmpeg found and copied."
+          $ffmpegLocal = "src-tauri/resources/ffmpeg.exe"
+          $needFfmpeg = $true
+          if (Test-Path $ffmpegLocal) {
+            $ffmpegInfo = Get-Item $ffmpegLocal
+            if ($ffmpegInfo.Length -gt 5000000) {
+              Write-Host "Using existing FFmpeg at $ffmpegLocal (Size=$($ffmpegInfo.Length))"
+              $needFfmpeg = $false
             } else {
-              Write-Host "Contents of ffmpeg_temp:"
-              Get-ChildItem -Path ffmpeg_temp -Recurse | Select-Object FullName
-              Write-Error "FFmpeg executable not found in downloaded zip"
+              Write-Host "Existing FFmpeg seems invalid (too small). Re-downloading. Size=$($ffmpegInfo.Length)"
+            }
+          }
+
+          if ($needFfmpeg) {
+            Write-Host "Downloading FFmpeg..."
+            try {
+              Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile "ffmpeg.zip"
+              Write-Host "Extracting FFmpeg..."
+              Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_temp -Force
+              
+              $ffmpeg = Get-ChildItem -Path ffmpeg_temp -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
+              if ($ffmpeg) {
+                Copy-Item $ffmpeg.FullName "src-tauri/resources/ffmpeg.exe" -Force
+                Write-Host "FFmpeg found and copied."
+              } else {
+                Write-Host "Contents of ffmpeg_temp:"
+                Get-ChildItem -Path ffmpeg_temp -Recurse | Select-Object FullName
+                Write-Error "FFmpeg executable not found in downloaded zip"
+                exit 1
+              }
+            } catch {
+              Write-Error "Failed to download or extract FFmpeg: $_"
               exit 1
             }
-          } catch {
-            Write-Error "Failed to download or extract FFmpeg: $_"
+          }
+
+          Write-Host "Validating FFmpeg..."
+          & $ffmpegLocal -version 2>&1 | Select-Object -First 2 | ForEach-Object { Write-Host $_ }
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "FFmpeg validation failed"
             exit 1
           }
           
-          Write-Host "Downloading ExifTool..."
-          try {
-            $exifUrl = "https://exiftool.org/exiftool-13.10_64.zip"
-            curl.exe -L -o "exiftool.zip" "$exifUrl"
-            $zipInfo = Get-Item "exiftool.zip"
-            if (-not $zipInfo -or $zipInfo.Length -lt 500000) {
-              Write-Host "Downloaded exiftool.zip seems invalid (too small). Size=$($zipInfo.Length)"
-              Write-Host "First 30 lines of file (likely HTML):"
-              Get-Content -Path "exiftool.zip" -TotalCount 30 | ForEach-Object { Write-Host $_ }
-              throw "Invalid ExifTool zip download"
+          $exiftoolLocal = "src-tauri/resources/exiftool.exe"
+          $exiftoolLib = "src-tauri/resources/exiftool_files/lib/Image/ExifTool.pm"
+          $needExifTool = $true
+
+          if ((Test-Path $exiftoolLocal) -and (Test-Path $exiftoolLib)) {
+            Write-Host "Validating ExifTool (repo resources)..."
+            Push-Location "src-tauri/resources"
+            try {
+              .\exiftool.exe -ver 2>&1 | Select-Object -First 1 | ForEach-Object { Write-Host $_ }
+              if ($LASTEXITCODE -eq 0) { $needExifTool = $false }
+            } finally {
+              Pop-Location
             }
-            Write-Host "Extracting ExifTool..."
-            Expand-Archive -Path exiftool.zip -DestinationPath exiftool_temp -Force
-            
-            $exiftool = Get-ChildItem -Path exiftool_temp -Filter "exiftool(-k).exe" -Recurse | Select-Object -First 1
-            if ($exiftool) {
+          } else {
+            Write-Host "ExifTool repo resources not complete (missing exiftool.exe or exiftool_files). Falling back to Chocolatey."
+          }
+
+          if ($needExifTool) {
+            Write-Host "Installing ExifTool via Chocolatey..."
+            try {
+              choco install exiftool -y --no-progress
+
+              $toolsDir = "C:\ProgramData\chocolatey\lib\exiftool\tools"
+              $exiftool = Get-ChildItem -Path $toolsDir -Filter "exiftool(-k).exe" -Recurse | Select-Object -First 1
+              if (-not $exiftool) {
+                Write-Host "Contents of $toolsDir:"
+                Get-ChildItem -Path $toolsDir -Recurse | Select-Object FullName
+                throw "exiftool(-k).exe not found after Chocolatey install"
+              }
+
               Copy-Item $exiftool.FullName "src-tauri/resources/exiftool.exe" -Force
-              Write-Host "ExifTool found and copied."
-            } else {
-              Write-Host "Contents of exiftool_temp:"
-              Get-ChildItem -Path exiftool_temp -Recurse | Select-Object FullName
-              Write-Error "ExifTool executable not found in downloaded zip"
+              $exiftoolFiles = Get-ChildItem -Path $toolsDir -Directory -Filter "exiftool_files" -Recurse | Select-Object -First 1
+              if ($exiftoolFiles) {
+                Copy-Item $exiftoolFiles.FullName "src-tauri/resources/exiftool_files" -Recurse -Force
+              }
+
+              Write-Host "Validating ExifTool (post-install)..."
+              Push-Location "src-tauri/resources"
+              try {
+                .\exiftool.exe -ver 2>&1 | Select-Object -First 1 | ForEach-Object { Write-Host $_ }
+              } finally {
+                Pop-Location
+              }
+              if ($LASTEXITCODE -ne 0) { throw "ExifTool validation failed after install" }
+            } catch {
+              Write-Error "Failed to install/validate ExifTool: $_"
               exit 1
             }
-
-            $exiftoolFiles = Get-ChildItem -Path exiftool_temp -Directory -Filter "exiftool_files" -Recurse | Select-Object -First 1
-            if ($exiftoolFiles) {
-              Copy-Item $exiftoolFiles.FullName "src-tauri/resources/exiftool_files" -Recurse -Force
-              Write-Host "exiftool_files copied."
-            } else {
-              New-Item -ItemType Directory -Force -Path src-tauri/resources/exiftool_files | Out-Null
-              Write-Host "exiftool_files not found in zip; using existing folder if present."
-            }
-          } catch {
-             Write-Error "Failed to download or extract ExifTool: $_"
-             exit 1
           }
 
       - name: Normalize TAURI keys (Windows)
