@@ -135,8 +135,10 @@ jobs:
           }
 
           Write-Host "Validating FFmpeg..."
-          & $ffmpegLocal -version 2>&1 | Select-Object -First 2 | ForEach-Object { Write-Host $_ }
-          if ($LASTEXITCODE -ne 0) {
+          $ffmpegOut = & $ffmpegLocal -version 2>&1
+          $ffmpegExit = $LASTEXITCODE
+          $ffmpegOut | Select-Object -First 2 | ForEach-Object { Write-Host $_ }
+          if ($ffmpegExit -ne 0) {
             Write-Error "FFmpeg validation failed"
             exit 1
           }
@@ -149,8 +151,10 @@ jobs:
             Write-Host "Validating ExifTool (repo resources)..."
             Push-Location "src-tauri/resources"
             try {
-              .\exiftool.exe -ver 2>&1 | Select-Object -First 1 | ForEach-Object { Write-Host $_ }
-              if ($LASTEXITCODE -eq 0) { $needExifTool = $false }
+              $exifOut = .\exiftool.exe -ver 2>&1
+              $exifExit = $LASTEXITCODE
+              $exifOut | Select-Object -First 1 | ForEach-Object { Write-Host $_ }
+              if ($exifExit -eq 0) { $needExifTool = $false }
             } finally {
               Pop-Location
             }
@@ -180,11 +184,13 @@ jobs:
               Write-Host "Validating ExifTool (post-install)..."
               Push-Location "src-tauri/resources"
               try {
-                .\exiftool.exe -ver 2>&1 | Select-Object -First 1 | ForEach-Object { Write-Host $_ }
+                $exifOut = .\exiftool.exe -ver 2>&1
+                $exifExit = $LASTEXITCODE
+                $exifOut | Select-Object -First 1 | ForEach-Object { Write-Host $_ }
               } finally {
                 Pop-Location
               }
-              if ($LASTEXITCODE -ne 0) { throw "ExifTool validation failed after install" }
+              if ($exifExit -ne 0) { throw "ExifTool validation failed after install" }
             } catch {
               Write-Error "Failed to install/validate ExifTool: $_"
               exit 1
