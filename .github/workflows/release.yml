@@ -180,3 +180,83 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.zip.sig
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-updater-json:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-macos, build-windows]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Generate updates/version.json from Release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          REPO="${GITHUB_REPOSITORY}"
+          API="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
+
+          RELEASE_JSON="$(curl -sSL -H "Authorization: token ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" "${API}")"
+
+          WIN_URL="$(echo "${RELEASE_JSON}" | jq -r '.assets[]? | select(.name | endswith(".nsis.zip")) | .browser_download_url' | head -n 1 || true)"
+          WIN_SIG_URL="$(echo "${RELEASE_JSON}" | jq -r '.assets[]? | select(.name | endswith(".nsis.zip.sig")) | .browser_download_url' | head -n 1 || true)"
+
+          MAC_URL="$(echo "${RELEASE_JSON}" | jq -r '.assets[]? | select(.name | endswith(".app.tar.gz")) | .browser_download_url' | head -n 1 || true)"
+          MAC_SIG_URL="$(echo "${RELEASE_JSON}" | jq -r '.assets[]? | select(.name | endswith(".app.tar.gz.sig")) | .browser_download_url' | head -n 1 || true)"
+
+          WIN_SIG=""
+          if [ -n "${WIN_SIG_URL}" ] && [ "${WIN_SIG_URL}" != "null" ]; then
+            WIN_SIG="$(curl -sSL "${WIN_SIG_URL}" | tr -d '\r\n')"
+          fi
+
+          MAC_SIG=""
+          if [ -n "${MAC_SIG_URL}" ] && [ "${MAC_SIG_URL}" != "null" ]; then
+            MAC_SIG="$(curl -sSL "${MAC_SIG_URL}" | tr -d '\r\n')"
+          fi
+
+          PUB_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+          mkdir -p updates
+
+          jq -n \
+            --arg version "${VERSION}" \
+            --arg notes "Update ${VERSION}" \
+            --arg pub_date "${PUB_DATE}" \
+            --arg win_url "${WIN_URL:-}" \
+            --arg win_sig "${WIN_SIG:-}" \
+            --arg mac_url "${MAC_URL:-}" \
+            --arg mac_sig "${MAC_SIG:-}" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: (
+                (if ($win_url != "" and $win_url != "null" and $win_sig != "") then
+                  { "windows-x86_64": { signature: $win_sig, url: $win_url } }
+                else {} end)
+                +
+                (if ($mac_url != "" and $mac_url != "null" and $mac_sig != "") then
+                  {
+                    "darwin-x86_64": { signature: $mac_sig, url: $mac_url },
+                    "darwin-aarch64": { signature: $mac_sig, url: $mac_url }
+                  }
+                else {} end)
+              )
+            }' > updates/version.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add updates/version.json
+          if git diff --cached --quiet; then
+            echo "No changes in updates/version.json"
+            exit 0
+          fi
+          git commit -m "chore(updater): update version.json for ${TAG}"
+          git push origin HEAD:main

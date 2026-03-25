@@ -84,6 +84,49 @@
   color: white;
 }
 
+button,
+input[type="button"],
+input[type="submit"],
+[role="button"],
+.t-btn,
+a {
+  transition: transform 0.08s ease, filter 0.12s ease, background 0.15s ease, opacity 0.15s ease;
+}
+
+button:active,
+input[type="button"]:active,
+input[type="submit"]:active,
+[role="button"]:active,
+.t-btn:active,
+a:active {
+  transform: translateY(1px) scale(0.98);
+  filter: brightness(1.08);
+}
+
+button:disabled,
+input[type="button"]:disabled,
+input[type="submit"]:disabled,
+[role="button"][aria-disabled="true"] {
+  transform: none;
+  filter: none;
+}
+
+.btn-click-anim {
+  will-change: transform, filter;
+}
+
+.btn-click-anim:active {
+  transform: translateY(1px) scale(0.97);
+  filter: brightness(1.1);
+}
+
+.btn-click-anim:disabled {
+  transform: none;
+  filter: none;
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* Global reset & base */
 * { box-sizing: border-box; user-select: none; }
 

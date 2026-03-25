@@ -115,21 +115,59 @@ export async function manualApproveTopup(request: Request, env: Env, adminId: st
     if (!transaction) return Response.json({ error: "Transaction not found" }, { status: 404 });
     if (transaction.status !== 'pending') return Response.json({ error: "Transaction is not pending" }, { status: 400 });
 
+    // Handle user_id that might be an email reference (from Lynk.id guest checkout)
+    let userId = transaction.user_id as string;
+    if (userId.startsWith('email:')) {
+        const email = userId.substring(6);
+        const user = await env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(email).first();
+        
+        if (!user) {
+            return Response.json({ error: `User with email ${email} not found. User must register first.` }, { status: 400 });
+        }
+        
+        userId = String(user.id);
+        
+        // Update transaction with real user_id
+        await env.DB.prepare("UPDATE topup_transactions SET user_id = ? WHERE id = ?").bind(userId, id).run();
+    }
+
     // Update Status
     await env.DB.prepare("UPDATE topup_transactions SET status = 'paid' WHERE id = ?").bind(id).run();
 
     // Add Tokens
     const tokensAdded = transaction.tokens_added as number;
-    await addUserTokens(transaction.user_id as string, tokensAdded, env);
+    if (tokensAdded > 0) {
+        await addUserTokens(userId, tokensAdded, env);
+    }
+
+    // Activate Subscription if duration_days is present
+    const durationDays = transaction.duration_days as number;
+    if (durationDays > 0) {
+        const user = await env.DB.prepare("SELECT subscription_expiry FROM users WHERE id = ?").bind(userId).first();
+        
+        let newExpiryDate = new Date();
+        if (user && user.subscription_expiry) {
+            const currentExpiry = new Date(user.subscription_expiry as string);
+            if (currentExpiry > new Date()) {
+                newExpiryDate = currentExpiry;
+            }
+        }
+        
+        newExpiryDate.setDate(newExpiryDate.getDate() + durationDays);
+        const newExpiryIso = newExpiryDate.toISOString();
+        
+        await env.DB.prepare("UPDATE users SET subscription_active = 1, subscription_expiry = ? WHERE id = ?")
+            .bind(newExpiryIso, userId).run();
+    }
 
     // Send Email
-    const user = await env.DB.prepare("SELECT email FROM users WHERE id = ?").bind(transaction.user_id).first() as { email: string } | null;
+    const user = await env.DB.prepare("SELECT email FROM users WHERE id = ?").bind(userId).first() as { email: string } | null;
     if (user && user.email) {
         const currency = transaction.method === 'paypal' ? 'USD' : 'IDR';
         const amount = transaction.method === 'paypal' ? transaction.amount_usd : transaction.amount_rp;
         const name = user.email.split('@')[0]; // Simple name extraction
-        const html = getManualApproveTemplate(name, amount as number, tokensAdded, currency);
-        sendEmail(user.email as string, "Top-Up Token Anda Berhasil (Manual Approval)", html, env);
+        const html = getManualApproveTemplate(name, amount as number, tokensAdded, currency, durationDays);
+        sendEmail(user.email as string, "Top-Up Successful (Manual Approval)", html, env);
     }
 
     // Log Action
@@ -163,7 +201,48 @@ export async function deleteTopup(request: Request, env: Env, adminId: string = 
   }
 }
 
-// 5. GET /admin/topup/statistics
+// 5. POST /admin/transactions/update (Generic Update Status)
+export async function updateTransactionStatus(request: Request, env: Env, adminId: string = "SYSTEM"): Promise<Response> {
+  try {
+    const { transaction_id, status, notes } = await request.json() as { transaction_id: number, status: string, notes?: string };
+    
+    if (!transaction_id || !status) return Response.json({ error: "Missing ID or Status" }, { status: 400 });
+    
+    const validStatuses = ['pending', 'paid', 'failed', 'expired', 'success']; // 'success' maps to 'paid' usually, but let's stick to DB enum if any
+    // Actually DB uses 'pending', 'paid', 'failed' mostly.
+    // Frontend sends 'success', 'failed', 'pending'.
+    
+    let dbStatus = status;
+    if (status === 'success') dbStatus = 'paid'; // Map success to paid if needed, but manualApproveTopup handles logic.
+    // This function is mostly for Reject (failed) or Pending.
+    
+    await env.DB.prepare("UPDATE topup_transactions SET status = ? WHERE id = ?").bind(dbStatus, transaction_id).run();
+    
+    // Log
+    await env.DB.prepare("INSERT INTO admin_logs (admin_id, action, target_id) VALUES (?, ?, ?)").bind(adminId, `update_status_${status}`, transaction_id).run();
+
+    return Response.json({ success: true });
+  } catch (e: any) {
+    return Response.json({ error: e.message }, { status: 500 });
+  }
+}
+
+// 5. POST /admin/topup/delete-all
+export async function deleteAllTopups(request: Request, env: Env, adminId: string = "SYSTEM"): Promise<Response> {
+  try {
+    // Delete ALL transactions
+    await env.DB.prepare("DELETE FROM topup_transactions").run();
+
+    // Log Action
+    await env.DB.prepare("INSERT INTO admin_logs (admin_id, action, target_id) VALUES (?, ?, ?)").bind(adminId, 'delete_all_transactions', 'ALL').run();
+
+    return Response.json({ success: true });
+  } catch (e: any) {
+    return Response.json({ error: e.message }, { status: 500 });
+  }
+}
+
+// 6. GET /admin/topup/statistics
 export async function getTopupStatistics(_request: Request, env: Env): Promise<Response> {
   // Overall Stats
   const totalStats = await env.DB.prepare(`

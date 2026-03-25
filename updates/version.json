@@ -1,6 +1,6 @@
 {
-  "version": "v4.4.6",
-  "notes": "Update v4.4.6: Perbaikan sistem dan peningkatan performa.",
+  "version": "4.4.6",
+  "notes": "Update 4.4.6: Perbaikan sistem dan peningkatan performa.",
   "pub_date": "2026-02-06T00:00:00Z",
   "platforms": {
     "darwin-aarch64": {

@@ -33,10 +33,9 @@ const githubEnvPath = process.env.GITHUB_ENV;
 if (githubEnvPath) {
     console.log("Injecting Key PATH into GITHUB_ENV...");
     fs.appendFileSync(githubEnvPath, `TAURI_PRIVATE_KEY=${outputPath}${os.EOL}`, { encoding: 'utf8' });
-    
-    // Explicitly set empty password
-    fs.appendFileSync(githubEnvPath, `TAURI_KEY_PASSWORD=${''}${os.EOL}`, { encoding: 'utf8' });
-    console.log("Success: TAURI_KEY_PASSWORD set to empty");
+
+    const keyPassword = (process.env.TAURI_KEY_PASSWORD ?? '').toString();
+    fs.appendFileSync(githubEnvPath, `TAURI_KEY_PASSWORD=${keyPassword}${os.EOL}`, { encoding: 'utf8' });
 }
 
 // Ensure Updater Active

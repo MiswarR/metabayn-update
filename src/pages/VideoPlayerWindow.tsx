@@ -1,6 +1,16 @@
 import React, { useEffect, useState } from 'react';
+import { translations } from '../utils/translations'
 
 export default function VideoPlayerWindow() {
+  const lang = (() => {
+    try {
+      const v = localStorage.getItem('app_lang')
+      return v === 'id' || v === 'en' ? v : 'en'
+    } catch {
+      return 'en'
+    }
+  })()
+  const t = (translations as any)[lang] || (translations as any)['en']
   const [videoId, setVideoId] = useState('');
   const [title, setTitle] = useState('');
 
@@ -27,7 +37,7 @@ export default function VideoPlayerWindow() {
         background: '#000', 
         color: '#fff' 
       }}>
-        Loading Video...
+        {t?.video?.loading || 'Loading Video...'}
       </div>
     );
   }

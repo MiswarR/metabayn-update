@@ -7,45 +7,70 @@ interface QueueItem<T> {
   reject: (reason?: any) => void;
 }
 
-// Global queue in memory (per worker instance)
-const queue: QueueItem<any>[] = [];
-let activeCount = 0;
-// Cloudflare Workers often allow 6 concurrent subrequests. 
-// OPTIMIZATION: Increased to 30 for high-throughput Flash models
-// Cloudflare supports up to 50 subrequests on Standard plan.
-const CONCURRENCY_LIMIT = 100; 
+type QueueState = {
+  queue: QueueItem<any>[];
+  activeCount: number;
+  concurrencyLimit: number;
+};
 
-export function enqueue<T>(task: Task<T>): Promise<T> {
+const queues = new Map<string, QueueState>();
+
+function getState(key: string): QueueState {
+  const k = key || 'default';
+  const existing = queues.get(k);
+  if (existing) return existing;
+
+  const created: QueueState = {
+    queue: [],
+    activeCount: 0,
+    concurrencyLimit: 3
+  };
+  queues.set(k, created);
+  return created;
+}
+
+export function enqueue<T>(task: Task<T>, queueKey: string = 'default'): Promise<T> {
   return new Promise((resolve, reject) => {
+    const state = getState(queueKey);
+    
+    // Create item first to reference it
+    let item: any; // Forward declaration
+    
     // Add timeout to queue itself (prevent infinite waiting)
     const queueTimeout = setTimeout(() => {
         // Remove from queue if still waiting
-        const index = queue.findIndex(i => i.resolve === resolve);
-        if (index !== -1) {
-            queue.splice(index, 1);
-            reject(new Error("Queue Timeout: System busy, please retry."));
+        if (item) {
+            const index = state.queue.indexOf(item);
+            if (index !== -1) {
+                state.queue.splice(index, 1);
+                reject(new Error("Queue Timeout: System busy, please retry."));
+            }
         }
     }, 10000);
 
-    queue.push({ 
+    item = { 
         task, 
-        resolve: (val) => { clearTimeout(queueTimeout); resolve(val); }, 
-        reject: (err) => { clearTimeout(queueTimeout); reject(err); } 
-    });
+        resolve: (val: T) => { clearTimeout(queueTimeout); resolve(val); }, 
+        reject: (err: any) => { clearTimeout(queueTimeout); reject(err); } 
+    };
+
+    state.queue.push(item);
     
-    processQueue();
+    processQueue(queueKey);
   });
 }
 
-function processQueue() {
+function processQueue(queueKey: string) {
+  const state = getState(queueKey);
   // While we have capacity and items in queue
-  while (activeCount < CONCURRENCY_LIMIT && queue.length > 0) {
-    const item = queue.shift();
+  while (state.activeCount < state.concurrencyLimit && state.queue.length > 0) {
+    const item = state.queue.shift();
     if (item) {
-      activeCount++;
+      state.activeCount++;
       
       // Execute task (Do NOT await here, let it run in background)
-      item.task()
+      // Note: item.task is expected to return a Promise
+      Promise.resolve(item.task())
         .then((res) => {
             item.resolve(res);
         })
@@ -53,10 +78,17 @@ function processQueue() {
             item.reject(err);
         })
         .finally(() => {
-            activeCount--;
+            state.activeCount--;
             // When a task finishes, try to process the next one
-            processQueue();
+            processQueue(queueKey);
         });
     }
+  }
+}
+
+export function setConcurrencyLimit(n: number, queueKey: string = 'default') {
+  if (typeof n === 'number' && n > 0) {
+    const state = getState(queueKey);
+    state.concurrencyLimit = n;
   }
 }

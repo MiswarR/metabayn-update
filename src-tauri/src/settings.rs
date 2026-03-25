@@ -83,10 +83,26 @@ pub struct AppSettings {
   #[serde(default)]
   pub rename_mode: String, // "title", "datetime", "custom"
   #[serde(default)]
-  pub rename_custom_text: String
+  pub rename_custom_text: String,
+
+  // Active Mode
+  #[serde(default = "default_active_mode")]
+  pub active_mode: String, // "apikey" or "cloudflare"
+  #[serde(default = "default_server_model")]
+  pub server_model: String,
+  #[serde(default)]
+  pub openrouter_endpoint: String,
+  #[serde(default = "default_profit_margin")]
+  pub profit_margin_percent: f64,
 }
 
+fn default_profit_margin() -> f64 { 50.0 }
+
 fn default_true() -> bool { true }
+
+fn default_active_mode() -> String { "apikey".to_string() }
+
+fn default_server_model() -> String { "@cf/meta/llama-3.1-8b-instruct".to_string() }
 
 fn settings_path() -> Result<std::path::PathBuf> {
   let dir = dirs::config_dir().ok_or_else(|| anyhow!("no config dir"))?.join("metabayn-studio");
@@ -99,6 +115,7 @@ pub fn load_settings() -> Result<AppSettings> {
   if !p.exists() {
     let d = default_paths();
     return Ok(AppSettings{
+      openrouter_endpoint: String::new(),
       server_url: "https://metabayn-backend.metabayn.workers.dev".into(),
       default_model: "gemini-flash".into(),
       overwrite: true,
@@ -118,6 +135,7 @@ pub fn load_settings() -> Result<AppSettings> {
       banned_words: String::new(),
       ai_provider: "Gemini".into()
       ,auth_email: String::new(), auth_token: String::new(),
+      server_model: "@cf/meta/llama-3.1-8b-instruct".into(),
       selection_enabled: false,
       server_selection_enabled: false,
       // check_anatomy_defect: false,
@@ -162,7 +180,10 @@ pub fn load_settings() -> Result<AppSettings> {
       generate_csv: true,
       rename_enabled: false,
       rename_mode: "title".into(),
-      rename_custom_text: String::new()
+      rename_custom_text: String::new(),
+      // Active Mode
+      active_mode: "apikey".to_string(),
+      profit_margin_percent: 50.0,
     });
   }
   let mut f = File::open(p)?; let mut s = String::new(); f.read_to_string(&mut s)?;
@@ -176,12 +197,49 @@ pub fn load_settings() -> Result<AppSettings> {
       }
   }
 
-  // Auto-fix server URL if kosong / whitespace atau masih pointing ke default lama / localhost
+  let mut changed = false;
+
+  // Auto-fix server URL if kosong / whitespace atau masih pointing ke default lama
   let trimmed = v.server_url.trim();
-  if trimmed.is_empty() || trimmed == "http://localhost:8787" || trimmed == "https://api.metabayn.local" {
+  if trimmed.is_empty()
+    || trimmed == "https://api.metabayn.local"
+    || trimmed == "https://metabayn-worker.metabayn.workers.dev"
+    || trimmed.contains("metabayn-worker.metabayn.workers.dev")
+  {
     v.server_url = "https://metabayn-backend.metabayn.workers.dev".into();
-    let _ = save_settings(&v); // Try to save back the fix
+    changed = true;
   }
+
+  {
+    let mut url = v.server_url.trim().trim_end_matches('/').to_string();
+    if url.to_lowercase().ends_with("/v1") {
+      url = url[..url.len().saturating_sub(3)].trim_end_matches('/').to_string();
+    }
+    if !url.is_empty() && url != v.server_url {
+      v.server_url = url;
+      changed = true;
+    }
+  }
+
+  let or_trimmed = v.openrouter_endpoint.trim();
+  if !or_trimmed.is_empty() {
+    let mut endpoint = or_trimmed.trim_end_matches('/').to_string();
+    if endpoint.to_lowercase().ends_with("/v1") {
+      endpoint = format!("{}/chat/completions", endpoint);
+    }
+    if endpoint.contains("metabayn-worker.metabayn.workers.dev") {
+      endpoint = "https://metabayn-backend.metabayn.workers.dev/v1/chat/completions".into();
+    }
+    if endpoint != v.openrouter_endpoint {
+      v.openrouter_endpoint = endpoint;
+      changed = true;
+    }
+  }
+  
+  if changed {
+    let _ = save_settings(&v);
+  }
+  
   Ok(v)
 }
 

@@ -11,6 +11,7 @@ use image::{GenericImageView, imageops::FilterType};
 // use image::DynamicImage;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::io::Cursor;
 use image::io::Reader as ImageReader;
 
@@ -32,6 +33,8 @@ pub struct Generated {
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
     pub cost: Option<f64>,
+    pub app_balance_after: Option<f64>,
+    pub app_tokens_deducted: Option<f64>,
     // Detailed Usage
     pub vision_input_tokens: Option<u32>,
     pub vision_output_tokens: Option<u32>,
@@ -53,19 +56,42 @@ pub struct TokenUsage {
     pub total_tokens: u32,
 }
 
-struct SelectionResult { 
-    status: String, 
-    failed_checks: Vec<String>, 
-    reason: String,
-    #[allow(dead_code)]
-    usage: Option<TokenUsage>
-}
-
 struct ImageCache { map: HashMap<String, (String, String)>, order: VecDeque<String>, capacity: usize }
 static IMAGE_B64_CACHE: OnceLock<Mutex<ImageCache>> = OnceLock::new();
+static CANCEL_GENERATE_BATCH: AtomicBool = AtomicBool::new(false);
+static ACTIVE_GENERATE_BATCH: AtomicUsize = AtomicUsize::new(0);
+
+pub fn request_cancel_generate_batch() {
+    CANCEL_GENERATE_BATCH.store(true, Ordering::SeqCst);
+}
+
+pub fn clear_cancel_generate_batch() {
+    CANCEL_GENERATE_BATCH.store(false, Ordering::SeqCst);
+}
+
+pub fn active_generate_batch_count() -> usize {
+    ACTIVE_GENERATE_BATCH.load(Ordering::SeqCst)
+}
+
+fn cancel_requested() -> bool {
+    CANCEL_GENERATE_BATCH.load(Ordering::SeqCst)
+}
+
+struct ActiveBatchGuard;
+impl ActiveBatchGuard {
+    fn new() -> Self {
+        ACTIVE_GENERATE_BATCH.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+impl Drop for ActiveBatchGuard {
+    fn drop(&mut self) {
+        ACTIVE_GENERATE_BATCH.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 fn cache_get(key: &str) -> Option<(String, String)> {
-    let c = IMAGE_B64_CACHE.get_or_init(|| Mutex::new(ImageCache { map: HashMap::new(), order: VecDeque::new(), capacity: 500 }));
+    let c = IMAGE_B64_CACHE.get_or_init(|| Mutex::new(ImageCache { map: HashMap::new(), order: VecDeque::new(), capacity: 12 }));
     let mut cache = c.lock().ok()?;
     if let Some(v) = cache.map.get(key).cloned() {
         if let Some(pos) = cache.order.iter().position(|k| k == key) { cache.order.remove(pos); }
@@ -258,7 +284,10 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
         let exiftool = exiftool.clone();
         
         let task = tokio::spawn(async move {
-            let _permit = sem_clone.acquire().await.unwrap();
+            let _permit = match sem_clone.acquire().await {
+                Ok(p) => p,
+                Err(_) => return (idx, None),
+            };
             
             let path_str = item_clone["SourceFile"].as_str().unwrap_or("").to_string();
             if path_str.is_empty() { return (idx, None); }
@@ -309,7 +338,7 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
                         Output ONLY valid JSON: { \"categories\": \"Cat1, Cat2\", \"editorial\": \"No\", \"mature\": \"No\", \"illustration\": \"No\" }";
     
                         match call_ai_base(&model, prompt, Some((b64, mime)), &req_template).await {
-                            Ok((content, usage, used_model, _cost)) => {
+                            Ok((content, usage, used_model, _cost, _balance_after, _tokens_deducted)) => {
                                 let clean_json = content.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
                                 
                                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(clean_json) {
@@ -571,7 +600,7 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
 }
 
 fn cache_set(key: String, value: (String, String)) {
-    let c = IMAGE_B64_CACHE.get_or_init(|| Mutex::new(ImageCache { map: HashMap::new(), order: VecDeque::new(), capacity: 500 }));
+    let c = IMAGE_B64_CACHE.get_or_init(|| Mutex::new(ImageCache { map: HashMap::new(), order: VecDeque::new(), capacity: 12 }));
     if let Ok(mut cache) = c.lock() {
         if cache.map.contains_key(&key) {
             cache.map.insert(key.clone(), value);
@@ -589,12 +618,32 @@ fn cache_set(key: String, value: (String, String)) {
 
 // --- PROMPTS ---
 
+fn effective_generation_bounds(req: &crate::api::BatchReq) -> (u32, u32, u32, u32, u32, u32) {
+    let tmin = req.title_min_words;
+    let tmax = std::cmp::max(req.title_max_words, tmin);
+
+    let kw_min = req.keywords_min_count;
+    let kw_max = std::cmp::max(req.keywords_max_count, kw_min);
+
+    let dmax = req.description_max_chars;
+    let dmin = if dmax == 0 { 0 } else { std::cmp::min(req.description_min_chars, dmax) };
+
+    (tmin, tmax, dmin, dmax, kw_min, kw_max)
+}
+
 fn get_primary_prompt(req: &crate::api::BatchReq, context: Option<&str>) -> String {
+    let (tmin, tmax, dmin, dmax, kw_min, kw_max) = effective_generation_bounds(req);
+    let desc_rule = if dmax == 0 {
+        "Description: DISABLED. Set description to an empty string \"\".".to_string()
+    } else {
+        format!("Description: {} to {} characters.", dmin, dmax)
+    };
+
     let mut p = format!(
         "Generate metadata for stock media.
 Rules:
 - Title: {} to {} words.
-- Description: {} to {} characters.
+- {} 
 - Keywords: {} to {} tags. Single words only, comma separated.
 - Banned characters: `~@#$%^&*()_+=-/\\][{{}}|';\":?/><` (Only . and , allowed).
 - Output Format: JSON with keys 'title', 'description', 'keywords', 'category'.
@@ -604,13 +653,32 @@ Rules:
           List: [Abstract, Animals/Wildlife, Arts, Backgrounds/Textures, Beauty/Fashion, Buildings/Landmarks, Business/Finance, Celebrities, Education, Food and Drink, Healthcare/Medical, Holidays, Industrial, Interiors, Miscellaneous, Nature, Objects, Parks/Outdoor, People, Religion, Science, Signs/Symbols, Sports/Recreation, Technology, Transportation, Vintage]
           Example: \"Nature,Transportation\"
         ",
-        req.title_min_words, req.title_max_words,
-        req.description_min_chars, req.description_max_chars,
-        req.keywords_min_count, req.keywords_max_count
+        tmin, tmax,
+        desc_rule,
+        kw_min, kw_max
     );
 
     if !req.banned_words.is_empty() {
-        p.push_str(&format!("\n- Additional Banned Words: {}\n", req.banned_words));
+        let mut banned: Vec<String> = req
+            .banned_words
+            .split(',')
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
+        banned.sort();
+        banned.dedup();
+
+        if !banned.is_empty() {
+            let list_len = banned.len();
+            let joined = banned.join(", ");
+            if list_len <= 20 && joined.chars().count() <= 180 {
+                p.push_str(&format!("\n- Keywords MUST NOT include any of these words: {}\n", joined));
+            } else {
+                let preview = banned.into_iter().take(20).collect::<Vec<_>>().join(", ");
+                p.push_str(&format!("\n- Keywords banned words (partial): {} (and more)\n", preview));
+                p.push_str("- IMPORTANT: The app will enforce this for keywords even if omitted.\n");
+            }
+        }
     }
 
     if let Some(ctx) = context {
@@ -622,31 +690,23 @@ Rules:
     p
 }
 
-
-
-
-
-
-
-fn get_selection_vision_prompt(settings: &crate::settings::AppSettings) -> String {
+fn build_selection_checks(settings: &crate::settings::AppSettings) -> Vec<String> {
     let mut checks: Vec<String> = Vec::new();
-    
-    // Text Vision Logic
+
     if settings.check_text_or_text_like {
-         let mut text_rules = Vec::new();
-         if settings.text_filter_gibberish { text_rules.push("gibberish (meaningless/random letters)"); }
-         if settings.text_filter_non_english { text_rules.push("non-english (valid language other than English)"); }
-         if settings.text_filter_irrelevant { text_rules.push("irrelevant-text (readable but unrelated to image)"); }
-         if settings.text_filter_relevant { text_rules.push("relevant-text (ALL detected text - strict mode)"); }
-         if !text_rules.is_empty() {
-             checks.push(format!("Reject if text type matches: {:?}", text_rules));
-         }
+        let mut text_rules = Vec::new();
+        if settings.text_filter_gibberish { text_rules.push("gibberish (meaningless/random letters)"); }
+        if settings.text_filter_non_english { text_rules.push("non-english (valid language other than English)"); }
+        if settings.text_filter_irrelevant { text_rules.push("irrelevant-text (readable but unrelated to image)"); }
+        if settings.text_filter_relevant { text_rules.push("relevant-text (ALL detected text - strict mode)"); }
+        if !text_rules.is_empty() {
+            checks.push(format!("Reject if text type matches: {:?}", text_rules));
+        }
     }
 
     if settings.check_brand_logo { checks.push("brand_logo: Reject if specific trademarked logo is visible (ignore clock hands, generic shapes, zippers)".to_string()); }
     if settings.check_watermark { checks.push("watermark: Reject if digital watermark/copyright stamp visible (ignore natural text)".to_string()); }
-    
-    // Human Vision Logic
+
     if settings.check_human_presence {
         let mut human_rules = Vec::new();
         if settings.human_filter_full_face { human_rules.push("full_body_perfect: Full human body visible with distinct face"); }
@@ -658,11 +718,10 @@ fn get_selection_vision_prompt(settings: &crate::settings::AppSettings) -> Strin
         if settings.human_filter_face_only { human_rules.push("face_only: Close-up human face without significant body"); }
         if settings.human_filter_nudity { human_rules.push("nudity_nsfw: Nudity, sexual content, or inappropriate material"); }
         if !human_rules.is_empty() {
-             checks.push(format!("Reject if human matches: {:?}", human_rules));
+            checks.push(format!("Reject if human matches: {:?}", human_rules));
         }
     }
 
-    // Animal Vision Logic
     if settings.check_animal_presence {
         let mut animal_rules = Vec::new();
         if settings.animal_filter_full_face { animal_rules.push("full_body_perfect: Complete realistic animal body"); }
@@ -674,19 +733,48 @@ fn get_selection_vision_prompt(settings: &crate::settings::AppSettings) -> Strin
         if settings.animal_filter_face_only { animal_rules.push("face_only: Close-up animal face without body"); }
         if settings.animal_filter_nudity { animal_rules.push("mating_genitals: Animals mating or visible genitals"); }
         if !animal_rules.is_empty() {
-             checks.push(format!("Reject if animal matches: {:?}", animal_rules));
+            checks.push(format!("Reject if animal matches: {:?}", animal_rules));
         }
     }
 
-    // Other Filters
     if settings.check_deformed_object { checks.push("deformed_object: Reject if primary subject is anatomically incorrect or physically impossible".to_string()); }
     if settings.check_unrecognizable_subject { checks.push("unrecognizable: Reject if main subject is indistinguishable/too abstract".to_string()); }
     if settings.check_famous_trademark { checks.push("famous_trademark: Reject if famous IP/logo (Disney, Marvel, Apple, etc) is clearly visible".to_string()); }
-    
-    format!(
-        "You are an AI Image Quality Inspector. Analyze the image for stock compliance. \nEnabled checks:\n{:#?}\n\nIf ANY check fails, return rejected. \nRespond with ONLY a JSON object: {{\"status\":\"accepted\"|\"rejected\",\"reason\":\"...\",\"failed_checks\":[\"code1\",...]}}. \nIMPORTANT: Use ONLY the short code prefix (part before colon) for failed_checks (e.g. 'full_body_perfect', 'brand_logo').",
+
+    checks
+}
+
+fn get_primary_prompt_with_selection(req: &crate::api::BatchReq, settings: &crate::settings::AppSettings, context: Option<&str>) -> String {
+    let mut p = get_primary_prompt(req, context);
+    let checks = build_selection_checks(settings);
+    p.push_str(&format!(
+        "\nStock compliance selection (in the SAME response):\nEnabled checks:\n{:#?}\n\nIf ANY check fails, selection.status MUST be 'rejected'.\nIf no checks are enabled, selection.status MUST be 'accepted'.\nOutput Format: JSON with keys 'title', 'description', 'keywords', 'category', 'selection'.\nselection must be: {{\"status\":\"accepted\"|\"rejected\",\"reason\":\"...\",\"failed_checks\":[\"code1\",...]}}.\nIMPORTANT: Use ONLY the short code prefix (part before colon) for selection.failed_checks.",
         checks
-    )
+    ));
+    p
+}
+
+fn is_quota_or_rate_limit_error(lower: &str) -> bool {
+    lower.contains("resource_exhausted")
+        || lower.contains("too many requests")
+        || lower.contains("rate limit")
+        || lower.contains("ratelimit")
+        || lower.contains("quota exceeded")
+        || lower.contains("exceeded your current quota")
+        || lower.contains("generate_content_free_tier")
+        || lower.contains("\"code\": 429")
+        || lower.contains("http 429")
+}
+
+fn is_safety_block_error(lower: &str) -> bool {
+    lower.contains("safety")
+        || lower.contains("blocked")
+        || lower.contains("content policy")
+        || lower.contains("policy violation")
+        || lower.contains("moderation")
+        || lower.contains("nsfw")
+        || lower.contains("nudity")
+        || lower.contains("sexual")
 }
 
 // --- AI CALLS ---
@@ -696,7 +784,7 @@ async fn call_ai_base(
     prompt: &str, 
     image_b64: Option<(String, String)>, 
     req: &crate::api::BatchReq
-) -> Result<(String, Option<TokenUsage>, Option<String>, Option<f64>)> {
+) -> Result<(String, Option<TokenUsage>, Option<String>, Option<f64>, Option<f64>, Option<f64>)> {
     
     let client = reqwest::Client::builder().timeout(Duration::from_secs(120)).build()?;
     let settings = crate::settings::load_settings().unwrap_or_default();
@@ -720,25 +808,14 @@ async fn call_ai_base(
         ])
     };
 
-    let mut current_model = model.to_string();
+    let current_model = model.to_string();
     // Retry Loop
-    let max_attempts = (req.retries as usize) + 1;
+    let max_attempts = if req.connection_mode == "direct" {
+        (req.retries as usize) + 1
+    } else {
+        1
+    };
     for attempt in 0..max_attempts {
-        let is_fallback = attempt > 0;
-        if is_fallback {
-             let m_lower = model.to_lowercase();
-             if m_lower.contains("gpt") || m_lower.contains("openai") || m_lower.contains("o1") || m_lower.contains("o3") {
-                 current_model = "gpt-4o-mini".to_string();
-             } else if m_lower.contains("gemini-3") {
-                 current_model = "gemini-2.5-flash-lite".to_string();
-             } else if m_lower.contains("gemini-2.5") || m_lower.contains("gemini-1.5") {
-                 current_model = "gemini-2.5-flash-lite".to_string();
-             } else {
-                 current_model = "gemini-2.5-flash-lite".to_string();
-             }
-             println!("Retrying with Fallback Model: {}", current_model);
-        }
-
         if req.connection_mode == "direct" {
             let raw_key = req.api_key.as_ref().ok_or(anyhow!("Missing API key"))?;
             let api_key = raw_key.trim();
@@ -767,22 +844,27 @@ async fn call_ai_base(
              match resp {
                 Ok(r) => {
                     if !r.status().is_success() {
+                        let status = r.status();
                         let err_text = r.text().await.unwrap_or_default();
                         // Retry on any error if attempts remain
                         if attempt < max_attempts - 1 {
-                            tokio::time::sleep(Duration::from_secs(2)).await;
+                            let exp = std::cmp::min(attempt as u32, 4);
+                            let backoff_secs = std::cmp::min(30u64, 2u64.saturating_mul(1u64 << exp));
+                            tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
                             continue; 
                         }
-                        return Err(anyhow!("Direct API Error (URL: {}): {}", url, err_text));
+                        return Err(anyhow!("Direct API Error (HTTP {}, URL: {}): {}", status, url, err_text));
                     }
                     let res_json: serde_json::Value = r.json().await?;
                     let content = res_json.pointer("/choices/0/message/content").and_then(|s| s.as_str()).unwrap_or("").to_string();
                     let usage: Option<TokenUsage> = res_json.get("usage").and_then(|u| serde_json::from_value(u.clone()).ok());
-                    return Ok((content, usage, Some("direct".into()), None));
+                    return Ok((content, usage, Some("direct".into()), None, None, None));
                 },
                 Err(e) => {
                     if attempt < max_attempts - 1 { 
-                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        let exp = std::cmp::min(attempt as u32, 4);
+                        let backoff_secs = std::cmp::min(30u64, 2u64.saturating_mul(1u64 << exp));
+                        tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
                         continue; 
                     }
                     return Err(anyhow!("Direct API Network Error: {}", e));
@@ -801,7 +883,8 @@ async fn call_ai_base(
                 "prompt": prompt,     // For Gemini
                 "image": b64,
                 "mimeType": mime,
-                "selectionMode": is_selection
+                "selectionMode": is_selection,
+                "retries": req.retries
             });
 
             let resp = client.post(format!("{}/ai/generate", base))
@@ -813,12 +896,15 @@ async fn call_ai_base(
             match resp {
                 Ok(r) => {
                     if !r.status().is_success() {
+                        let status = r.status();
                         let err_text = r.text().await.unwrap_or_default();
                          if attempt < max_attempts - 1 {
-                            tokio::time::sleep(Duration::from_secs(2)).await;
+                            let exp = std::cmp::min(attempt as u32, 4);
+                            let backoff_secs = std::cmp::min(30u64, 2u64.saturating_mul(1u64 << exp));
+                            tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
                             continue; 
                         }
-                        return Err(anyhow!("API Error: {}", err_text));
+                        return Err(anyhow!("API Error (HTTP {}): {}", status, err_text));
                     }
                     let res_json: serde_json::Value = r.json().await?;
                     let content = res_json.get("result").and_then(|s| s.as_str()).ok_or(anyhow!("No result"))?.to_string();
@@ -846,14 +932,31 @@ async fn call_ai_base(
                         
                     // Cost might be top-level or in metadata
                     let cost = res_json.get("cost")
+                        .or(res_json.get("cost_usd"))
                         .or(res_json.pointer("/metadata/cost"))
                         .and_then(|v| v.as_f64());
+
+                    let balance_after = res_json.get("app_balance_after")
+                        .or(res_json.get("user_balance_after"))
+                        .or(res_json.pointer("/metabayn/user_balance_after"))
+                        .or(res_json.pointer("/metabayn/user_balance"))
+                        .or(res_json.get("remaining_balance"))
+                        .or(res_json.get("remaining"))
+                        .or(res_json.pointer("/metadata/remaining"))
+                        .and_then(|v| v.as_f64().or_else(|| v.as_u64().map(|x| x as f64)));
+
+                    let tokens_deducted = res_json.get("app_tokens_deducted")
+                        .or(res_json.get("tokens_deducted"))
+                        .or(res_json.pointer("/metabayn/tokens_deducted"))
+                        .and_then(|v| v.as_f64().or_else(|| v.as_u64().map(|x| x as f64)));
                     
-                    return Ok((content, usage, provider, cost));
+                    return Ok((content, usage, provider, cost, balance_after, tokens_deducted));
                 },
                 Err(e) => {
                     if attempt < max_attempts - 1 { 
-                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        let exp = std::cmp::min(attempt as u32, 4);
+                        let backoff_secs = std::cmp::min(30u64, 2u64.saturating_mul(1u64 << exp));
+                        tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
                         continue; 
                     }
                     return Err(anyhow!("Server API Network Error: {}", e));
@@ -874,11 +977,68 @@ fn add_usage(acc_u: &mut TokenUsage, acc_c: &mut f64, u: Option<TokenUsage>, c: 
     if let Some(cost) = c { *acc_c += cost; }
 }
 
+fn is_vision_like_model_id(model_id: &str) -> bool {
+    let id = model_id.trim().to_lowercase();
+    if id.is_empty() { return false; }
+    if id == "openrouter/free" { return false; }
+    id.contains("vision")
+        || id.contains("/vl")
+        || id.contains("-vl")
+        || id.contains("pixtral")
+        || id.contains("gpt-4o")
+        || id.contains("gpt-4.1")
+        || id.contains("gpt-4.5")
+        || id.contains("gpt-5")
+        || id.contains("gemini")
+        || id.contains("claude-4")
+        || id.contains("claude-3")
+        || id.contains("llava")
+        || id.contains("cogvlm")
+        || id.contains("qwen-vl")
+        || id.contains("qwen3-vl")
+        || id.contains("molmo")
+        || id.contains("moondream")
+        || id.contains("internvl")
+}
+
+fn is_vision_model_for_provider(provider: &str, model_id: &str) -> bool {
+    let p = provider.trim().to_lowercase();
+    let id = model_id.trim().to_lowercase();
+    if p.is_empty() || id.is_empty() { return false; }
+    if p == "gemini" || p.contains("google") {
+        if !id.starts_with("gemini") { return false; }
+        if id.contains("embedding") { return false; }
+        return true;
+    }
+    if p == "openai" {
+        let ok =
+            id.contains("vision")
+                || id.contains("gpt-4o")
+                || id.contains("gpt-4.1")
+                || id.contains("gpt-4.5")
+                || id.contains("gpt-5");
+        if !ok { return false; }
+        if id.contains("audio") || id.contains("realtime") || id.contains("transcribe") || id.contains("whisper") { return false; }
+        if id.contains("embedding") || id.contains("tts") { return false; }
+        return true;
+    }
+    if p == "openrouter" {
+        return is_vision_like_model_id(&id);
+    }
+    is_vision_like_model_id(&id)
+}
+
 pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>> {
+  let _active_guard = ActiveBatchGuard::new();
   let settings = crate::settings::load_settings().unwrap_or_default();
   let selection_on = settings.selection_enabled;
   let selection_order = settings.selection_order.as_str();
   let vision_model = &req.model;
+  let provider = req.provider.clone();
+
+  if !is_vision_model_for_provider(&provider, vision_model) {
+      return Err(anyhow!(format!("Model tidak mendukung vision: provider={} model={}. Silakan pilih model vision di Settings.", provider, vision_model)));
+  }
 
   let mut out = Vec::new();
   let mut used_titles: HashSet<String> = HashSet::new();
@@ -887,10 +1047,19 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
   files.sort_by_key(|a| split_natural(a));
 
   for f in &files {
+      if cancel_requested() {
+          return Err(anyhow!("CANCELLED_BY_USER"));
+      }
       // Check file existence
       if !std::path::Path::new(f).exists() { continue; }
 
+      let mut file_balance_after: Option<f64> = None;
+      let mut file_tokens_deducted: f64 = 0.0;
+
       // Prepare Image (Vision)
+      if cancel_requested() {
+          return Err(anyhow!("CANCELLED_BY_USER"));
+      }
       let (img_b64, mime) = prepare_image_data(f, vision_model).await?;
       let img_data = Some((img_b64, mime));
 
@@ -907,50 +1076,63 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
       
     // Use Vision Model Logic (Case A & B)
     if selection_on && selection_order == "before" {
-        // CASE B: Selection -> Primary (OpenAI/Gemini) -> All Vision
-        let sel_prompt = get_selection_vision_prompt(&settings);
-        match call_ai_base(vision_model, &sel_prompt, img_data.clone(), req).await {
-            Ok((sel_txt, usage, _, cost)) => {
-                 add_usage(&mut acc_vis_usage, &mut acc_vis_cost, usage, cost);
-                 let sel_res = parse_selection_json(&sel_txt);
-                if sel_res.status == "accepted" {
-                     let prompt = get_primary_prompt(req, None);
-                     match call_ai_base(vision_model, &prompt, img_data.clone(), req).await {
-                          Ok((txt, usage, prov, cost)) => {
-                              add_usage(&mut acc_vis_usage, &mut acc_vis_cost, usage, cost);
-                              generated = parse_generated_json(&txt, f, vision_model, prov, acc_vis_usage.clone(), acc_vis_cost, acc_text_usage.clone(), acc_text_cost, req, Some(vision_model.to_string()), None);
-                          },
-                          Err(e) => last_error = e.to_string(),
-                     }
+        // CASE B: Single pass (Metadata + Selection)
+        let prompt = get_primary_prompt_with_selection(req, &settings, None);
+        if cancel_requested() { return Err(anyhow!("CANCELLED_BY_USER")); }
+        match call_ai_base(vision_model, &prompt, img_data.clone(), req).await {
+            Ok((txt, usage, prov, cost, balance_after, tokens_deducted)) => {
+                add_usage(&mut acc_vis_usage, &mut acc_vis_cost, usage, cost);
+                if let Some(b) = balance_after { file_balance_after = Some(b); }
+                if let Some(d) = tokens_deducted { file_tokens_deducted += d; }
+
+                let temp_gen = parse_generated_json(&txt, f, vision_model, prov, acc_vis_usage.clone(), acc_vis_cost, acc_text_usage.clone(), acc_text_cost, req, Some(vision_model.to_string()), None);
+                if let Some(g) = temp_gen {
+                    let sel_status = g.selection_status.clone().unwrap_or_default();
+                    let sel_reason = g.reason.clone().unwrap_or_default();
+                    let sel_failed = g.failed_checks.clone().unwrap_or_default();
+
+                    if sel_status.is_empty() {
+                        last_error = "Selection missing in response".to_string();
+                    }
+
+                    if sel_status == "accepted" {
+                        generated = Some(g);
+                    } else if !sel_status.is_empty() {
+                        last_error = format!("Rejected: {}", sel_reason);
+                        let total_input = acc_vis_usage.prompt_tokens + acc_text_usage.prompt_tokens;
+                        let total_output = acc_vis_usage.completion_tokens + acc_text_usage.completion_tokens;
+                        let total_cost = acc_vis_cost + acc_text_cost;
+                        generated = Some(Generated {
+                            file: f.clone(),
+                            file_path: f.clone(),
+                            title: "ERROR".into(),
+                            description: format!("Rejected: {}", sel_reason),
+                            keywords: vec![],
+                            category: String::new(),
+                            source: vision_model.to_string(),
+                            selection_status: Some("rejected".into()),
+                            failed_checks: Some(sel_failed),
+                            reason: Some(sel_reason),
+                            gen_provider: None,
+                            input_tokens: Some(total_input),
+                            output_tokens: Some(total_output),
+                            cost: Some(total_cost),
+                            app_balance_after: None,
+                            app_tokens_deducted: None,
+                            vision_input_tokens: Some(acc_vis_usage.prompt_tokens),
+                            vision_output_tokens: Some(acc_vis_usage.completion_tokens),
+                            vision_cost: Some(acc_vis_cost),
+                            text_input_tokens: Some(acc_text_usage.prompt_tokens),
+                            text_output_tokens: Some(acc_text_usage.completion_tokens),
+                            text_cost: Some(acc_text_cost),
+                            vision_model: Some(vision_model.to_string()),
+                            text_model: None,
+                        });
+                    } else if last_error.is_empty() {
+                        last_error = "Selection missing in response".to_string();
+                    }
                 } else {
-                    last_error = format!("Rejected: {}", sel_res.reason);
-                    let total_input = acc_vis_usage.prompt_tokens + acc_text_usage.prompt_tokens;
-                    let total_output = acc_vis_usage.completion_tokens + acc_text_usage.completion_tokens;
-                    let total_cost = acc_vis_cost + acc_text_cost;
-                    generated = Some(Generated {
-                        file: f.clone(),
-                        file_path: f.clone(),
-                        title: "ERROR".into(),
-                        description: format!("Rejected: {}", sel_res.reason),
-                        keywords: vec![],
-                        category: String::new(),
-                        source: vision_model.to_string(),
-                        selection_status: Some("rejected".into()),
-                        failed_checks: Some(sel_res.failed_checks.clone()),
-                        reason: Some(sel_res.reason.clone()),
-                        gen_provider: None,
-                        input_tokens: Some(total_input),
-                        output_tokens: Some(total_output),
-                        cost: Some(total_cost),
-                        vision_input_tokens: Some(acc_vis_usage.prompt_tokens),
-                        vision_output_tokens: Some(acc_vis_usage.completion_tokens),
-                        vision_cost: Some(acc_vis_cost),
-                        text_input_tokens: Some(acc_text_usage.prompt_tokens),
-                        text_output_tokens: Some(acc_text_usage.completion_tokens),
-                        text_cost: Some(acc_text_cost),
-                        vision_model: Some(vision_model.to_string()),
-                        text_model: None,
-                    });
+                    last_error = "Failed to parse JSON".to_string();
                 }
             },
             Err(e) => last_error = e.to_string(),
@@ -958,123 +1140,65 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
     } else {
         // CASE A & Selection After: Primary Only (OpenAI/Gemini) -> Vision
         // If Selection After, we generate first then check.
-        let prompt = get_primary_prompt(req, None);
+        let prompt = if selection_on && selection_order == "after" {
+            get_primary_prompt_with_selection(req, &settings, None)
+        } else {
+            get_primary_prompt(req, None)
+        };
+        if cancel_requested() { return Err(anyhow!("CANCELLED_BY_USER")); }
         match call_ai_base(vision_model, &prompt, img_data.clone(), req).await {
-            Ok((txt, usage, prov, cost)) => {
+            Ok((txt, usage, prov, cost, balance_after, tokens_deducted)) => {
                 add_usage(&mut acc_vis_usage, &mut acc_vis_cost, usage, cost);
+                if let Some(b) = balance_after { file_balance_after = Some(b); }
+                if let Some(d) = tokens_deducted { file_tokens_deducted += d; }
                 let mut temp_gen = parse_generated_json(&txt, f, vision_model, prov, acc_vis_usage.clone(), acc_vis_cost, acc_text_usage.clone(), acc_text_cost, req, Some(vision_model.to_string()), None);
-                let parsed_ok = temp_gen.is_some();
                 
           if let Some(ref mut _g) = temp_gen {
               if selection_on && selection_order == "after" {
-                   // Selection After Generate
-                   let sel_prompt = get_selection_vision_prompt(&settings);
-                   match call_ai_base(vision_model, &sel_prompt, img_data.clone(), req).await {
-                       Ok((sel_txt, usage, _, cost)) => {
-                           add_usage(&mut acc_vis_usage, &mut acc_vis_cost, usage, cost);
-                           let sel_res = parse_selection_json(&sel_txt);
-                           if sel_res.status == "accepted" {
-                               generated = temp_gen;
-                           } else {
-                               // FIX: Write metadata even if rejected (for After Generate mode)
-                                if let Some(ref mut g_data) = temp_gen {
-                                    let meta_req = crate::api::ImageMetaReq {
-                                        file: f.clone(),
-                                        output_file: None,
-                                        title: g_data.title.clone(),
-                                        description: g_data.description.clone(),
-                                        keywords: g_data.keywords.clone(),
-                                        creator: String::new(),
-                                        copyright: String::new(),
-                                        overwrite: true,
-                                        auto_embed: true,
-                                        category: Some(g_data.category.clone()),
-                                    };
-                                    
-                                    // Attempt to write/embed metadata
-                                    // If file was renamed (due to rename settings), update the path
-                                    if let Ok(Some(new_path)) = write_image(&meta_req).await {
-                                        g_data.file = new_path.clone();
-                                        g_data.file_path = new_path;
-                                    }
-                                }
+                   let sel_status = temp_gen.as_ref().and_then(|g| g.selection_status.clone()).unwrap_or_default();
+                   let sel_reason = temp_gen.as_ref().and_then(|g| g.reason.clone()).unwrap_or_default();
+                   let sel_failed = temp_gen.as_ref().and_then(|g| g.failed_checks.clone()).unwrap_or_default();
 
-                               last_error = format!("Rejected: {}", sel_res.reason);
-                               if let Some(ref mut g2) = temp_gen {
-                                   g2.selection_status = Some("rejected".into());
-                                   g2.failed_checks = Some(sel_res.failed_checks.clone());
-                                   g2.reason = Some(sel_res.reason.clone());
-                                   generated = temp_gen;
-                               } else {
-                                   generated = Some(Generated {
-                                       file: f.clone(),
-                                       file_path: f.clone(),
-                                       title: String::new(),
-                                       description: String::new(),
-                                       keywords: vec![],
-                                       category: String::new(),
-                                       source: vision_model.to_string(),
-                                       selection_status: Some("rejected".into()),
-                                       failed_checks: Some(sel_res.failed_checks.clone()),
-                                       reason: Some(sel_res.reason.clone()),
-                                       gen_provider: None,
-                                       input_tokens: Some(acc_vis_usage.prompt_tokens + acc_text_usage.prompt_tokens),
-                                       output_tokens: Some(acc_vis_usage.completion_tokens + acc_text_usage.completion_tokens),
-                                       cost: Some(acc_vis_cost + acc_text_cost),
-                                       vision_input_tokens: Some(acc_vis_usage.prompt_tokens),
-                                       vision_output_tokens: Some(acc_vis_usage.completion_tokens),
-                                       vision_cost: Some(acc_vis_cost),
-                                       text_input_tokens: Some(acc_text_usage.prompt_tokens),
-                                       text_output_tokens: Some(acc_text_usage.completion_tokens),
-                                       text_cost: Some(acc_text_cost),
-                                       vision_model: Some(vision_model.to_string()),
-                                       text_model: None,
-                                   });
-                               }
+                   if sel_status.is_empty() {
+                       last_error = "Selection missing in response".to_string();
+                   }
+
+                   if sel_status == "accepted" {
+                       if let Some(ref mut g2) = temp_gen {
+                           g2.selection_status = Some("accepted".into());
+                       }
+                       generated = temp_gen;
+                   } else if !sel_status.is_empty() {
+                       if let Some(ref mut g_data) = temp_gen {
+                           enforce_generation_contract(g_data, req);
+                           let meta_req = crate::api::ImageMetaReq {
+                               file: f.clone(),
+                               output_file: None,
+                               title: g_data.title.clone(),
+                               description: g_data.description.clone(),
+                               keywords: g_data.keywords.clone(),
+                               creator: String::new(),
+                               copyright: String::new(),
+                               overwrite: true,
+                               auto_embed: true,
+                               category: Some(g_data.category.clone()),
+                           };
+                           if let Ok(Some(new_path)) = write_image(&meta_req).await {
+                               g_data.file = new_path.clone();
+                               g_data.file_path = new_path;
                            }
-                       },
-                       Err(e) => last_error = e.to_string(),
+                       }
+
+                       last_error = format!("Rejected: {}", sel_reason);
+                       if let Some(ref mut g2) = temp_gen {
+                           g2.selection_status = Some("rejected".into());
+                           g2.failed_checks = Some(sel_failed);
+                           g2.reason = Some(sel_reason);
+                           generated = temp_gen;
+                       }
                    }
               } else {
                   generated = temp_gen;
-              }
-          }
-          // If parsing failed, still run selection to ensure proper reject handling
-          if !parsed_ok && selection_on && selection_order == "after" {
-              let sel_prompt = get_selection_vision_prompt(&settings);
-              match call_ai_base(vision_model, &sel_prompt, img_data.clone(), req).await {
-                  Ok((sel_txt, usage2, _, cost2)) => {
-                      add_usage(&mut acc_vis_usage, &mut acc_vis_cost, usage2, cost2);
-                      let sel_res = parse_selection_json(&sel_txt);
-                      if sel_res.status != "accepted" {
-                          last_error = format!("Rejected: {}", sel_res.reason);
-                          generated = Some(Generated {
-                              file: f.clone(),
-                              file_path: f.clone(),
-                              title: String::new(),
-                              description: String::new(),
-                              keywords: vec![],
-                              category: String::new(),
-                              source: vision_model.to_string(),
-                              selection_status: Some("rejected".into()),
-                              failed_checks: Some(sel_res.failed_checks.clone()),
-                              reason: Some(sel_res.reason.clone()),
-                              gen_provider: None,
-                              input_tokens: Some(acc_vis_usage.prompt_tokens + acc_text_usage.prompt_tokens),
-                              output_tokens: Some(acc_vis_usage.completion_tokens + acc_text_usage.completion_tokens),
-                              cost: Some(acc_vis_cost + acc_text_cost),
-                              vision_input_tokens: Some(acc_vis_usage.prompt_tokens),
-                              vision_output_tokens: Some(acc_vis_usage.completion_tokens),
-                              vision_cost: Some(acc_vis_cost),
-                              text_input_tokens: Some(acc_text_usage.prompt_tokens),
-                              text_output_tokens: Some(acc_text_usage.completion_tokens),
-                              text_cost: Some(acc_text_cost),
-                              vision_model: Some(vision_model.to_string()),
-                              text_model: None,
-                          });
-                      }
-                  },
-                  Err(e) => { last_error = e.to_string(); }
               }
           }
             },
@@ -1083,6 +1207,9 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
     }
 
       if let Some(mut g) = generated {
+          g.app_balance_after = file_balance_after;
+          g.app_tokens_deducted = if file_tokens_deducted > 0.0 { Some(file_tokens_deducted) } else { None };
+          enforce_generation_contract(&mut g, req);
           // Validation
            if valid(&g, req) { 
                 ensure_unique_title(&mut g, &mut used_titles, req);
@@ -1094,9 +1221,10 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
            }
       } else {
            // Check if the error was a Safety Block (common with Gemini)
-           let is_safety = last_error.to_lowercase().contains("safety") 
-                || last_error.to_lowercase().contains("blocked")
-                || last_error.contains("400");
+           let lower = last_error.to_lowercase();
+           let is_rate_limited = is_quota_or_rate_limit_error(&lower);
+           let is_safety = is_safety_block_error(&lower) && !is_rate_limited;
+           let tokens_deducted = if file_tokens_deducted > 0.0 { Some(file_tokens_deducted) } else { None };
                 
            if is_safety && selection_on {
                 // Treat as Rejected (NSFW/Safety)
@@ -1111,6 +1239,8 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
                     input_tokens: Some(acc_vis_usage.prompt_tokens + acc_text_usage.prompt_tokens), 
                     output_tokens: Some(acc_vis_usage.completion_tokens + acc_text_usage.completion_tokens), 
                     cost: Some(acc_vis_cost + acc_text_cost),
+                    app_balance_after: file_balance_after,
+                    app_tokens_deducted: tokens_deducted,
                     vision_input_tokens: Some(acc_vis_usage.prompt_tokens),
                     vision_output_tokens: Some(acc_vis_usage.completion_tokens),
                     vision_cost: Some(acc_vis_cost),
@@ -1125,10 +1255,12 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
                out.push(Generated {
                     file: f.clone(), file_path: f.clone(),
                     title: "ERROR".into(), description: last_error, keywords: vec![], category: "".into(),
-                    source: "error".into(), selection_status: None, failed_checks: None, reason: None, gen_provider: None, 
+                    source: vision_model.to_string(), selection_status: None, failed_checks: None, reason: None, gen_provider: None, 
                     input_tokens: Some(acc_vis_usage.prompt_tokens + acc_text_usage.prompt_tokens), 
                     output_tokens: Some(acc_vis_usage.completion_tokens + acc_text_usage.completion_tokens), 
                     cost: Some(acc_vis_cost + acc_text_cost),
+                    app_balance_after: file_balance_after,
+                    app_tokens_deducted: tokens_deducted,
                     vision_input_tokens: Some(acc_vis_usage.prompt_tokens),
                     vision_output_tokens: Some(acc_vis_usage.completion_tokens),
                     vision_cost: Some(acc_vis_cost),
@@ -1168,6 +1300,26 @@ fn parse_generated_json(
     let total_cost = v_cost + t_cost;
 
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(clean) {
+        let mut selection_status: Option<String> = None;
+        let mut failed_checks: Option<Vec<String>> = None;
+        let mut reason: Option<String> = None;
+
+        if let Some(sel) = parsed.get("selection") {
+            if sel.is_object() {
+                selection_status = sel.get("status").and_then(|v| v.as_str()).map(|s| s.to_string());
+                failed_checks = sel.get("failed_checks").and_then(|v| v.as_array()).map(|a| {
+                    a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect::<Vec<String>>()
+                });
+                reason = sel.get("reason").and_then(|v| v.as_str()).map(|s| s.to_string());
+            }
+        } else {
+            selection_status = parsed.get("selection_status").and_then(|v| v.as_str()).map(|s| s.to_string());
+            failed_checks = parsed.get("failed_checks").and_then(|v| v.as_array()).map(|a| {
+                a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect::<Vec<String>>()
+            });
+            reason = parsed.get("reason").and_then(|v| v.as_str()).map(|s| s.to_string());
+        }
+
         Some(Generated {
             file: file.to_string(),
             file_path: file.to_string(),
@@ -1180,13 +1332,15 @@ fn parse_generated_json(
                 parsed["category"].as_str().unwrap_or("").to_string()
             },
             source: model.to_string(),
-            selection_status: None,
-            failed_checks: None,
-            reason: None,
+            selection_status,
+            failed_checks,
+            reason,
             gen_provider: provider,
             input_tokens: Some(total_input),
             output_tokens: Some(total_output),
             cost: Some(total_cost),
+            app_balance_after: None,
+            app_tokens_deducted: None,
             vision_input_tokens: Some(v_usage.prompt_tokens),
             vision_output_tokens: Some(v_usage.completion_tokens),
             vision_cost: Some(v_cost),
@@ -1202,6 +1356,26 @@ fn parse_generated_json(
                 if end > start {
                     let potential_json = &clean[start..=end];
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(potential_json) {
+                        let mut selection_status: Option<String> = None;
+                        let mut failed_checks: Option<Vec<String>> = None;
+                        let mut reason: Option<String> = None;
+
+                        if let Some(sel) = parsed.get("selection") {
+                            if sel.is_object() {
+                                selection_status = sel.get("status").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                failed_checks = sel.get("failed_checks").and_then(|v| v.as_array()).map(|a| {
+                                    a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect::<Vec<String>>()
+                                });
+                                reason = sel.get("reason").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            }
+                        } else {
+                            selection_status = parsed.get("selection_status").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            failed_checks = parsed.get("failed_checks").and_then(|v| v.as_array()).map(|a| {
+                                a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect::<Vec<String>>()
+                            });
+                            reason = parsed.get("reason").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        }
+
                         return Some(Generated {
                             file: file.to_string(),
                             file_path: file.to_string(),
@@ -1210,13 +1384,15 @@ fn parse_generated_json(
                             keywords: normalize_keywords(&parsed["keywords"], req.keywords_min_count, req.keywords_max_count, &req.banned_words),
                             category: if let Some(arr) = parsed["category"].as_array() { arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(",") } else { parsed["category"].as_str().unwrap_or("").to_string() },
                             source: model.to_string(),
-                            selection_status: None,
-                            failed_checks: None,
-                            reason: None,
+                            selection_status,
+                            failed_checks,
+                            reason,
                             gen_provider: provider.clone(),
                             input_tokens: Some(total_input),
                             output_tokens: Some(total_output),
                             cost: Some(total_cost),
+                            app_balance_after: None,
+                            app_tokens_deducted: None,
                             vision_input_tokens: Some(v_usage.prompt_tokens),
                             vision_output_tokens: Some(v_usage.completion_tokens),
                             vision_cost: Some(v_cost),
@@ -1266,6 +1442,8 @@ fn parse_generated_json(
             input_tokens: Some(total_input),
             output_tokens: Some(total_output),
             cost: Some(total_cost),
+            app_balance_after: None,
+            app_tokens_deducted: None,
             vision_input_tokens: Some(v_usage.prompt_tokens),
             vision_output_tokens: Some(v_usage.completion_tokens),
             vision_cost: Some(v_cost),
@@ -1276,62 +1454,6 @@ fn parse_generated_json(
             text_model: t_model,
         })
     }
-}
-
-fn parse_selection_json(txt: &str) -> SelectionResult {
-    let clean = txt.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(clean) {
-        return SelectionResult {
-            status: parsed["status"].as_str().unwrap_or("rejected").to_string(),
-            failed_checks: parsed["failed_checks"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<String>>()).unwrap_or_default(),
-            reason: parsed["reason"].as_str().unwrap_or("").to_string(),
-            usage: None
-        };
-    }
-
-    if let Some(start) = clean.find('{') {
-        if let Some(end) = clean.rfind('}') {
-            if end > start {
-                let potential_json = &clean[start..=end];
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(potential_json) {
-                    return SelectionResult {
-                        status: parsed["status"].as_str().unwrap_or("rejected").to_string(),
-                        failed_checks: parsed["failed_checks"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<String>>()).unwrap_or_default(),
-                        reason: parsed["reason"].as_str().unwrap_or("").to_string(),
-                        usage: None
-                    };
-                }
-            }
-        }
-    }
-
-    let lower = clean.to_lowercase();
-    if lower.contains("accepted") && !lower.contains("reject") {
-        return SelectionResult { status: "accepted".into(), failed_checks: vec![], reason: String::new(), usage: None };
-    }
-
-    let mut fails: Vec<String> = Vec::new();
-    let known = [
-        "gibberish","non-english","irrelevant-text","relevant-text",
-        "full_body_perfect","no_head","partial_perfect","partial_defect","back_view","unclear_hybrid","face_only","nudity_nsfw","mating_genitals",
-        "watermark","trademarked logo","brand_logo","brand logo",
-        "deformed_object","unrecognizable","famous_trademark"
-    ];
-    for k in known.iter() {
-        if lower.contains(k) { fails.push((*k).to_string()); }
-    }
-
-    let mut reason = String::new();
-    if let Some(i) = lower.find("reason:") {
-        let r = &clean[i+7..];
-        reason = r.lines().next().unwrap_or("").trim().to_string();
-    } else if !fails.is_empty() {
-        reason = format!("Matched: {:?}", fails);
-    } else if lower.contains("reject") || lower.contains("not compliant") || lower.contains("fail") {
-        reason = "Policy match".to_string();
-    }
-
-    SelectionResult { status: "rejected".into(), failed_checks: fails, reason, usage: None }
 }
 
 fn normalize_keywords(v: &serde_json::Value, _min_c: u32, max_c: u32, banned_str: &str) -> Vec<String> {
@@ -1363,16 +1485,448 @@ fn normalize_keywords(v: &serde_json::Value, _min_c: u32, max_c: u32, banned_str
       out
 }
 
+fn build_stopwords() -> std::collections::HashSet<String> {
+    [
+        "a","an","the","and","or","with","without","of","in","on","for","to","from","by","at","as",
+        "is","are","be","was","were","this","that","these","those","into","over","under","above","below",
+        "around","between","across","through","up","down","out","off","via","but","if","then","than",
+        "also","very","more","most","much","many","such","some","any","each","other","another","own",
+        "stock","photo","photos","image","images","media",
+        "picture","pictures","shot","shots","capture","captured","high","quality","professional",
+        "commercial","editorial","resolution","highresolution","hd","4k","8k","showing","view"
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+fn is_meaningful_token(token: &str, stopwords: &std::collections::HashSet<String>, banned_list: &Vec<String>) -> bool {
+    let lower = token.trim().to_lowercase();
+    if lower.is_empty() { return false; }
+    if lower.len() < 2 { return false; }
+    if lower.chars().all(|c| c.is_ascii_digit()) { return false; }
+    if stopwords.contains(&lower) { return false; }
+    if banned_list.contains(&lower) { return false; }
+    true
+}
+
+fn enforce_generation_contract(g: &mut Generated, req: &crate::api::BatchReq) {
+    if g.title.trim().eq_ignore_ascii_case("ERROR") {
+        return;
+    }
+    let (tmin, tmax, dmin, dmax, kw_min, kw_max) = effective_generation_bounds(req);
+
+    let banned_list: Vec<String> = req
+        .banned_words
+        .split(',')
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let mut title_words: Vec<&str> = g.title.split_whitespace().filter(|w| !w.is_empty()).collect();
+    if tmax > 0 && (title_words.len() as u32) > tmax {
+        title_words.truncate(tmax as usize);
+        g.title = title_words.join(" ");
+        title_words = g.title.split_whitespace().filter(|w| !w.is_empty()).collect();
+    }
+    if tmin > 0 && (title_words.len() as u32) < tmin {
+        let mut extra: Vec<String> = Vec::new();
+        for kw in &g.keywords {
+            if extra.len() as u32 >= (tmin - title_words.len() as u32) { break; }
+            if kw.is_empty() { continue; }
+            extra.push(kw.clone());
+        }
+        if !extra.is_empty() {
+            g.title = format!("{} {}", g.title.trim(), extra.join(" ")).trim().to_string();
+            let mut words: Vec<&str> = g.title.split_whitespace().filter(|w| !w.is_empty()).collect();
+            if tmax > 0 && (words.len() as u32) > tmax {
+                words.truncate(tmax as usize);
+                g.title = words.join(" ");
+            }
+        }
+        let stopwords_title = build_stopwords();
+        let empty_banned: Vec<String> = Vec::new();
+        let mut cur_words: Vec<String> = g.title.split_whitespace().map(|w| w.to_string()).collect();
+        let mut seen_title: std::collections::HashSet<String> = cur_words.iter().map(|w| w.to_lowercase()).collect();
+
+        let push_words_from_text = |text: &str, cur_words: &mut Vec<String>, seen_title: &mut std::collections::HashSet<String>| {
+            let clean = text.to_lowercase().replace(|c: char| !c.is_ascii_alphanumeric(), " ");
+            for token in clean.split_whitespace() {
+                if (cur_words.len() as u32) >= tmin { break; }
+                if !is_meaningful_token(token, &stopwords_title, &empty_banned) { continue; }
+                let w = token.trim().to_string();
+                if seen_title.insert(w.clone()) {
+                    cur_words.push(w);
+                }
+            }
+        };
+
+        if (cur_words.len() as u32) < tmin {
+            push_words_from_text(&g.category, &mut cur_words, &mut seen_title);
+        }
+        if (cur_words.len() as u32) < tmin {
+            if let Some(stem) = std::path::Path::new(&g.file_path).file_stem().and_then(|s| s.to_str()) {
+                push_words_from_text(stem, &mut cur_words, &mut seen_title);
+            }
+        }
+
+        if !cur_words.is_empty() {
+            while (cur_words.len() as u32) < tmin {
+                cur_words.push(cur_words[0].clone());
+            }
+            if tmax > 0 && (cur_words.len() as u32) > tmax {
+                cur_words.truncate(tmax as usize);
+            }
+            g.title = cur_words.join(" ");
+        }
+    }
+
+    if dmax == 0 {
+        g.description = String::new();
+    } else {
+        let mut desc = g.description.trim().split_whitespace().collect::<Vec<_>>().join(" ");
+        if desc.chars().count() as u32 > dmax {
+            desc = desc.chars().take(dmax as usize).collect::<String>().trim().to_string();
+        }
+        if (desc.chars().count() as u32) < dmin {
+            let title_part = g.title.trim();
+            let mut alt = if title_part.is_empty() {
+                "Image.".to_string()
+            } else {
+                format!("Image showing {}.", title_part)
+            };
+            if (alt.chars().count() as u32) < dmin {
+                let kws = g.keywords.iter().take(12).cloned().collect::<Vec<_>>().join(", ");
+                if !kws.is_empty() {
+                    alt = format!("{} Keywords: {}.", alt.trim_end_matches('.'), kws);
+                }
+            }
+            if alt.chars().count() as u32 > dmax {
+                alt = alt.chars().take(dmax as usize).collect::<String>().trim().to_string();
+            }
+            desc = alt;
+        }
+        if dmin > 0 {
+            while (desc.chars().count() as u32) < dmin {
+                if desc.is_empty() {
+                    desc.push_str("Image.");
+                } else {
+                    desc.push_str(" Image.");
+                }
+                if (desc.chars().count() as u32) > dmax {
+                    desc = desc.chars().take(dmax as usize).collect::<String>().trim().to_string();
+                    break;
+                }
+            }
+        }
+        g.description = desc;
+    }
+
+    let stopwords = build_stopwords();
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for kw in g.keywords.drain(..) {
+        let lower = kw.trim().to_lowercase();
+        if lower.is_empty() { continue; }
+        let clean = lower.replace(|c: char| !c.is_ascii_alphanumeric(), " ");
+        for token in clean.split_whitespace() {
+            if !is_meaningful_token(token, &stopwords, &banned_list) { continue; }
+            let t = token.trim().to_string();
+            if seen.insert(t.clone()) { out.push(t); }
+        }
+    }
+
+    let push_from_text = |text: &str, out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>| {
+        let lower = text.to_lowercase();
+        let clean = lower.replace(|c: char| !c.is_ascii_alphanumeric(), " ");
+        for token in clean.split_whitespace() {
+            if out.len() as u32 >= kw_min { break; }
+            if !is_meaningful_token(token, &stopwords, &banned_list) { continue; }
+            let t = token.trim().to_string();
+            if seen.insert(t.clone()) { out.push(t); }
+        }
+    };
+
+    if kw_min > 0 && (out.len() as u32) < kw_min {
+        push_from_text(&g.title, &mut out, &mut seen);
+    }
+    if kw_min > 0 && (out.len() as u32) < kw_min {
+        push_from_text(&g.description, &mut out, &mut seen);
+    }
+    if kw_min > 0 && (out.len() as u32) < kw_min {
+        push_from_text(&g.category, &mut out, &mut seen);
+    }
+    if kw_min > 0 && (out.len() as u32) < kw_min {
+        use std::path::Path;
+        if let Some(stem) = Path::new(&g.file_path).file_stem().and_then(|s| s.to_str()) {
+            let lower = stem.to_lowercase();
+            let clean = lower.replace(|c: char| !c.is_ascii_alphanumeric(), " ");
+            for token in clean.split_whitespace() {
+                if out.len() as u32 >= kw_min { break; }
+                if !is_meaningful_token(token, &stopwords, &banned_list) { continue; }
+                let t = token.trim().to_string();
+                if seen.insert(t.clone()) { out.push(t); }
+            }
+        }
+    }
+
+    if kw_min > 0 && (out.len() as u32) < kw_min {
+        let base = out.clone();
+        for w in base {
+            if out.len() as u32 >= kw_min { break; }
+            let lower = w.to_lowercase();
+            if lower.len() < 3 { continue; }
+            if lower.ends_with('s') && lower.len() > 3 {
+                let singular = lower.trim_end_matches('s').to_string();
+                if is_meaningful_token(&singular, &stopwords, &banned_list) && seen.insert(singular.clone()) {
+                    out.push(singular);
+                }
+            } else {
+                let plural = format!("{}s", lower);
+                if is_meaningful_token(&plural, &stopwords, &banned_list) && seen.insert(plural.clone()) {
+                    out.push(plural);
+                }
+            }
+        }
+    }
+
+    if kw_max == 0 {
+        out.clear();
+    } else if (out.len() as u32) > kw_max {
+        out.truncate(kw_max as usize);
+    }
+    g.keywords = out;
+}
+
 fn valid(g: &Generated, req: &crate::api::BatchReq) -> bool {
+  let (tmin, tmax, dmin, dmax, kw_min, kw_max_raw) = effective_generation_bounds(req);
   let tw = g.title.split_whitespace().count() as u32;
   let dl = g.description.chars().count() as u32;
   let kw = g.keywords.len() as u32;
-  let dl_max = req.description_max_chars + 15; 
-  let kw_max = req.keywords_max_count + 3; 
-  let tw_max = req.title_max_words + 2; 
-  tw >= req.title_min_words && tw <= tw_max && 
-  dl >= req.description_min_chars && dl <= dl_max && 
-  kw >= req.keywords_min_count && kw <= kw_max
+  let dl_max = dmax + 15;
+  let kw_max = kw_max_raw + 3;
+  let tw_max = tmax + 2;
+  tw >= tmin && tw <= tw_max &&
+  dl >= dmin && dl <= dl_max &&
+  kw >= kw_min && kw <= kw_max
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vision_model_filter_openai() {
+        assert!(is_vision_model_for_provider("OpenAI", "gpt-4o-mini"));
+        assert!(is_vision_model_for_provider("OpenAI", "gpt-4o"));
+        assert!(is_vision_model_for_provider("OpenAI", "gpt-4o-mini-vision"));
+        assert!(!is_vision_model_for_provider("OpenAI", "gpt-4o-audio-preview"));
+        assert!(is_vision_model_for_provider("OpenAI", "gpt-4.1"));
+    }
+
+    #[test]
+    fn vision_model_filter_gemini() {
+        assert!(is_vision_model_for_provider("Gemini", "gemini-2.5-flash"));
+        assert!(!is_vision_model_for_provider("Gemini", "text-embedding-004"));
+    }
+
+    #[test]
+    fn vision_model_filter_openrouter() {
+        assert!(is_vision_model_for_provider("OpenRouter", "qwen/qwen3-vl-235b-a22b-thinking"));
+        assert!(is_vision_model_for_provider("OpenRouter", "nvidia/nemotron-nano-12b-v2-vl:free"));
+        assert!(!is_vision_model_for_provider("OpenRouter", "openrouter/free"));
+        assert!(!is_vision_model_for_provider("OpenRouter", "meta-llama/llama-3.1-8b-instruct"));
+    }
+
+    #[test]
+    fn excessive_dimensions_guard() {
+        assert!(!is_excessive_image_dimensions(512, 512));
+        assert!(!is_excessive_image_dimensions(8000, 8000));
+        assert!(is_excessive_image_dimensions(20001, 10));
+        assert!(is_excessive_image_dimensions(10, 20001));
+        assert!(is_excessive_image_dimensions(12000, 12000));
+    }
+
+    #[test]
+    fn generation_enforcement_respects_min_max() {
+        let req = crate::api::BatchReq {
+            files: vec![],
+            model: "any".into(),
+            token: "".into(),
+            retries: 0,
+            title_min_words: 5,
+            title_max_words: 10,
+            description_min_chars: 60,
+            description_max_chars: 120,
+            keywords_min_count: 8,
+            keywords_max_count: 15,
+            banned_words: "banned".into(),
+            max_threads: 1,
+            connection_mode: "".into(),
+            api_key: None,
+            provider: "OpenRouter".into(),
+        };
+
+        let mut g = Generated {
+            file: "x".into(),
+            file_path: "x".into(),
+            title: "Cat".into(),
+            description: "short".into(),
+            keywords: vec!["cat".into(), "banned".into()],
+            category: "Animals/Wildlife,Nature".into(),
+            source: "any".into(),
+            selection_status: None,
+            failed_checks: None,
+            reason: None,
+            gen_provider: None,
+            input_tokens: None,
+            output_tokens: None,
+            cost: None,
+            app_balance_after: None,
+            app_tokens_deducted: None,
+            vision_input_tokens: None,
+            vision_output_tokens: None,
+            text_input_tokens: None,
+            text_output_tokens: None,
+            vision_cost: None,
+            text_cost: None,
+            vision_model: None,
+            text_model: None,
+        };
+
+        enforce_generation_contract(&mut g, &req);
+
+        let tw = g.title.split_whitespace().count() as u32;
+        let dl = g.description.chars().count() as u32;
+        let kw = g.keywords.len() as u32;
+
+        assert!(tw >= 5 && tw <= 10);
+        assert!(dl >= 60 && dl <= 120);
+        assert!(kw >= 8 && kw <= 15);
+        assert!(!g.keywords.iter().any(|k| k == "banned"));
+        assert!(g.keywords.iter().all(|k| !k.contains(char::is_whitespace)));
+        assert!(valid(&g, &req));
+    }
+
+    #[test]
+    fn generation_enforcement_disables_description() {
+        let req = crate::api::BatchReq {
+            files: vec![],
+            model: "any".into(),
+            token: "".into(),
+            retries: 0,
+            title_min_words: 3,
+            title_max_words: 6,
+            description_min_chars: 200,
+            description_max_chars: 0,
+            keywords_min_count: 5,
+            keywords_max_count: 8,
+            banned_words: "".into(),
+            max_threads: 1,
+            connection_mode: "".into(),
+            api_key: None,
+            provider: "OpenAI".into(),
+        };
+
+        let mut g = Generated {
+            file: "x".into(),
+            file_path: "x".into(),
+            title: "Blue sky".into(),
+            description: "This should be removed.".into(),
+            keywords: vec!["blue".into(), "sky".into()],
+            category: "Nature,Backgrounds/Textures".into(),
+            source: "any".into(),
+            selection_status: None,
+            failed_checks: None,
+            reason: None,
+            gen_provider: None,
+            input_tokens: None,
+            output_tokens: None,
+            cost: None,
+            app_balance_after: None,
+            app_tokens_deducted: None,
+            vision_input_tokens: None,
+            vision_output_tokens: None,
+            text_input_tokens: None,
+            text_output_tokens: None,
+            vision_cost: None,
+            text_cost: None,
+            vision_model: None,
+            text_model: None,
+        };
+
+        enforce_generation_contract(&mut g, &req);
+        assert_eq!(g.description, "");
+        assert!(valid(&g, &req));
+    }
+
+    #[test]
+    fn generation_enforcement_disables_keywords() {
+        let req = crate::api::BatchReq {
+            files: vec![],
+            model: "any".into(),
+            token: "".into(),
+            retries: 0,
+            title_min_words: 1,
+            title_max_words: 6,
+            description_min_chars: 0,
+            description_max_chars: 50,
+            keywords_min_count: 0,
+            keywords_max_count: 0,
+            banned_words: "".into(),
+            max_threads: 1,
+            connection_mode: "".into(),
+            api_key: None,
+            provider: "Gemini".into(),
+        };
+
+        let mut g = Generated {
+            file: "x".into(),
+            file_path: "x".into(),
+            title: "Ocean".into(),
+            description: "Waves.".into(),
+            keywords: vec!["ocean".into(), "sea".into()],
+            category: "Nature,Travel".into(),
+            source: "any".into(),
+            selection_status: None,
+            failed_checks: None,
+            reason: None,
+            gen_provider: None,
+            input_tokens: None,
+            output_tokens: None,
+            cost: None,
+            app_balance_after: None,
+            app_tokens_deducted: None,
+            vision_input_tokens: None,
+            vision_output_tokens: None,
+            text_input_tokens: None,
+            text_output_tokens: None,
+            vision_cost: None,
+            text_cost: None,
+            vision_model: None,
+            text_model: None,
+        };
+
+        enforce_generation_contract(&mut g, &req);
+        assert!(g.keywords.is_empty());
+        assert!(valid(&g, &req));
+    }
+
+    #[test]
+    fn direct_api_quota_errors_are_not_misclassified_as_safety() {
+        let err = r#"Direct API Error (HTTP 429 Too Many Requests, URL: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions): {"error":{"code":429,"message":"You exceeded your current quota.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"subject":"generate_content_free_tier_requests"}]}]}}"#;
+        let lower = err.to_lowercase();
+        assert!(is_quota_or_rate_limit_error(&lower));
+        assert!(!is_safety_block_error(&lower));
+    }
+
+    #[test]
+    fn safety_block_errors_still_detected() {
+        let err = "Blocked due to safety policy: nudity";
+        let lower = err.to_lowercase();
+        assert!(!is_quota_or_rate_limit_error(&lower));
+        assert!(is_safety_block_error(&lower));
+    }
 }
 
 fn normalize_title_str(s: &str) -> String {
@@ -1407,6 +1961,10 @@ async fn prepare_image_data(path: &str, _model: &str) -> Result<(String, String)
     if let Some(cached) = cache_get(path) {
         return Ok(cached);
     }
+
+    if cancel_requested() {
+        return Err(anyhow!("CANCELLED_BY_USER"));
+    }
     
     // Check if video
     let path_lower = path.to_lowercase();
@@ -1420,89 +1978,89 @@ async fn prepare_image_data(path: &str, _model: &str) -> Result<(String, String)
         // Extract frame using FFmpeg (already resized to 1024px)
         crate::video::extract_frame(path)?
     } else {
-        // Read file with retry
-        let mut f_buf = Vec::new();
-        let mut attempts = 0;
-        loop {
-            attempts += 1;
-            match std::fs::File::open(path) {
-                Ok(mut file) => {
-                    match std::io::Read::read_to_end(&mut file, &mut f_buf) {
-                        Ok(_) => break,
-                        Err(e) => {
-                            if attempts >= 5 { return Err(e.into()); }
-                            tokio::time::sleep(Duration::from_millis(500)).await;
+        let file_len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        if file_len > 200 * 1024 * 1024 {
+            return Err(anyhow!("File terlalu besar untuk diproses: {} bytes", file_len));
+        }
+
+        let (w, h) = ImageReader::open(path)?.with_guessed_format()?.into_dimensions()?;
+        if is_excessive_image_dimensions(w, h) {
+            return Err(anyhow!("Resolusi gambar terlalu besar untuk diproses: {}x{}", w, h));
+        }
+
+        if cancel_requested() {
+            return Err(anyhow!("CANCELLED_BY_USER"));
+        }
+
+        let is_jpeg_path = path_lower.ends_with(".jpg") || path_lower.ends_with(".jpeg");
+        if is_jpeg_path && w <= 768 && h <= 768 && file_len > 0 && file_len < (150 * 1024) {
+            let mut f_buf = Vec::new();
+            let mut attempts = 0;
+            loop {
+                attempts += 1;
+                match std::fs::File::open(path) {
+                    Ok(mut file) => {
+                        match std::io::Read::read_to_end(&mut file, &mut f_buf) {
+                            Ok(_) => break,
+                            Err(e) => {
+                                if attempts >= 5 { return Err(e.into()); }
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                            }
                         }
+                    },
+                    Err(e) => {
+                        if attempts >= 5 { return Err(e.into()); }
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                     }
-                },
-                Err(e) => {
-                    if attempts >= 5 { return Err(e.into()); }
-                    tokio::time::sleep(Duration::from_millis(500)).await;
                 }
             }
+            f_buf
+        } else {
+            let img = ImageReader::open(path)?.with_guessed_format()?.decode()?;
+            let (w, h) = img.dimensions();
+            let (nw, nh) = if w > 512 || h > 512 {
+                if w > h { (512, (512.0 * h as f32 / w as f32) as u32) }
+                else { ((512.0 * w as f32 / h as f32) as u32, 512) }
+            } else { (w, h) };
+
+            let resized = img.resize(nw, nh, FilterType::Triangle);
+            let mut out = Cursor::new(Vec::new());
+            resized.write_to(&mut out, image::ImageOutputFormat::Jpeg(60))?;
+            out.into_inner()
         }
-        f_buf
     };
     
-    // Resize if needed (for images) or re-encode
-    // Optimization: Decode only dimensions first to check if we can skip full load
-    // BUT image crate doesn't support easy "header only" check without creating a Reader
-    // For now, let's trust the user's files are standard.
-    
+    if cancel_requested() {
+        return Err(anyhow!("CANCELLED_BY_USER"));
+    }
+
     // FAST PATH 1: If file is very small (< 60KB), assume it's already a thumbnail
     if buf.len() < 60 * 1024 { 
         let is_jpeg = buf.len() > 2 && buf[0] == 0xFF && buf[1] == 0xD8;
         if is_jpeg {
              let b64 = BASE64_STANDARD.encode(&buf);
              let mime = "image/jpeg".to_string();
-             cache_set(path.to_string(), (b64.clone(), mime.clone()));
+             if b64.len() <= 1_500_000 {
+                 cache_set(path.to_string(), (b64.clone(), mime.clone()));
+             }
              return Ok((b64, mime));
         }
     }
 
-    // Header-only check to avoid full decode if dimensions are already small
-    // This saves CPU by not decoding pixels for small-dimension but large-files (e.g. uncompressed)
-    let cursor = Cursor::new(&buf);
-    if let Ok(reader) = ImageReader::new(cursor).with_guessed_format() {
-        if let Ok((w, h)) = reader.into_dimensions() {
-            if w <= 768 && h <= 768 {
-                // Dimensions are small enough, check if file size is reasonable (< 150KB)
-                if buf.len() < 150 * 1024 {
-                     // Check if it's JPEG
-                     let is_jpeg = buf.len() > 2 && buf[0] == 0xFF && buf[1] == 0xD8;
-                     if is_jpeg {
-                        let b64 = BASE64_STANDARD.encode(&buf);
-                        let mime = "image/jpeg".to_string();
-                        cache_set(path.to_string(), (b64.clone(), mime.clone()));
-                        return Ok((b64, mime));
-                     }
-                }
-            }
-        }
-    }
-
-    // SLOW PATH: Decode, Resize, Re-encode
-    let img = image::load_from_memory(&buf)?;
-    let (w, h) = img.dimensions();
-    
-    // Target 512px max dimension to save tokens (Gemini 1.5 Flash 8B/Lite sensitive to size)
-    let (nw, nh) = if w > 512 || h > 512 {
-        if w > h { (512, (512.0 * h as f32 / w as f32) as u32) }
-        else { ((512.0 * w as f32 / h as f32) as u32, 512) }
-    } else { (w, h) };
-    
-    // Always resize/re-encode to ensure consistent JPEG format for API
-    // Use Triangle for better quality/speed balance than Nearest (too jagged)
-    let resized = img.resize(nw, nh, FilterType::Triangle);
-    let mut out = Cursor::new(Vec::new());
-    // Quality 60 is the sweet spot for <50KB thumbnails at ~768px
-    resized.write_to(&mut out, image::ImageOutputFormat::Jpeg(60))?;
-    
-    let b64 = BASE64_STANDARD.encode(out.get_ref());
+    let b64 = BASE64_STANDARD.encode(&buf);
     let mime = "image/jpeg".to_string();
     
-    cache_set(path.to_string(), (b64.clone(), mime.clone()));
+    if b64.len() <= 1_500_000 {
+        cache_set(path.to_string(), (b64.clone(), mime.clone()));
+    }
     Ok((b64, mime))
+}
+
+fn is_excessive_image_dimensions(w: u32, h: u32) -> bool {
+    let max_dim: u64 = 20_000;
+    let pixels: u64 = (w as u64).saturating_mul(h as u64);
+    let max_pixels: u64 = 80_000_000;
+    (w as u64) > max_dim || (h as u64) > max_dim || pixels > max_pixels
 }
 
 fn map_failure_to_tag(fail: &str) -> String {
@@ -1567,6 +2125,59 @@ fn map_failure_to_tag(fail: &str) -> String {
     if f.contains("json parse error") || f.contains("unrecognized response") || f.contains("parse failed") { return "Selection_Parse_Failed".to_string(); }
 
     String::new()
+}
+
+pub async fn strip_metadata_batch(window: tauri::Window, input_folder: &str, recurse: bool) -> Result<String> {
+    let root = Path::new(input_folder);
+    if !root.exists() {
+        return Err(anyhow!("Folder tidak ditemukan: {}", input_folder));
+    }
+
+    let exiftool = resolve_exiftool().ok_or(anyhow!("ExifTool not found"))?;
+
+    let _ = window.emit("csv_log", serde_json::json!({
+        "text": format!("Removing metadata: {}...", input_folder),
+        "file": input_folder,
+        "status": "processing"
+    }));
+
+    let mut args: Vec<String> = Vec::new();
+    args.push("-overwrite_original".to_string());
+    args.push("-m".to_string());
+    args.push("-api".to_string());
+    args.push("LargeFileSupport=1".to_string());
+    if recurse {
+        args.push("-r".to_string());
+    }
+
+    for ext in ["jpg","jpeg","png","webp","bmp","tif","tiff","mp4","mov","mkv","webm","avi","m2ts","3gp","wmv"] {
+        args.push("-ext".to_string());
+        args.push(ext.to_string());
+    }
+
+    args.push("-all=".to_string());
+    args.push("-tagsfromfile".to_string());
+    args.push("@".to_string());
+    args.push("-Orientation".to_string());
+    args.push(input_folder.to_string());
+
+    let mut cmd = Command::new(exiftool);
+    cmd.args(args);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+
+    let output = cmd.output()?;
+    if !output.status.success() {
+        return Err(anyhow!("{}", String::from_utf8_lossy(&output.stderr)));
+    }
+
+    let _ = window.emit("csv_log", serde_json::json!({
+        "text": "Metadata removed successfully",
+        "file": input_folder,
+        "status": "success"
+    }));
+
+    Ok("ok".to_string())
 }
 
 pub async fn move_to_rejected_with_metadata(

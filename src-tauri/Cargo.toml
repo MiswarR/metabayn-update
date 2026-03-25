@@ -1,6 +1,6 @@
 [package]
 name = "metabayn-studio"
-version = "4.4.7"
+version = "5.1.1"
 edition = "2021"
 
 [build-dependencies]
@@ -41,3 +41,6 @@ winreg = "0.50"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+[profile.dev]
+debug = 0

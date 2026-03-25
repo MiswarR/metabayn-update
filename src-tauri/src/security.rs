@@ -32,14 +32,20 @@ impl SecurityService {
 
     #[allow(dead_code)]
     pub fn record_auth_failure(&self, ip: &str) {
-        let mut blocked = self.blocked_ips.lock().unwrap();
+        let mut blocked = match self.blocked_ips.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
         let count = blocked.entry(ip.to_string()).or_insert(0);
         *count += 1;
     }
 
     #[allow(dead_code)]
     pub fn is_ip_blocked(&self, ip: &str) -> bool {
-        let blocked = self.blocked_ips.lock().unwrap();
+        let blocked = match self.blocked_ips.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
         if let Some(count) = blocked.get(ip) {
             return *count >= self.max_failures;
         }
@@ -48,7 +54,10 @@ impl SecurityService {
 
     #[allow(dead_code)]
     pub fn reset_failures(&self, ip: &str) {
-        let mut blocked = self.blocked_ips.lock().unwrap();
+        let mut blocked = match self.blocked_ips.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
         blocked.remove(ip);
     }
 }

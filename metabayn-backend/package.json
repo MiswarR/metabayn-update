@@ -2,11 +2,13 @@
   "name": "metabayn-backend",
   "version": "1.0.1",
   "description": "Metabayn AI Backend on Cloudflare Workers",
+  "type": "module",
   "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:init": "wrangler d1 execute metabayn-db --file=./schema.sql"
+    "db:init": "wrangler d1 execute metabayn-db --file=./schema.sql",
+    "test": "node --test --experimental-test-coverage"
   },
   "keywords": [],
   "author": "Metabayn Architect",

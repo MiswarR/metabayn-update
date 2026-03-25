@@ -6,7 +6,7 @@
 const requestHistory = new Map<number, number>();
 
 // Default: 1 request per 100ms (Fast burst allowed, Concurrency Lock will handle the rest)
-const RATE_LIMIT_MS = 10;
+const RATE_LIMIT_MS = 100;
 
 export function checkRateLimit(userId: number): boolean {
   const now = Date.now();

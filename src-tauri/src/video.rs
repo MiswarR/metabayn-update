@@ -143,8 +143,13 @@ fn run_ffmpeg(path: &Path, req: &crate::api::VideoMetaReq) -> Result<()> {
     
     let temp_name = format!("temp_{}_{}", 
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis(), 
-        path.file_name().unwrap().to_string_lossy());
-    let temp = path.parent().unwrap().join(temp_name);
+        path.file_name()
+            .ok_or(anyhow!("Invalid video path: missing file name"))?
+            .to_string_lossy());
+    let temp = path
+        .parent()
+        .ok_or(anyhow!("Invalid video path: missing parent folder"))?
+        .join(temp_name);
     
     let args = vec![
         "-i".to_string(), path.to_string_lossy().to_string(),
@@ -160,7 +165,7 @@ fn run_ffmpeg(path: &Path, req: &crate::api::VideoMetaReq) -> Result<()> {
         temp.to_string_lossy().to_string(),
     ];
 
-    let mut cmd = Command::new(ffmpeg);
+    let mut cmd = Command::new(&ffmpeg);
     cmd.args(args);
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000);
@@ -201,7 +206,7 @@ pub fn extract_frame(path: &str) -> Result<Vec<u8>> {
         "-".to_string(),
     ];
 
-    let mut cmd = Command::new(ffmpeg);
+    let mut cmd = Command::new(&ffmpeg);
     cmd.args(args);
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000);
@@ -220,7 +225,7 @@ pub fn extract_frame(path: &str) -> Result<Vec<u8>> {
             "-".to_string(),
         ];
         
-        let mut cmd_retry = Command::new(resolve_ffmpeg().unwrap());
+        let mut cmd_retry = Command::new(&ffmpeg);
         cmd_retry.args(args_retry);
         #[cfg(target_os = "windows")]
         cmd_retry.creation_flags(0x08000000);

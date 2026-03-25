@@ -1,12 +1,12 @@
 {
   "package": {
-    "productName": "Metabayn Studio",
-    "version": "4.4.7"
+    "productName": "metabayn-studio",
+    "version": "5.1.1"
   },
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "devPath": "http://localhost:5173",
+    "devPath": "http://127.0.0.1:5174",
     "distDir": "../dist"
   },
   "tauri": {
@@ -38,7 +38,7 @@
         "https://raw.githubusercontent.com/MiswarR/metabayn-update/main/updates/version.json"
       ],
       "dialog": false,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNDMkEyNTUyQTkwODJGQUMKUldTc0x3aXBVaVVxUEtOQ2JrZUNTK3hZaWJLdTZsZEwrMWw1V3dRRW1MZm9nd3lGOFdNZmd4bFgK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkyMTMwRDQ2NEFEQjU2OTAKUldTUVZ0dEtSZzBUa3U3VEFvR3BoTTNHTVd0ZFVwdC82SUdFdjRoMWtaL0F2SXRTRTNpb0hiSm8K"
     },
     "allowlist": {
       "all": false,

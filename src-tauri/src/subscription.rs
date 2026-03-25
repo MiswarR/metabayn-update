@@ -25,7 +25,10 @@ impl SubscriptionState {
 }
 
 pub fn check_subscription_status(state: &SubscriptionState) -> SubscriptionStatus {
-    let mut status = state.status.lock().unwrap();
+    let mut status = match state.status.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
     
     // Check expiry
     if status.is_active {
@@ -43,8 +46,14 @@ pub fn check_subscription_status(state: &SubscriptionState) -> SubscriptionStatu
 }
 
 pub fn activate_mock(state: &SubscriptionState) {
-    let mut status = state.status.lock().unwrap();
+    let mut status = match state.status.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
     status.is_active = true;
     // Set expiry to 30 days from now
-    status.expiry = Some(chrono::Utc::now().checked_add_signed(chrono::Duration::days(30)).unwrap().to_rfc3339());
+    let expiry = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::days(30))
+        .unwrap_or_else(chrono::Utc::now);
+    status.expiry = Some(expiry.to_rfc3339());
 }

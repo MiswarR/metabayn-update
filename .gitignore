@@ -20,3 +20,12 @@ src-tauri/resources/ffmpeg
 
 src-tauri/resources/exiftool
 *.key
+*.key.pub
+*_key.pub
+
+# Cloudflare Wrangler / local dev artifacts
+metabayn-backend/.wrangler/
+metabayn-backend/.wwrangler/
+
+# Vite generated timestamped config snapshots
+vite.config.ts.timestamp-*.mjs

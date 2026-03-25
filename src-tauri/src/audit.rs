@@ -76,7 +76,10 @@ impl AuditService {
     }
 
     pub fn init(&self, app_handle: &AppHandle) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = match self.state.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
         *state = Some(AuditState::new(app_handle));
     }
 

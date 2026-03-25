@@ -1,4 +1,10 @@
+use anyhow::Result;
+use chrono::Local;
 use serde::{Deserialize, Serialize};
+use std::fs::{create_dir_all, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
+use std::{collections::VecDeque, fs::File};
 use tauri::State;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -206,6 +212,13 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: Strin
 }
 
 #[tauri::command]
+pub async fn strip_metadata_batch(window: tauri::Window, input_folder: String, recurse: Option<bool>) -> Result<String, String> {
+    crate::metadata::strip_metadata_batch(window, &input_folder, recurse.unwrap_or(true))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn detect_duplicate_images(window: tauri::Window, input_folder: String, auto_delete: Option<bool>, threshold: Option<u8>) -> Result<String, String> {
     let auto = auto_delete.unwrap_or(true);
     let thr = threshold.unwrap_or(3);
@@ -226,10 +239,55 @@ pub async fn get_machine_hash() -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn generate_metadata_batch(req: BatchReq) -> Result<Vec<crate::metadata::Generated>, String> {
-    crate::metadata::generate_batch(&req)
-        .await
-        .map_err(|e| e.to_string())
+pub async fn generate_metadata_batch(req: BatchReq, audit: State<'_, crate::audit::AuditService>) -> Result<Vec<crate::metadata::Generated>, String> {
+    crate::metadata::clear_cancel_generate_batch();
+    audit.log(
+        crate::audit::AuditEventType::Error,
+        &format!(
+            "GenerateBatch start: files={} provider={} model={} mode={}",
+            req.files.len(),
+            req.provider,
+            req.model,
+            req.connection_mode
+        ),
+        "Start",
+        None,
+    );
+
+    let out = crate::metadata::generate_batch(&req).await;
+    match out {
+        Ok(v) => {
+            audit.log(
+                crate::audit::AuditEventType::Error,
+                &format!("GenerateBatch end: ok files={} results={}", req.files.len(), v.len()),
+                "Ok",
+                None,
+            );
+            Ok(v)
+        }
+        Err(e) => {
+            audit.log(
+                crate::audit::AuditEventType::Error,
+                &format!("GenerateBatch end: err files={} err={}", req.files.len(), e),
+                "Failed",
+                None,
+            );
+            Err(e.to_string())
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn cancel_generate_metadata_batch(audit: State<'_, crate::audit::AuditService>) -> Result<(), String> {
+    crate::metadata::request_cancel_generate_batch();
+    let active = crate::metadata::active_generate_batch_count();
+    audit.log(
+        crate::audit::AuditEventType::Error,
+        &format!("GenerateBatch cancel requested (active_batch={})", active),
+        "Ok",
+        None,
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -331,8 +389,47 @@ pub async fn log_audit_event(
 }
 
 #[tauri::command]
-pub async fn test_api_connection(provider: String, api_key: String) -> Result<String, String> {
-    if api_key.trim().is_empty() {
+pub async fn read_audit_logs(
+    limit: Option<u32>,
+    audit: State<'_, crate::audit::AuditService>,
+) -> Result<Vec<crate::audit::AuditEntry>, String> {
+    let lim = limit.unwrap_or(200).clamp(1, 2000) as usize;
+    let log_path = audit
+        .state
+        .lock()
+        .map_err(|_| "Audit state locked".to_string())?
+        .as_ref()
+        .map(|s| s.log_path.clone())
+        .unwrap_or_default();
+
+    if log_path.trim().is_empty() {
+        return Ok(vec![]);
+    }
+
+    let file = match File::open(&log_path) {
+        Ok(f) => f,
+        Err(_) => return Ok(vec![]),
+    };
+
+    let mut buf: VecDeque<crate::audit::AuditEntry> = VecDeque::with_capacity(lim + 1);
+    let reader = BufReader::new(file);
+    for line in reader.lines().flatten() {
+        if let Ok(entry) = serde_json::from_str::<crate::audit::AuditEntry>(&line) {
+            buf.push_back(entry);
+            if buf.len() > lim {
+                buf.pop_front();
+            }
+        }
+    }
+
+    Ok(buf.into_iter().collect())
+}
+
+#[tauri::command]
+pub async fn test_api_connection(provider: String, api_key: String, endpoint: Option<String>) -> Result<String, String> {
+    let api_key = api_key.trim();
+    // For OpenRouter, api_key might be empty/dummy since it's server managed
+    if api_key.is_empty() && provider != "OpenRouter" {
         return Err("Missing API key".to_string());
     }
 
@@ -347,7 +444,50 @@ pub async fn test_api_connection(provider: String, api_key: String) -> Result<St
             .header("Authorization", format!("Bearer {}", api_key))
             .send()
             .await
+    } else if provider == "Groq" {
+        return Err("Groq provider is currently disabled.".to_string());
+    } else if provider == "Anthropic" || provider == "Claude" {
+        client
+            .get("https://api.anthropic.com/v1/models")
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .send()
+            .await
+    } else if provider == "OpenRouter" {
+        // Test connection to Worker or Direct OpenRouter
+        let url = endpoint.unwrap_or("https://metabayn-worker.metabayn.workers.dev/v1/chat/completions".to_string());
+        
+        let target_url = if url.ends_with("/chat/completions") {
+             url.replace("/chat/completions", "/models")
+        } else {
+             format!("{}/models", url.trim_end_matches('/'))
+        };
+        
+        // Determine which token to use
+        // If the user provided a specific API Key (sk-or-...), use it directly against OpenRouter (or via worker if it supports it)
+        // If api_key is empty/server-managed, use the App Token from settings.
+        
+        let final_token = if api_key.starts_with("sk-or-") {
+            api_key.to_string()
+        } else {
+            let settings = crate::settings::load_settings().unwrap_or_default();
+            let mut auth_token = settings.auth_token;
+            if auth_token.starts_with("enc:") {
+                if let Ok(dec) = crate::crypto_utils::decrypt_token(&auth_token[4..]) {
+                    auth_token = dec;
+                }
+            }
+            auth_token
+        };
+
+        client
+            .get(target_url)
+            .header("Authorization", format!("Bearer {}", final_token)) 
+            .send()
+            .await
     } else {
+        // Default to Gemini (Google)
+        // Note: Gemini uses query param 'key'
         client
             .get(format!(
                 "https://generativelanguage.googleapis.com/v1beta/models?key={}",
@@ -362,11 +502,84 @@ pub async fn test_api_connection(provider: String, api_key: String) -> Result<St
             if resp.status().is_success() {
                 Ok("Success".to_string())
             } else {
+                let status = resp.status();
                 let err_text = resp.text().await.unwrap_or_default();
-                Err(format!("Connection Failed: {}", err_text))
+                // If 404/405 (Method Not Allowed) on Worker, it might still mean the worker is reachable but doesn't support GET /models
+                // But usually we want 200 OK.
+                Err(format!("Connection Failed ({}): {}", status, err_text))
             }
         }
         Err(e) => Err(format!("Network Error: {}", e)),
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OpenRouterUsage {
+    pub label: String,
+    pub usage: f64,
+    pub limit: Option<f64>,
+    pub is_limit_enabled: bool,
+}
+
+#[tauri::command]
+pub async fn get_openrouter_usage(endpoint: Option<String>) -> Result<OpenRouterUsage, String> {
+    let url = endpoint.unwrap_or("https://metabayn-backend.metabayn.workers.dev/v1/chat/completions".to_string());
+    
+    // Construct target URL for OpenRouter key info
+    // Standard OpenRouter endpoint for key info is https://openrouter.ai/api/v1/auth/key
+    // We assume the worker proxies this path or exposes a specific /auth/key endpoint
+    let target = if url.ends_with("/v1/chat/completions") {
+        url.replace("/v1/chat/completions", "/auth/key")
+    } else {
+        let base = url.trim_end_matches('/');
+        if base.ends_with("/v1") {
+             base.replace("/v1", "/auth/key")
+        } else {
+             format!("{}/auth/key", base)
+        }
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // Get auth token from settings for OpenRouter via Worker
+    let settings = crate::settings::load_settings().unwrap_or_default();
+    let mut auth_token = settings.auth_token;
+    if auth_token.starts_with("enc:") {
+        if let Ok(dec) = crate::crypto_utils::decrypt_token(&auth_token[4..]) {
+            auth_token = dec;
+        }
+    }
+
+    let res = client.get(&target)
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .send().await.map_err(|e| e.to_string())?;
+    
+    if res.status().is_success() {
+        let json: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+        // Parse OpenRouter response structure (proxied by Worker)
+        // Expected format from OpenRouter /auth/key:
+        // { "data": { "label": "...", "usage": 1.23, "limit": 10, "is_limit_enabled": true } }
+        if let Some(data) = json.get("data") {
+             Ok(OpenRouterUsage {
+                label: data["label"].as_str().unwrap_or("Unknown").to_string(),
+                usage: data["usage"].as_f64().unwrap_or(0.0),
+                limit: data["limit"].as_f64(),
+                is_limit_enabled: data["is_limit_enabled"].as_bool().unwrap_or(false),
+            })
+        } else {
+            // Fallback if worker returns flat structure
+             Ok(OpenRouterUsage {
+                label: json["label"].as_str().unwrap_or("Unknown").to_string(),
+                usage: json["usage"].as_f64().unwrap_or(0.0),
+                limit: json["limit"].as_f64(),
+                is_limit_enabled: json["is_limit_enabled"].as_bool().unwrap_or(false),
+            })
+        }
+    } else {
+        Err(format!("Failed to fetch usage: {} - {}", res.status(), res.text().await.unwrap_or_default()))
     }
 }
 
@@ -375,4 +588,43 @@ pub async fn run_ai_clustering(window: tauri::Window, input_folder: String, thre
     crate::ai_cluster::run_clustering(window, &input_folder, threshold)
         .await
         .map_err(|e| e.to_string())
+}
+
+// Cloudflare Gateway Commands
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct ModeToggleReq {
+    pub mode: String, // "apikey" or "cloudflare"
+}
+
+#[tauri::command]
+pub async fn set_profit_margin(margin: f64) -> Result<(), String> {
+    let mut settings = crate::settings::load_settings().map_err(|e| e.to_string())?;
+    settings.profit_margin_percent = margin;
+    crate::settings::save_settings(&settings).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn append_cost_log(app: tauri::AppHandle, line: String) -> Result<String, String> {
+    let settings = crate::settings::load_settings().unwrap_or_default();
+    let base = if !settings.logs_path.trim().is_empty() {
+        PathBuf::from(settings.logs_path)
+    } else {
+        app.path_resolver()
+            .app_data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("logs")
+    };
+    create_dir_all(&base).map_err(|e| e.to_string())?;
+
+    let file_name = format!("cost-{}.log", Local::now().format("%Y-%m-%d"));
+    let file_path = base.join(file_name);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file_path)
+        .map_err(|e| e.to_string())?;
+    writeln!(file, "{}", line).map_err(|e| e.to_string())?;
+    Ok(file_path.to_string_lossy().to_string())
 }

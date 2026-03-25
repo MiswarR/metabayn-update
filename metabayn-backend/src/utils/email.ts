@@ -1,7 +1,15 @@
 import { Env } from '../types';
 
 export async function sendEmail(to: string, subject: string, html: string, env: Env) {
-  if (!env.RESEND_API_KEY) {
+  if (String((env as any)?.EMAIL_TEST_MODE || '') === '1') {
+    return;
+  }
+  const apiKey =
+    env.RESEND_API_KEY ||
+    (env as any).RESEND_KEY ||
+    (env as any).RESEND_APIKEY;
+
+  if (!apiKey) {
     console.warn("RESEND_API_KEY is missing. Skipping email.");
     // If strict mode is required, we should throw here, but for dev we might skip
     throw new Error("Email service not configured (RESEND_API_KEY missing)");
@@ -15,7 +23,7 @@ export async function sendEmail(to: string, subject: string, html: string, env: 
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.RESEND_API_KEY}`
+        'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
         from: from,
@@ -60,17 +68,60 @@ export function getTopupSuccessTemplate(amount: number, tokensAdded: number, cur
     `;
 }
 
-export function getManualApproveTemplate(name: string, amount: number, tokensAdded: number, currency: 'IDR' | 'USD' = 'IDR') {
+export function getSubscriptionSuccessTemplate(amount: number, durationDays: number, bonusTokens: number, expiryDate: string, currency: 'IDR' | 'USD' = 'IDR') {
     const formattedAmount = currency === 'IDR' 
         ? `Rp ${amount.toLocaleString('id-ID')}`
         : `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+    
+    const formattedDate = new Date(expiryDate).toLocaleDateString('en-US', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+    });
+
+    return `
+    <div style="font-family: sans-serif; padding: 20px;">
+        <h2>Subscription Activated!</h2>
+        <p>Hello,</p>
+        <p>We have received your payment of <strong>${formattedAmount}</strong>.</p>
+        <div style="background: #f0fdf4; border: 1px solid #bbf7d0; padding: 15px; border-radius: 8px; margin: 20px 0;">
+            <h3 style="margin-top: 0; color: #166534;">Purchase Details</h3>
+            <ul style="list-style: none; padding: 0;">
+                <li style="margin-bottom: 8px;">Duration: <strong>${durationDays} Days</strong></li>
+                <li style="margin-bottom: 8px;">New Expiry Date: <strong>${formattedDate}</strong></li>
+                <li style="margin-bottom: 8px;">Bonus Tokens: <strong>${bonusTokens.toLocaleString()} Tokens</strong></li>
+            </ul>
+        </div>
+        <p>Your subscription is now active and tokens have been added to your account.</p>
+        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+        <p style="font-size: 12px; color: #888; text-align: center;">
+            This is an automated message, please do not reply.<br>
+            For support, join our <a href="https://chat.whatsapp.com/JD1KDEjKPV3Fp6fJMRz6qS" style="color: #25D366; text-decoration: none;">WhatsApp Community</a>.
+        </p>
+    </div>
+    `;
+}
+
+export function getManualApproveTemplate(name: string, amount: number, tokensAdded: number, currency: 'IDR' | 'USD' = 'IDR', durationDays: number = 0) {
+    const formattedAmount = currency === 'IDR' 
+        ? `Rp ${amount.toLocaleString('id-ID')}`
+        : `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+
+    let content = `<p>Your transaction of <strong>${formattedAmount}</strong> has been manually confirmed by admin.</p>`;
+    
+    if (durationDays > 0) {
+        content += `<p>Subscription Activated: <strong>${durationDays} Days</strong></p>`;
+    }
+    
+    if (tokensAdded > 0) {
+        content += `<p>Tokens added to your account: <strong>${tokensAdded.toLocaleString()}</strong></p>`;
+    }
 
     return `
     <div style="font-family: sans-serif; padding: 20px;">
         <h2>Top-Up Successful (Manual Approval)</h2>
         <p>Hello ${name},</p>
-        <p>Your transaction of <strong>${formattedAmount}</strong> has been manually confirmed by admin.</p>
-        <p>Tokens added to your account: <strong>${tokensAdded.toLocaleString()}</strong></p>
+        ${content}
         <p>Thank you for your patience!</p>
         <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
         <p style="font-size: 12px; color: #888; text-align: center;">
@@ -146,6 +197,66 @@ export function getWelcomeTemplate(email: string) {
         <p style="font-size: 12px; color: #888; text-align: center;">
             This is an automated message, please do not reply to this email.<br>
             For support and updates, please join our <a href="https://chat.whatsapp.com/JD1KDEjKPV3Fp6fJMRz6qS" style="color: #25D366; text-decoration: none;">WhatsApp Community</a>.
+        </p>
+    </div>
+    `;
+}
+
+export function getResetPasswordRequestTemplate(email: string, link: string) {
+    return `
+    <div style="font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 8px;">
+        <div style="text-align: center; margin-bottom: 20px;">
+             <h2 style="color: #333;">Reset Your Password</h2>
+        </div>
+        <p>Hello,</p>
+        <p>We received a request to reset the password for your Metabayn Studio account.</p>
+        <p>Please click the button below to create a new password:</p>
+        
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="${link}" style="background-color: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 16px;">Create New Password</a>
+        </div>
+
+        <p>If the button does not work, copy and paste this link into your browser:</p>
+        <p style="font-size: 12px; color: #666; word-break: break-all;">${link}</p>
+
+        <p style="color: #d32f2f; font-size: 12px;">This link is valid for a limited time. If you did not request this change, you can ignore this email.</p>
+
+        <br>
+        <p>Best regards,</p>
+        <p>Metabayn Studio Team</p>
+
+        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+        <p style="font-size: 12px; color: #888; text-align: center;">
+            This is an automated message, please do not reply to this email.<br>
+            For support, join our <a href="https://chat.whatsapp.com/JD1KDEjKPV3Fp6fJMRz6qS" style="color: #25D366; text-decoration: none;">WhatsApp Community</a>.
+        </p>
+    </div>
+    `;
+}
+
+export function getResetPasswordTemplate(email: string, pass: string) {
+    return `
+    <div style="font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 8px;">
+        <div style="text-align: center; margin-bottom: 20px;">
+             <h2 style="color: #333;">Password Reset Successful</h2>
+        </div>
+        <p>Hello,</p>
+        <p>We received a request to reset the password for your Metabayn Studio account.</p>
+        <p>Your new password is:</p>
+        <ul style="background: #f9f9f9; padding: 15px; border-radius: 4px; list-style: none;">
+            <li style="margin-bottom: 8px;"><strong>Email:</strong> ${email}</li>
+            <li><strong>New Password:</strong> ${pass}</li>
+        </ul>
+        <p style="color: #d32f2f; font-size: 12px;">*For security, please change this password after logging in and do not share it with anyone.</p>
+
+        <br>
+        <p>Best regards,</p>
+        <p>Metabayn Studio Team</p>
+
+        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+        <p style="font-size: 12px; color: #888; text-align: center;">
+            This is an automated message, please do not reply to this email.<br>
+            If you did not request this change, please contact our support immediately.
         </p>
     </div>
     `;
@@ -229,6 +340,125 @@ export function getPurchaseVoucherTemplate(email: string, voucherCode: string, t
       <p style="font-size: 12px; color: #888; text-align: center;">
         This is an automated message, please do not reply.<br>
         For support, join our <a href="https://chat.whatsapp.com/JD1KDEjKPV3Fp6fJMRz6qS" style="color: #25D366; text-decoration: none;">WhatsApp Community</a>.
+      </p>
+  </div>
+  `;
+}
+
+export function getLicenseVoucherTemplate(email: string, voucherCode: string, durationDays: number, bonusTokens: number) {
+  return `
+  <div style="font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 8px;">
+      <div style="text-align: center; margin-bottom: 20px;">
+           <h2 style="color: #333;">Pembelian Berhasil (Lynk.id)</h2>
+      </div>
+  
+      <p>Hi ${email},</p>
+      <p>Terima kasih. Kami sudah menerima pembayaran Anda untuk <strong>Metabayn - Smart Metadata Agent</strong>.</p>
+  
+      <div style="background: #f0f9ff; border: 1px solid #bae6fd; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <ul style="list-style: none; padding: 0; margin: 0;">
+          <li style="margin-bottom: 8px;">Langganan: <strong>${durationDays} hari</strong></li>
+          <li>Bonus Token: <strong>${bonusTokens.toLocaleString('id-ID')} Tokens</strong> (hangus saat langganan berakhir)</li>
+        </ul>
+      </div>
+  
+      <h3>Kode Voucher Anda</h3>
+      <div style="background: #f5f5f5; padding: 12px 16px; border-radius: 4px; text-align: center; margin: 10px 0 20px 0;">
+        <span style="font-size: 20px; letter-spacing: 3px; font-weight: bold; color: #222;">
+          ${voucherCode}
+        </span>
+      </div>
+  
+      <p style="color: #d32f2f; font-size: 12px; margin-top: -8px;">
+        * Voucher ini hanya bisa digunakan 1 kali.
+      </p>
+  
+      <h3>Cara Redeem</h3>
+      <ol>
+        <li>Login ke aplikasi <strong>Metabayn Studio</strong>.</li>
+        <li>Masukkan kode voucher saat popup Redeem muncul.</li>
+        <li>Klik <strong>Redeem</strong>.</li>
+      </ol>
+  
+      <br>
+      <p>Best regards,</p>
+      <p><strong>Metabayn Studio Team</strong></p>
+  
+      <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+      <p style="font-size: 12px; color: #888; text-align: center;">
+        Ini email otomatis, mohon tidak dibalas.<br>
+        Untuk support, join <a href="https://chat.whatsapp.com/JD1KDEjKPV3Fp6fJMRz6qS" style="color: #25D366; text-decoration: none;">WhatsApp Community</a>.
+      </p>
+  </div>
+  `;
+}
+
+export function getLynkPurchasePendingActivationTemplate(email: string) {
+  return `
+  <div style="font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 8px;">
+      <div style="text-align: center; margin-bottom: 20px;">
+           <h2 style="color: #333;">Pembelian Berhasil (Lynk.id)</h2>
+      </div>
+  
+      <p>Hi ${email},</p>
+      <p>Kami sudah menerima pembayaran Anda untuk <strong>Metabayn - Smart Metadata Agent</strong>.</p>
+  
+      <div style="background: #f0fdf4; border: 1px solid #bbf7d0; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 0;">Langganan dan bonus akan aktif otomatis saat Anda login / register menggunakan email yang sama.</p>
+      </div>
+  
+      <h3>Langkah Berikutnya</h3>
+      <ol>
+        <li>Jika sudah punya akun: login memakai email ini.</li>
+        <li>Jika belum: register memakai email ini, lalu verifikasi email.</li>
+      </ol>
+  
+      <br>
+      <p>Best regards,</p>
+      <p><strong>Metabayn Studio Team</strong></p>
+  
+      <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+      <p style="font-size: 12px; color: #888; text-align: center;">
+        Ini email otomatis, mohon tidak dibalas.<br>
+        Untuk support, join <a href="https://chat.whatsapp.com/JD1KDEjKPV3Fp6fJMRz6qS" style="color: #25D366; text-decoration: none;">WhatsApp Community</a>.
+      </p>
+  </div>
+  `;
+}
+
+export function getLynkPurchaseActivatedTemplate(email: string, expiryIso: string, bonusTokens: number) {
+  const formattedDate = new Date(expiryIso).toLocaleDateString('id-ID', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+
+  return `
+  <div style="font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 8px;">
+      <div style="text-align: center; margin-bottom: 20px;">
+           <h2 style="color: #333;">Langganan Aktif</h2>
+      </div>
+  
+      <p>Hi ${email},</p>
+      <p>Langganan Anda sudah aktif untuk <strong>Metabayn - Smart Metadata Agent</strong>.</p>
+  
+      <div style="background: #f0f9ff; border: 1px solid #bae6fd; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <ul style="list-style: none; padding: 0; margin: 0;">
+          <li style="margin-bottom: 8px;">Masa aktif sampai: <strong>${formattedDate}</strong></li>
+          <li>Bonus: <strong>${bonusTokens.toLocaleString('id-ID')} Tokens</strong></li>
+        </ul>
+      </div>
+  
+      <p>Silakan login ke aplikasi untuk mulai menggunakan fitur langganan dan bonus token.</p>
+  
+      <br>
+      <p>Best regards,</p>
+      <p><strong>Metabayn Studio Team</strong></p>
+  
+      <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+      <p style="font-size: 12px; color: #888; text-align: center;">
+        Ini email otomatis, mohon tidak dibalas.<br>
+        Untuk support, join <a href="https://chat.whatsapp.com/JD1KDEjKPV3Fp6fJMRz6qS" style="color: #25D366; text-decoration: none;">WhatsApp Community</a>.
       </p>
   </div>
   `;

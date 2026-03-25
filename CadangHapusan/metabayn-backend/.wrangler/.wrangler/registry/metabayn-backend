@@ -1,0 +1,12 @@
+{
+  "protocol": "http",
+  "host": "127.0.0.1",
+  "port": 54549,
+  "entrypointAddresses": {
+    "default": {
+      "host": "127.0.0.1",
+      "port": 56705
+    }
+  },
+  "durableObjects": []
+}

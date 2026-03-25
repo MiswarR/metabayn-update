@@ -1,0 +1,554 @@
+Metabayn Studio – Prompt Arsitektur & Alur Fitur Lengkap
+========================================================
+
+Tujuan dokumen:
+- Menjelaskan secara ringkas namun lengkap bagaimana seluruh komponen Metabayn Studio bekerja.
+- Menjadi “prompt sistem” bagi AI lain agar mengerti konteks aplikasi, fitur, dan alur proses.
+- Tetap akurat dengan kode saat ini (desktop Tauri + React + Rust, backend Cloudflare, integrasi AI).
+
+--------------------------------------------------------
+1. Gambaran Umum Aplikasi
+--------------------------------------------------------
+
+Metabayn Studio adalah aplikasi desktop (Tauri + React + Rust) untuk fotografer / videografer stok yang mengotomatisasi:
+- Pembuatan metadata lengkap (judul, deskripsi, kata kunci, kategori Shutterstock).
+- Seleksi kualitas (accept / reject) berdasarkan kriteria teknis dan konten.
+- Penulisan metadata langsung ke file (Exif/XMP) dan pembuatan CSV untuk upload stok.
+- Deteksi duplikat visual.
+- Klastering foto/video dengan AI (AI clustering).
+- Pengelolaan saldo token & mode langganan API key pribadi.
+
+Arsitektur utama:
+- Frontend: React (Vite) yang berjalan di dalam WebView2 via Tauri.
+- Desktop shell: Tauri (Rust) untuk akses file system, ExifTool, FFmpeg, dan updater.
+- Backend server: Cloudflare Workers (metabayn-backend) dengan DB untuk user, model, harga, voucher, dsb.
+- AI providers:
+  - OpenAI (gpt-4o, gpt-4.1, gpt-4o-mini, dsb).
+  - Google Gemini (gemini-3.0, 2.5, 2.0, 1.5, dll).
+  - Provider lain sesuai konfigurasi model.
+
+Mode koneksi AI:
+1) Mode "server":
+   - Aplikasi mengirim permintaan ke backend Metabayn.
+   - Backend yang berkomunikasi dengan provider AI.
+   - Pembayaran berdasarkan saldo token internal.
+
+2) Mode "direct" (API key pribadi):
+   - Aplikasi mengirim ke provider AI langsung menggunakan API key pengguna.
+   - Tidak mengurangi saldo token di backend.
+   - Cocok untuk pengguna yang ingin pakai kuota pribadi di OpenAI/Gemini.
+
+
+--------------------------------------------------------
+2. Diagram Arsitektur Tingkat Tinggi
+--------------------------------------------------------
+
+Diagram teks (panah → menunjukkan alur utama):
+
+  [User]
+     │
+     ▼
+  [Metabayn Studio Desktop (React + Tauri)]
+     │
+     ├─(File system + ExifTool + FFmpeg)→ [Rust/Tauri Commands] → [File Metadata & CSV]
+     │
+     └─(Permintaan AI)
+          │
+          ├─ Mode "server" → [Metabayn Backend (Cloudflare Workers)]
+          │                     │
+          │                     └─(model routing, pricing, queue)→ [OpenAI / Gemini / Provider lain]
+          │
+          └─ Mode "direct" → [OpenAI / Gemini langsung (API key user)]
+
+
+--------------------------------------------------------
+3. Komponen Utama Desktop (Tauri + React)
+--------------------------------------------------------
+
+3.1. Entry Point & Lifecycle (Rust)
+-----------------------------------
+
+File utama: src-tauri/src/main.rs
+
+Fungsi:
+- Men-setup Tauri Builder, window utama ("main"), dan single-instance plugin.
+- Menginisialisasi:
+  - AuditService (pencatatan event penting).
+  - SecurityService (rate limiting sisi desktop).
+  - SubscriptionState (status langganan API key mode).
+- Mendaftarkan seluruh command Tauri:
+  - login, refresh_balance
+  - scan_folder, scan_csv_files
+  - write_image_metadata, write_video_metadata
+  - append_csv, generate_csv_from_folder
+  - detect_duplicate_images
+  - get_machine_hash
+  - generate_metadata_batch
+  - get_settings, save_settings, save_auth_token, logout
+  - delete_file, file_exists
+  - encrypt_app_token
+  - check_subscription_status, activate_subscription_mock
+  - log_audit_event
+  - test_api_connection
+  - run_ai_clustering
+  - move_file_to_rejected, move_file_to_rejected_with_meta
+
+Alur startup:
+- Membuka/menampilkan window "main".
+- Menjalankan thread background untuk:
+  - Membaca settings.
+  - Mendekripsi token auth jika perlu.
+  - Menyegarkan token auth ke backend jika hampir kadaluarsa.
+
+
+3.2. React App & Halaman Utama
+-------------------------------
+
+File: src/App.tsx
+
+Fungsi:
+- Menentukan apakah user sudah login:
+  - Cek token di localStorage.
+  - Jika kosong, baca settings dari Rust untuk auth_token.
+  - Validasi token (struktur + expiry) secara lokal.
+- Jika token valid:
+  - Set state token dan tampilkan Dashboard.
+  - Background: panggil apiGetBalance ke backend untuk konfirmasi.
+- Jika token tidak valid:
+  - Tampilkan halaman Login.
+
+Komponen utama:
+- Dashboard (src/pages/Dashboard.tsx).
+- Login (src/pages/Login.tsx).
+- Settings (src/pages/Settings.tsx).
+- AdminTopup (panel admin top up).
+- VideoPlayerWindow (untuk preview video).
+- TitleBar (custom title bar).
+
+
+3.3. Dashboard – Proses Utama Pengguna
+--------------------------------------
+
+File: src/pages/Dashboard.tsx
+
+Fungsi global:
+- Menampilkan:
+  - Tombol Mulai/Jeda/Stop.
+  - Progress bar (total, success, reject, failed).
+  - Panel log real-time.
+  - Tombol Settings, Deteksi Duplikat, AI Cluster, CSV, Top Up, Admin.
+- Mengatur bahasa (EN/ID) dan teks UI (melalui translations.ts).
+- Memantau saldo token:
+  - Saat token ada → panggil checkServerAdmin + refreshBalance.
+  - Poll saldo tiap 30 detik.
+- Menangani update otomatis aplikasi:
+  - checkUpdate → jika ada versi baru → installUpdate → relaunch.
+
+Alur proses utama "Mulai":
+1) Validasi minimal:
+   - Input/Output folder terisi.
+   - User login dan (jika mode server) saldo cukup.
+2) Membaca settings:
+   - server_url, default_model, max_threads, retry_count, filter dan opsi lain.
+3) Memindai folder input:
+   - invoke('scan_folder') → Rust → mengembalikan daftar file yang valid (foto/video).
+4) Inisialisasi statistik dan log.
+5) Menentukan concurrency (jumlah file paralel):
+   - Berdasarkan max_threads dan jumlah core CPU user.
+6) Untuk setiap file:
+   - Cek apakah sudah pernah diproses (cek file di output folder / approved / rejected).
+   - Jika sudah ada → tulis log "[Skipped]" dan lanjut ke file berikutnya.
+   - Jika belum:
+     - Tulis log "Processing {filename}...".
+     - Panggil generate_metadata_batch via invoke:
+       - Request berisi:
+         - files: [path file].
+         - model: model efektif (dipilih tergantung provider).
+         - token: kosong jika mode direct, atau token auth jika mode server.
+         - retry_count, batas kata/jumlah karakter title/description, keywords, banned_words.
+         - max_threads (untuk sisi Rust).
+         - connection_mode: "server" atau "direct".
+         - api_key: hanya diisi jika mode direct.
+         - provider: "Gemini", "OpenAI", dll.
+7) Hasil generate_metadata_batch:
+   - Untuk setiap Generated:
+     - Jika g.source == 'error' atau title == "ERROR" atau selection_status == 'rejected':
+       - Log sebagai gagal/ditolak, simpan detail (termasuk token usage & cost jika ada).
+       - File bisa dipindah ke folder rejected (tergantung pengaturan).
+     - Jika sukses:
+       - Log sebagai sukses.
+       - Tulis metadata ke file melalui Rust (ExifTool).
+       - Pindahkan file ke folder output/approved jika pengaturan selection aktif.
+8) Update statistik dan progress bar:
+   - total, done, success, failed, rejected.
+
+Fitur lain di Dashboard:
+- Generate CSV:
+  - Pilih folder input.
+  - invoke('generate_csv_from_folder') → Rust:
+    - Membaca metadata file.
+    - Jika beberapa field Shutterstock kosong → memanggil AI untuk mengisi.
+    - Menulis CSV di folder tersebut.
+- Duplicate scan:
+  - Pilih folder.
+  - invoke('detect_duplicate_images') → Rust:
+    - Analisis hash gambar.
+    - Menentukan duplikat berdasarkan threshold.
+    - Opsional auto delete.
+- AI clustering:
+  - invoke('run_ai_clustering'):
+    - Rust menjalankan skrip Python ai_cluster.py sebagai proses eksternal.
+    - Log progres ke event "ai_cluster_log".
+
+
+3.4. Settings – Konfigurasi Aplikasi
+------------------------------------
+
+File: src/pages/Settings.tsx
+
+Fungsi:
+- Menyimpan dan memuat AppSettings yang didefinisikan di Rust (src-tauri/src/settings.rs):
+  - server_url
+  - default_model
+  - input_folder, output_folder
+  - max_threads, retry_count
+  - batas title/description/keywords
+  - banned_words
+  - ai_provider ("Gemini", "OpenAI", "Groq", dst.)
+  - selection_enabled, selection_order
+  - berbagai filter kualitas dan konten (human, animal, text, watermark, dll.)
+  - connection_mode ("server" atau "direct")
+  - generate_csv
+  - opsi rename (rename_enabled, rename_mode, rename_custom_text)
+- Menampilkan dropdown model:
+  - Memuat daftar model dari backend (model_prices).
+  - Jika tidak ada (atau offline), fallback ke list lokal:
+    - gemini-3.0-flash-preview, 3.0-pro-preview, 3.0-ultra, 2.5-pro, 2.5-flash, 2.5-flash-lite, 2.5-ultra,
+      2.0-pro-exp, 2.0-ultra, 2.0-flash-exp, 2.0-flash-lite-preview, 1.5-pro, 1.5-flash, 1.5-flash-8b, 1.0-pro, dll.
+- Pengaturan mode API key:
+  - User dapat menyimpan API key terenkripsi di sisi desktop.
+  - Mode direct akan memakai API key ini untuk memanggil provider langsung.
+
+
+--------------------------------------------------------
+4. Komponen Rust Khusus Metadata & File
+--------------------------------------------------------
+
+4.1. Settings (Rust)
+--------------------
+
+File: src-tauri/src/settings.rs
+
+Struktur AppSettings menyimpan semua konfigurasi yang relevan, termasuk:
+- Folder input/output, URL server, model default.
+- max_threads, retry_count.
+- Filter kualitas dan konten (human/animal/text/brand/watermark/duplicate, dll).
+- connection_mode, generate_csv, opsi rename.
+
+Settings disimpan sebagai JSON di:
+- {config_dir}/metabayn-studio/settings.json
+
+
+4.2. Fungsi generate_metadata_batch
+-----------------------------------
+
+File: src-tauri/src/api.rs
+
+- Tauri command: generate_metadata_batch(req: BatchReq) → Result<Vec<Generated>, String>
+  - BatchReq berisi:
+    - files, model, token, retries.
+    - batas panjang title/description/keywords.
+    - banned_words, max_threads.
+    - connection_mode, api_key (opsional), provider.
+- Fungsi ini memanggil crate::metadata::generate_batch(&req).
+
+File: src-tauri/src/metadata.rs
+
+Fungsi utama:
+- generate_batch(req: &BatchReq) → Result<Vec<Generated>>
+  - Mengambil settings untuk selection & filter.
+  - Menyortir daftar file (natural sort).
+  - Untuk setiap file:
+    - Memastikan file ada.
+    - Memanggil prepare_image_data:
+      - Jika video → ekstrak frame dengan FFmpeg (resources/ffmpeg).
+      - Jika gambar → baca, retry bila gagal, resize jika perlu, re-encode JPEG, Base64.
+    - Menyusun prompt AI:
+      - Prompt selection (jika selection_enabled).
+      - Prompt utama untuk metadata (title, description, keywords, kategori).
+      - Prompt tambahan untuk flags kualitas / konten.
+    - Memanggil call_ai_base:
+      - Menghitung token usage dan cost jika provider mendukung.
+    - Mem-parse JSON hasil AI menjadi struct Generated:
+      - title, description, keywords (vector string).
+      - category.
+      - selection_status ("accepted"/"rejected").
+      - penanda kualitas / jenis kegagalan (untuk tagging).
+      - usage tokens dan estimasi cost.
+    - Menjamin judul unik (ensure_unique_title).
+  - Mengembalikan vector Generated ke Dashboard.
+
+Fungsi call_ai_base:
+- Menentukan URL endpoint berdasarkan provider/model/mode:
+  - Mode server:
+    - Memanggil backend API (metabayn-backend) atau server lain.
+  - Mode direct:
+    - Jika provider Gemini / API key Google:
+      - Panggil endpoint Gemini yang kompatibel.
+    - Jika provider OpenAI:
+      - Panggil https://api.openai.com/v1/chat/completions.
+- Menangani error jaringan, status non-2xx, dan retry (untuk 429/404 tertentu).
+- Mengembalikan:
+  - konten teks (biasanya JSON string).
+  - usage (TokenUsage) opsional.
+  - model yang dipakai (actual).
+  - cost estimasi opsional.
+
+
+4.3. Generate CSV & Penulisan Metadata
+--------------------------------------
+
+Masih di metadata.rs:
+
+- Fungsi generate_csv_from_folder:
+  - Membaca file CSV atau metadata file di folder input.
+  - Untuk entry yang belum punya kategori/editorial/mature/illustration:
+    - Mengirim ke AI dengan prompt khusus “Shutterstock metadata filler”.
+    - Mengisi field yang kosong dengan hasil AI.
+  - Menulis atau mengupdate CSV hasil.
+
+- Di dalam loop pengisian metadata, setelah AI memberikan JSON:
+  - Aplikasi membuat struktur JSON baru (categories, editorial, mature, illustration).
+  - Menulis ke file menggunakan ExifTool:
+    - Memanggil exiftool sebagai sidecar bawaan Tauri.
+    - Menggunakan loop retry dengan batas dan jeda 500ms.
+
+
+--------------------------------------------------------
+5. Backend Metabayn (Cloudflare Workers)
+--------------------------------------------------------
+
+5.1. Handler AI (ai.ts)
+-----------------------
+
+Lokasi: metabayn-backend/src/handlers/ai.ts
+
+Peran:
+- Menerima permintaan AI dari aplikasi (mode server).
+- Mengelola antrian dan concurrency via aiQueue:
+  - enqueue, setConcurrencyLimit.
+  - Membatasi jumlah job paralel untuk menghindari rate limit provider.
+- Menentukan model dan provider yang digunakan:
+  - MODEL_CONFIG.models dari database (model_prices).
+  - fallback chain (misalnya: model utama, lalu model backup lain).
+- Untuk setiap job:
+  - Mencatat waktu mulai dan batas durasi (MAX_DURATION).
+  - Mencoba memanggil model dalam fallback chain:
+    - Menentukan provider dari konfigurasi atau menebak dari nama model (gemini, claude, openai).
+    - Menyusun payload yang sesuai dengan provider (OpenAI / Gemini / Anthropic).
+    - Menangani error:
+      - Network error, timeout.
+      - Error 429 (rate limit), 5xx (server error).
+    - Menerapkan retry logis jika provider mengizinkan.
+  - Mengembalikan:
+    - hasil teks JSON metadata,
+    - usage tokens,
+    - estimasi cost (berdasarkan harga input/output per 1M token dan profit multiplier).
+
+
+5.2. Handler Admin & Model Pricing (admin.ts)
+---------------------------------------------
+
+Peran:
+- CRUD model dan harga di tabel model_prices:
+  - provider (openai, gemini, dsb.)
+  - model_name (gpt-4o, gemini-2.5-flash, dll.)
+  - input_price, output_price (per 1M token).
+  - profit_multiplier.
+  - active (on/off).
+  - fallback_priority.
+- Menyediakan endpoint untuk:
+  - Mengambil daftar model aktif untuk ditampilkan di Settings.
+  - Menyimpan perubahan harga, mengupdate model, dsb.
+- Mengisi data awal dengan daftar model OpenAI + Gemini terbaru.
+
+
+5.3. Handler Auth, Voucher, Subscription
+----------------------------------------
+
+auth.ts:
+- Login:
+  - Verifikasi email/password.
+  - Cek status user (pending/aktif).
+  - Khusus email admin tertentu, set is_admin=1.
+  - Cek subscription_active dan subscription_expiry:
+    - Jika sudah lewat → matikan status subscription.
+- Menghasilkan token sesi (JWT / token custom) yang digunakan app.
+
+voucher.ts:
+- Memetakan produk dari payment gateway ke:
+  - Voucher token (menambah saldo token).
+  - Subscription API key mode (mengaktifkan mode direct untuk jangka waktu tertentu).
+- Menangani redeem voucher, validasi, dan update DB.
+
+
+--------------------------------------------------------
+6. Fitur Keamanan, Audit, dan Langganan
+--------------------------------------------------------
+
+6.1. SecurityService (Rust)
+---------------------------
+
+File: src-tauri/src/security.rs
+
+Fungsi:
+- Rate limit untuk operasi sensitif:
+  - Misalnya login, panggilan tertentu.
+- Melacak IP/identitas yang melanggar rate limit.
+- Menggunakan locking & struktur data aman.
+
+
+6.2. AuditService (Rust)
+------------------------
+
+File: src-tauri/src/audit.rs
+
+Fungsi:
+- Mencatat event penting:
+  - Login sukses/gagal.
+  - Aksi yang terkait keamanan.
+  - Event lain yang relevan.
+
+
+6.3. SubscriptionState (Rust)
+-----------------------------
+
+File: src-tauri/src/subscription.rs
+
+Fungsi:
+- Menyimpan status subscription API key mode di sisi desktop:
+  - subscription_active
+  - subscription_expiry
+- Dikelola bersama dengan backend voucher:
+  - Saat voucher subscription ditebus, backend mengupdate status.
+  - Desktop memanggil check_subscription_status, lalu menyimpan status ini di settings / state.
+
+
+--------------------------------------------------------
+7. Diagram Alur Proses Metadata Lengkap
+--------------------------------------------------------
+
+7.1. Alur Mode Server (Saldo Token)
+-----------------------------------
+
+Diagram teks:
+
+  [User klik "Start"]
+          │
+          ▼
+  [React Dashboard]
+      │  Baca Settings (max_threads, model, provider, filters, connection_mode=server)
+      │  Scan folder input → daftar file
+      ▼
+  [invoke generate_metadata_batch]
+          │
+          ▼
+  [Rust/Tauri: api.rs → metadata::generate_batch]
+      │  Untuk setiap file:
+      │    - prepare_image_data (baca → resize → base64)
+      │    - susun prompt selection + metadata
+      │    - call_ai_base(mode=server)
+      ▼
+  [Backend Metabayn (ai.ts)]
+      │  - Validasi saldo & hak akses (via auth)
+      │  - Tentukan model + provider
+      │  - Enqueue job ke aiQueue (throttling)
+      │  - Panggil OpenAI/Gemini → terima JSON metadata
+      ▼
+  [Backend hitung usage + cost]
+      │  - Kurangi saldo token user
+      │  - Kembalikan JSON metadata + usage ke desktop
+      ▼
+  [Rust/Tauri: metadata]
+      │  - Parse JSON jadi Generated
+      │  - ensure_unique_title
+      │  - Putuskan accepted / rejected
+      │  - Tuliskan metadata (ExifTool) + update CSV
+      ▼
+  [React Dashboard]
+      │  - Update log dan statistik
+      │  - Pindahkan file ke folder output/approved/rejected jika perlu
+      ▼
+  [User melihat hasil siap upload]
+
+
+7.2. Alur Mode Direct (API Key Pribadi)
+---------------------------------------
+
+Diagram teks:
+
+  [User aktifkan "Use API Key" di Settings]
+          │
+          ▼
+  [Dashboard]
+      │  - Ambil API key terenkripsi dari localStorage
+      │  - Dekripsi untuk digunakan saat proses
+      │  - connection_mode = "direct"
+      ▼
+  [invoke generate_metadata_batch (connection_mode=direct, api_key=...)]
+          │
+          ▼
+  [Rust/Tauri: metadata::generate_batch]
+      │  - Sama seperti mode server di sisi file processing
+      │  - call_ai_base(mode=direct):
+      │        - Jika model/provide Gemini → panggil endpoint Gemini
+      │        - Jika OpenAI → panggil OpenAI
+      ▼
+  [Provider AI langsung]
+      │  - Mengembalikan JSON metadata
+      ▼
+  [Rust/Tauri: metadata]
+      │  - Parse, selection, penulisan metadata, CSV
+      ▼
+  [Dashboard]
+      │  - Log + stats, tanpa mengurangi saldo token backend
+      ▼
+  [User membayar langsung ke provider (Google/OpenAI), bukan ke Metabayn]
+
+
+--------------------------------------------------------
+8. Prinsip Desain & Batasan Penting
+--------------------------------------------------------
+
+- Jangan mengubah hasil metadata yang sudah terbukti baik:
+  - Prompt utama untuk title/description/keywords harus tetap konsisten.
+  - JSON schema yang diharapkan AI untuk dihasilkan tidak boleh diubah sembarangan.
+
+- Seleksi (accept/reject) dan filter kualitas:
+  - Bergantung pada flag yang dikembalikan AI (gagal karena blur, watermark, brand, gibberish, dsb).
+  - Perubahan pada parsing atau mapping bisa mempengaruhi jumlah file yang ditolak/diterima.
+
+- Kinerja:
+  - Concurrency dikontrol dari Settings (max_threads) + hardwareConcurrency.
+  - Rust/Tauri menggunakan tokio dan Semaphore untuk menghindari over-subscription.
+  - Beberapa operasi I/O (file, ExifTool, FFmpeg) sudah memiliki retry + jeda (sleep) untuk stabilitas.
+
+- Keamanan:
+  - Token auth dan API key disimpan terenkripsi di sisi desktop.
+  - Rate limiting di SecurityService dan di backend mencegah abuse.
+  - AuditService mencatat event penting untuk debugging / compliance.
+
+
+--------------------------------------------------------
+9. Cara Menggunakan Prompt Ini
+--------------------------------------------------------
+
+Prompt ini dapat diberikan ke model AI lain sebagai konteks sistem, misalnya:
+
+- "Kamu adalah asisten teknis untuk aplikasi Metabayn Studio. Gunakan spesifikasi berikut untuk menjawab pertanyaan, merancang fitur, atau menganalisis bug. Jangan menyimpang dari alur yang dijelaskan, dan pastikan semua perubahan tidak merusak fungsi-fungsi yang sudah berjalan dengan baik."
+
+Dengan prompt ini, AI diharapkan:
+- Memahami alur lengkap dari user → desktop → backend → AI provider.
+- Mengerti peran masing-masing komponen (React, Tauri, Rust, Cloudflare Workers).
+- Dapat memberi saran atau perubahan kode yang tetap sejalan dengan desain aplikasi.
+

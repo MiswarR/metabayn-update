@@ -15,7 +15,7 @@ export default function LogPanel({logs, lang = 'en'}:{logs:any[], lang?: 'en' | 
   }
 
   return (
-    <div className="log-panel" style={{borderTopLeftRadius:0, borderTopRightRadius:0, borderTop:'none', padding: '12px'}}>
+    <div className="log-panel" style={{borderTopLeftRadius:0, borderTopRightRadius:0, borderTop:'none', padding: '10px', fontSize: 12, lineHeight: 1.35}}>
       {logs.map((l,i)=>{
          if (l && typeof l === 'object' && l.hidden) return null; // Skip hidden logs
          
@@ -53,7 +53,7 @@ export default function LogPanel({logs, lang = 'en'}:{logs:any[], lang?: 'en' | 
                     onClick={() => hasDetail && toggleExpand(i)}
                     title={hasDetail ? t.clickDetails : ""}
                  >
-                    {hasDetail && <span style={{fontSize:'0.8em', opacity:0.7}}>{isExpanded ? '▼' : '▶'}</span>}
+                    {hasDetail && <span style={{fontSize:'0.75em', opacity:0.7}}>{isExpanded ? '▼' : '▶'}</span>}
                     <span>
                         {display}
                         {animate && <span className="typing-dots"></span>}

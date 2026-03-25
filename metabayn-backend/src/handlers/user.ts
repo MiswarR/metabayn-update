@@ -2,9 +2,34 @@ import { Env } from '../index';
 import { getLiveUsdRate } from '../utils/tokenTopup';
 
 export async function handleBalance(userId: number, env: Env) {
-  const user = await env.DB.prepare("SELECT tokens FROM users WHERE id = ?").bind(userId).first();
+  let user = await env.DB.prepare("SELECT tokens FROM users WHERE id = ?").bind(userId).first();
+
+  // AUTO-FIX: If tokens is NULL (Legacy/Bug), calculate from claimed vouchers
+  if (user && user.tokens === null) {
+    console.log(`[AutoFix] User ${userId} has NULL tokens. Recalculating from vouchers...`);
+    // Sum all claimed vouchers
+    const voucherSum = await env.DB.prepare(`
+      SELECT SUM(v.amount) as total 
+      FROM voucher_claims vc 
+      JOIN vouchers v ON vc.voucher_code = v.code 
+      WHERE vc.user_id = ?
+    `).bind(userId).first();
+    
+    const initialBalance = (voucherSum?.total as number) || 0;
+    
+    // Update user
+    await env.DB.prepare("UPDATE users SET tokens = ? WHERE id = ?").bind(initialBalance, userId).run();
+    
+    // Refresh user object
+    user = { tokens: initialBalance };
+  }
+
   const rate = await getLiveUsdRate(env);
-  return Response.json({ balance: user?.tokens || 0, usd_rate: rate });
+  const balance = user?.tokens || 0;
+  return Response.json(
+    { balance, remaining_balance: balance, usd_rate: rate },
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }
 
 export async function handleHistory(userId: number, env: Env) {

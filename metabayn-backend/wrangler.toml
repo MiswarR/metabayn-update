@@ -1,6 +1,7 @@
 name = "metabayn-backend"
 main = "src/index.ts"
-compatibility_date = "2024-04-05"
+compatibility_date = "2024-09-26"
+keep_vars = true
 
 # Binding Database D1
 [[d1_databases]]
@@ -8,27 +9,11 @@ binding = "DB"
 database_name = "metabayn-db"
 database_id = "0869e5b4-5279-4a47-8b1e-f2762e93eaee"
 
+[ai]
+binding = "AI"
+
 [triggers]
 crons = ["0 * * * *"]
 
 [vars]
 PROFIT_MULTIPLIER = 1.6
-JWT_SECRET = "metabayn-jwt-secret-key-2024-secure"
-ADMIN_SECRET = "adminbayn"
-LYNKID_WEBHOOK_SECRET = "METABAYN_TAF_008"
-OPENAI_API_KEY = "YOUR_OPENAI_API_KEY"
-GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
-PAYPAL_CLIENT_ID = "YOUR_PAYPAL_CLIENT_ID"
-PAYPAL_CLIENT_SECRET = "YOUR_PAYPAL_CLIENT_SECRET"
-PAYPAL_MODE = "live"
-RESEND_API_KEY = "YOUR_RESEND_API_KEY"
-GOOGLE_PROJECT_ID = "my-project-1562851319816"
-GOOGLE_CLIENT_EMAIL = "metabayn-ai-backend@my-project-1562851319816.iam.gserviceaccount.com"
-GOOGLE_LOCATION = "us-central1"
-GOOGLE_OAUTH_CLIENT_ID = "YOUR_GOOGLE_OAUTH_CLIENT_ID"
-GOOGLE_OAUTH_CLIENT_SECRET = "YOUR_GOOGLE_OAUTH_CLIENT_SECRET"
-GOOGLE_PRIVATE_KEY = """
------BEGIN PRIVATE KEY-----
-YOUR_PRIVATE_KEY_HERE
------END PRIVATE KEY-----
-"""
