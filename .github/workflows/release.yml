@@ -122,7 +122,15 @@ jobs:
           
           Write-Host "Downloading ExifTool..."
           try {
-            Invoke-WebRequest -Uri "https://downloads.sourceforge.net/project/exiftool/exiftool-13.10.zip" -OutFile "exiftool.zip"
+            $exifUrl = "https://exiftool.org/exiftool-13.10_64.zip"
+            curl.exe -L -o "exiftool.zip" "$exifUrl"
+            $zipInfo = Get-Item "exiftool.zip"
+            if (-not $zipInfo -or $zipInfo.Length -lt 500000) {
+              Write-Host "Downloaded exiftool.zip seems invalid (too small). Size=$($zipInfo.Length)"
+              Write-Host "First 30 lines of file (likely HTML):"
+              Get-Content -Path "exiftool.zip" -TotalCount 30 | ForEach-Object { Write-Host $_ }
+              throw "Invalid ExifTool zip download"
+            }
             Write-Host "Extracting ExifTool..."
             Expand-Archive -Path exiftool.zip -DestinationPath exiftool_temp -Force
             
