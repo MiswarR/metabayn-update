@@ -151,8 +151,15 @@ jobs:
             Write-Host "Validating ExifTool (repo resources)..."
             Push-Location "src-tauri/resources"
             try {
-              .\exiftool.exe -ver
-              if ($LASTEXITCODE -eq 0) { $needExifTool = $false }
+              $exifExit = 1
+              try {
+                & .\exiftool.exe -ver | Out-Host
+                $exifExit = $LASTEXITCODE
+              } catch {
+                Write-Host ("Repo ExifTool failed to run, will fallback to Chocolatey. Error: {0}" -f $_.Exception.Message)
+                $exifExit = 1
+              }
+              if ($exifExit -eq 0) { $needExifTool = $false }
             } finally {
               Pop-Location
             }
@@ -182,8 +189,13 @@ jobs:
               Write-Host "Validating ExifTool (post-install)..."
               Push-Location "src-tauri/resources"
               try {
-                .\exiftool.exe -ver
-                $exifExit = $LASTEXITCODE
+                $exifExit = 1
+                try {
+                  & .\exiftool.exe -ver | Out-Host
+                  $exifExit = $LASTEXITCODE
+                } catch {
+                  $exifExit = 1
+                }
               } finally {
                 Pop-Location
               }
