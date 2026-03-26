@@ -173,11 +173,22 @@ jobs:
               choco install exiftool -y --no-progress
 
               $toolsDir = "C:\ProgramData\chocolatey\lib\exiftool\tools"
-              $exiftool = Get-ChildItem -Path $toolsDir -Filter "exiftool(-k).exe" -Recurse | Select-Object -First 1
+              $exiftoolCmd = Get-Command exiftool -ErrorAction SilentlyContinue
+              if ($exiftoolCmd -and $exiftoolCmd.Path) {
+                $exiftool = Get-Item $exiftoolCmd.Path
+              } else {
+                $exiftool = Get-ChildItem -Path $toolsDir -Recurse -File |
+                  Where-Object {
+                    ($_.Name -match '^exiftool(\(-k\))?\.exe$') -or ($_.Name -match '^exiftool.*\.exe$')
+                  } |
+                  Sort-Object Length -Descending |
+                  Select-Object -First 1
+              }
+
               if (-not $exiftool) {
                 Write-Host ("Contents of {0}:" -f $toolsDir)
                 Get-ChildItem -Path $toolsDir -Recurse | Select-Object FullName
-                throw "exiftool(-k).exe not found after Chocolatey install"
+                throw "ExifTool executable not found after Chocolatey install"
               }
 
               Copy-Item $exiftool.FullName "src-tauri/resources/exiftool.exe" -Force
