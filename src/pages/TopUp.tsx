@@ -5,16 +5,10 @@ import { translations } from '../utils/translations';
 import { apiCreatePaypalPayment, apiGetExchangeRate, apiGetUserProfile, apiRedeemVoucher, getMachineHash } from '../api/backend';
 
 // Assets
-import lynkIcon from '../assets/payments/lynk.svg';
-import paypalIcon from '../assets/payments/paypal.svg';
 import sub30day from '../assets/payments/sub30day.png';
 import sub3month from '../assets/payments/sub3month.png';
 import sub6month from '../assets/payments/sub6month.png';
 import sub1year from '../assets/payments/sub1year.png';
-import token20k from '../assets/payments/token20000.png';
-import token50k from '../assets/payments/token50000.png';
-import token100k from '../assets/payments/token100000.png';
-import token150k from '../assets/payments/token150000.png';
 
 interface TopUpProps {
   onBack: () => void;
@@ -340,32 +334,28 @@ export default function TopUp({ onBack, onPaymentSuccess, lang, token, userEmail
       amount: '20.000',
       value: 20000,
       priceIdr: 22500,
-      link: 'http://lynk.id/metabayn/ok0jwk5k4odw',
-      img: token20k
+      link: 'http://lynk.id/metabayn/ok0jwk5k4odw'
     },
     {
       id: 'tok50k',
       amount: '50.000',
       value: 50000,
       priceIdr: 52500,
-      link: 'http://lynk.id/metabayn/kdzxkod5llj1',
-      img: token50k
+      link: 'http://lynk.id/metabayn/kdzxkod5llj1'
     },
     {
       id: 'tok100k',
       amount: '100.000',
       value: 100000,
       priceIdr: 102500,
-      link: 'http://lynk.id/metabayn/emod5eer6j1v',
-      img: token100k
+      link: 'http://lynk.id/metabayn/emod5eer6j1v'
     },
     {
       id: 'tok150k',
       amount: '150.000',
       value: 150000,
       priceIdr: 152500,
-      link: 'http://lynk.id/metabayn/0n523p4p3ey2',
-      img: token150k
+      link: 'http://lynk.id/metabayn/0n523p4p3ey2'
     }
   ];
 
@@ -511,16 +501,10 @@ export default function TopUp({ onBack, onPaymentSuccess, lang, token, userEmail
                         onMouseOut={(e) => e.currentTarget.style.borderColor = '#27272a'}
                         >
                             <div style={{position: 'relative', width: '100%', paddingTop: '75%', background: '#000', padding: 16, boxSizing: 'border-box', display:'flex', alignItems:'center', justifyContent:'center'}}>
-                                <img 
-                                    src={tok.img} 
-                                    alt={tok.amount} 
-                                    style={{
-                                        maxWidth: '100%',
-                                        maxHeight: '100%',
-                                        objectFit: 'contain'
-                                    }} 
-                                    onError={(e) => (e.currentTarget.src = 'https://via.placeholder.com/400x300?text=Token')} 
-                                />
+                                <div style={{textAlign:'center'}}>
+                                  <div style={{fontSize: 28, fontWeight: 800, letterSpacing: 0.5}}>{tok.amount}</div>
+                                  <div style={{fontSize: 12, color: '#a1a1aa', marginTop: 4}}>Tokens</div>
+                                </div>
                             </div>
                             <div style={{padding: 16, flex: 1, display: 'flex', flexDirection: 'column'}}>
                                 <h4 style={{fontSize: 16, fontWeight: 700, margin: '0 0 4px 0', color: '#fff'}}>{tok.amount} Tokens</h4>
@@ -573,7 +557,9 @@ export default function TopUp({ onBack, onPaymentSuccess, lang, token, userEmail
                                         <span style={{fontSize:12}}>Processing...</span>
                                     ) : (
                                         <>
-                                            <img src={currency === 'IDR' ? lynkIcon : paypalIcon} style={{height: 16, width: 'auto', filter: 'brightness(0) invert(1)'}} alt="" />
+                                            <span style={{fontSize: 12, fontWeight: 700}}>
+                                              {currency === 'IDR' ? 'Lynk.id' : 'PayPal'}
+                                            </span>
                                         </>
                                     )}
                                 </button>
@@ -699,7 +685,9 @@ export default function TopUp({ onBack, onPaymentSuccess, lang, token, userEmail
                                         <span style={{fontSize:12}}>Processing...</span>
                                     ) : (
                                         <>
-                                            <img src={currency === 'IDR' ? lynkIcon : paypalIcon} style={{height: 16, width: 'auto', filter: 'brightness(0) invert(1)'}} alt="" />
+                                            <span style={{fontSize: 12, fontWeight: 700}}>
+                                              {currency === 'IDR' ? 'Lynk.id' : 'PayPal'}
+                                            </span>
                                         </>
                                     )}
                                 </button>

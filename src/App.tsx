@@ -13,6 +13,7 @@ import { appWindow } from '@tauri-apps/api/window'
 import { clearBatchState } from './utils/batchLifecycle'
 import { translations } from './utils/translations'
 import { checkUpdate, installUpdate } from '@tauri-apps/api/updater'
+import { getVersion as tauriGetVersion } from '@tauri-apps/api/app'
 import { relaunch } from '@tauri-apps/api/process'
 
 const isTauri = typeof (window as any).__TAURI_IPC__ === 'function'
@@ -20,6 +21,7 @@ const isTauri = typeof (window as any).__TAURI_IPC__ === 'function'
 const MODAL_EVENT_NAME = 'metabayn:modal';
 const PENDING_PAYMENT_KEY = 'metabayn:pendingPayment:v1';
 const LAST_PAYMENT_POPUP_TS_KEY = 'metabayn:lastPaymentPopupTs';
+const LAST_UPDATE_PROMPT_KEY = 'metabayn:lastUpdatePrompt:v1';
 
 type ModalType = 'success' | 'error' | 'info' | 'warning';
 type ModalEventDetail = { title: string; message: string; type: ModalType; afterClose?: () => void };
@@ -582,11 +584,33 @@ export default function App(){
         ]);
         if (cancelled) return;
         if (res && res.shouldUpdate) {
-          setUpdateInfo({
-            version: res?.manifest?.version || res?.version || undefined,
+          const manifestVersion = res?.manifest?.version || res?.version || '';
+          try {
+            const curVer = await tauriGetVersion();
+            if (manifestVersion && curVer && manifestVersion === curVer) {
+              setUpdateGateDone(true);
+              return;
+            }
+          } catch {}
+
+          try {
+            const raw = localStorage.getItem(LAST_UPDATE_PROMPT_KEY);
+            if (raw) {
+              const parsed = JSON.parse(raw) as { version: string; ts: number };
+              if (parsed && parsed.version === manifestVersion && Date.now() - parsed.ts < 6 * 60 * 60 * 1000) {
+                setUpdateGateDone(true);
+                return;
+              }
+            }
+          } catch {}
+
+          const info = {
+            version: manifestVersion || undefined,
             date: res?.manifest?.date || undefined,
             body: res?.manifest?.body || undefined
-          });
+          };
+          setUpdateInfo(info);
+          try { localStorage.setItem(LAST_UPDATE_PROMPT_KEY, JSON.stringify({ version: info.version || '', ts: Date.now() })); } catch {}
           setUpdateModalOpen(true);
           return;
         }
@@ -864,6 +888,10 @@ export default function App(){
     if (!isTauri) return;
     setUpdateInstallLoading(true);
     try {
+      try {
+        const v = updateInfo?.version || '';
+        if (v) localStorage.setItem(LAST_UPDATE_PROMPT_KEY, JSON.stringify({ version: v, ts: Date.now() }));
+      } catch {}
       await installUpdate();
       await relaunch();
     } catch (e: any) {

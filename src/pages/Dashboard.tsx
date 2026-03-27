@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/tauri'
 import { open as shellOpen } from '@tauri-apps/api/shell'
 import { open as dialogOpen } from '@tauri-apps/api/dialog'
 import { listen } from '@tauri-apps/api/event'
+import { getVersion as tauriGetVersion } from '@tauri-apps/api/app'
 import ProgressBar from '../components/ProgressBar'
 import LogPanel from '../components/LogPanel'
 import Settings from './Settings'
@@ -560,17 +561,25 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
   useEffect(()=>{
     if(token) {
         if (!isTauri) return;
-        import('@tauri-apps/api/window').then(({ appWindow }) => {
-            appWindow.setTitle(`Metabayn Studio`);
-        });
+        Promise.all([
+          import('@tauri-apps/api/window').then(mod => mod.appWindow),
+          tauriGetVersion().catch(() => null)
+        ]).then(([appWindow, v]) => {
+          const ver = v ? String(v) : '';
+          appWindow.setTitle(ver ? `Metabayn Studio v${ver}` : `Metabayn Studio`);
+        }).catch(() => {});
     }
   },[token]);
 
   useEffect(() => {
     if (!isTauri) return;
-    import('@tauri-apps/api/window').then(({ appWindow }) => {
-      appWindow.setTitle(`Metabayn Studio`);
-    });
+    Promise.all([
+      import('@tauri-apps/api/window').then(mod => mod.appWindow),
+      tauriGetVersion().catch(() => null)
+    ]).then(([appWindow, v]) => {
+      const ver = v ? String(v) : '';
+      appWindow.setTitle(ver ? `Metabayn Studio v${ver}` : `Metabayn Studio`);
+    }).catch(() => {});
   }, []);
 
   useEffect(()=>{
