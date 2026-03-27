@@ -1,10 +1,10 @@
 {
   "version": "5.2.0",
   "notes": "Update 5.2.0",
-  "pub_date": "2026-03-27T14:21:52Z",
+  "pub_date": "2026-03-27T14:22:41Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUVZ0dEtSZzBUa2hiUDhLV1QvMFhzWC9PTW9YZTNmWHNQS0YwWWFwVjJaL3ViMTVwWHprb0F6Zm9iVTdIMHhyZzhLc2krZW5MYit4OTlKcCs5aHBHMXZrZGswVDJFOEFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc0NjIxMjk0CWZpbGU6bWV0YWJheW4tc3R1ZGlvXzUuMi4wX3g2NC1zZXR1cC5uc2lzLnppcAp3WFNGMituZXhidmRYZVpuZVo2cFFGMU5iUmJJUVlGUTM0TUcwaXNzdi9xSDdzSlZ6b3c1TGVsOWVHNklMRnA3eVphMDArYTVJZ3ZIQWJKczEzVmNBQT09Cg==",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUVZ0dEtSZzBUa2h5YVRMSXg2VG1QNEVIUjZVeGVWODltUnpjY1ZUZjRndzBXc0xHVGh4VVlLZFlHZXdaYjl5SUpESGdDb01RWGVEbDZOeVJTN0VlejhxME9mRTVZRFFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc0NjIxMzQzCWZpbGU6bWV0YWJheW4tc3R1ZGlvXzUuMi4wX3g2NC1zZXR1cC5uc2lzLnppcApqNjhCUEJpL1EzZ0ZwL0xtM0h3cXhaWktOZ04xQkxFMlF3WFVUL0s5WHV0Z2lIWEc5bVpnZ0ZFUWIyK1JDcGVLanZUSVlhMGp1amR1VHJuWkJ3Q0hDdz09Cg==",
       "url": "https://github.com/MiswarR/metabayn-update/releases/download/v5.2.0/metabayn-studio_5.2.0_x64-setup.nsis.zip"
     },
     "darwin-x86_64": {
