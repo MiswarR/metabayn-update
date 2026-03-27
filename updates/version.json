@@ -1,19 +1,19 @@
 {
-  "version": "5.1.1",
-  "notes": "Update 5.1.1",
-  "pub_date": "2026-03-25T06:03:53Z",
+  "version": "5.1.9",
+  "notes": "Update 5.1.9",
+  "pub_date": "2026-03-27T02:04:58Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUVZ0dEtSZzBUa2tmR0NHbTVXM2hma3ZDd2dGR0k0UnZIT2hFbjJFOXVKYXVJM0ZtMTlhMGlOYUNEeHB4VmVudWV2UDNSd2phaWtUSGxvbDBmTTUwWkNDSHNQcWJKWkF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc0NDE4NjE5CWZpbGU6bWV0YWJheW4tc3R1ZGlvXzUuMS4xX3g2NC1zZXR1cC5uc2lzLnppcApyNWRoZU53YlZzUW0xWE1mTEZIdnpSKzB1emV2VXZiQWRoeGtjYU4xSm5BdnRzRFVFTC83S29qTHBHdVVNN0Z1bmlERmFVOTRJS2JieFg0SXdrV0VEdz09Cg==",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v5.1.1/metabayn-studio_5.1.1_x64-setup.nsis.zip"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUVZ0dEtSZzBUa21XSWpFaDhvY3c3NnVCTk1YTEsxaldRL0lramFGcUZMa3Q5T01yaUFTU2c3MzY1NVNRdDYzSkRyd0JtNXhJemIyMjNUWWEvd3VVVTRnbHdGV1RLb1FBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc0NTc3MDgyCWZpbGU6bWV0YWJheW4tc3R1ZGlvXzUuMS44X3g2NC1zZXR1cC5uc2lzLnppcApmQWppNFU4TjdGMlpTbU9iRWNvSU1UNUZQY2YrdjA1amlyeXNScnNmVlFGWVRaNzFlbnZBMFZpWW9SVjQzWGxwTmRueFcxRVNVUTRpYkU2dHNFbjRCQT09Cg==",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v5.1.9/metabayn-studio_5.1.8_x64-setup.nsis.zip"
     },
     "darwin-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUVZ0dEtSZzBUa3Z0NlhURFFrOVpZdXJZZk1XZTBJTmgxOGFkTElZZ1l4bUZTV3JxRDF0NDM0T0UyY1l4VnFBMlZJaTNzNnY5WDJ5bnova1pVZU9GbmFXaVZkUjA2aEE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc0NDE4MzU0CWZpbGU6bWV0YWJheW4tc3R1ZGlvLmFwcC50YXIuZ3oKQWUrT1hFanUzY1Y3SnVYYUNGbksvSnZoNVZTSHFvcXNQVStVVFJIMnNxZHRVVUtBcHlhWHcyT0RhVkp0Y1RJMHV0NWdaZmV1VCsvTE5nNk53b0xPQmc9PQo=",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v5.1.1/metabayn-studio.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUVZ0dEtSZzBUa3E0clNlM1ozeFFDbWZjYldvZmYxRWM4VkRYeit0QWpuajZNeFM3UThnNkdMYXc2WWJJemcxeTBOOHJaV1F0R2pIZ2lFbWFYU2pubmhoUTZ1WEhIRHdVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc0NTc2NzEyCWZpbGU6bWV0YWJheW4tc3R1ZGlvLmFwcC50YXIuZ3oKcVBERmhtV3g2S1psQ01WeDdlbmdJVkRXNlVNN29saTRXZzhGZWt1Wm1DeGJzdmFlcllTdXhYS1JnTHlzOGxDU1Z6dTB5c1JGNUs4aXlYYjVCV1JWQUE9PQo=",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v5.1.9/metabayn-studio.app.tar.gz"
     },
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUVZ0dEtSZzBUa3Z0NlhURFFrOVpZdXJZZk1XZTBJTmgxOGFkTElZZ1l4bUZTV3JxRDF0NDM0T0UyY1l4VnFBMlZJaTNzNnY5WDJ5bnova1pVZU9GbmFXaVZkUjA2aEE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc0NDE4MzU0CWZpbGU6bWV0YWJheW4tc3R1ZGlvLmFwcC50YXIuZ3oKQWUrT1hFanUzY1Y3SnVYYUNGbksvSnZoNVZTSHFvcXNQVStVVFJIMnNxZHRVVUtBcHlhWHcyT0RhVkp0Y1RJMHV0NWdaZmV1VCsvTE5nNk53b0xPQmc9PQo=",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v5.1.1/metabayn-studio.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUVZ0dEtSZzBUa3E0clNlM1ozeFFDbWZjYldvZmYxRWM4VkRYeit0QWpuajZNeFM3UThnNkdMYXc2WWJJemcxeTBOOHJaV1F0R2pIZ2lFbWFYU2pubmhoUTZ1WEhIRHdVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc0NTc2NzEyCWZpbGU6bWV0YWJheW4tc3R1ZGlvLmFwcC50YXIuZ3oKcVBERmhtV3g2S1psQ01WeDdlbmdJVkRXNlVNN29saTRXZzhGZWt1Wm1DeGJzdmFlcllTdXhYS1JnTHlzOGxDU1Z6dTB5c1JGNUs4aXlYYjVCV1JWQUE9PQo=",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v5.1.9/metabayn-studio.app.tar.gz"
     }
   }
 }
