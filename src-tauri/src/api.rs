@@ -291,6 +291,12 @@ pub async fn cancel_generate_metadata_batch(audit: State<'_, crate::audit::Audit
 }
 
 #[tauri::command]
+pub async fn cancel_generate_csv_tools() -> Result<(), String> {
+    crate::metadata::request_stop_csv_tools_scheduling();
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn move_file_to_rejected(
     file_path: String,
     output_folder: String,

@@ -50,12 +50,23 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
   }, [t, formatLogText])
   const localizeBackendError = React.useCallback((text: string) => {
     const raw = String(text || '')
-    if (lang !== 'id') return raw
+    if (lang === 'id') {
+      return raw
+        .replace(/^API Error \(HTTP ([^)]+)\):/i, 'Kesalahan API (HTTP $1):')
+        .replace(/^Direct API Error \(HTTP ([^,]+), URL: ([^)]+)\):/i, 'Kesalahan API Langsung (HTTP $1, URL: $2):')
+        .replace(/^Direct API Network Error:/i, 'Kesalahan Jaringan API Langsung:')
+        .replace(/^Missing API key/i, 'Kunci API belum ada')
+        .replace(/\bSubscription expired\b/gi, 'Langganan berakhir')
+        .replace(/\bSubscription inactive\b/gi, 'Langganan tidak aktif')
+        .replace(/\bTokens exhausted\b/gi, 'Token habis')
+        .replace(/\bInsufficient tokens\b/gi, 'Token tidak mencukupi')
+    }
     return raw
-      .replace(/^API Error \(HTTP ([^)]+)\):/i, 'Kesalahan API (HTTP $1):')
-      .replace(/^Direct API Error \(HTTP ([^,]+), URL: ([^)]+)\):/i, 'Kesalahan API Langsung (HTTP $1, URL: $2):')
-      .replace(/^Direct API Network Error:/i, 'Kesalahan Jaringan API Langsung:')
-      .replace(/^Missing API key/i, 'Kunci API belum ada')
+      .replace(/\bSaldo token tidak cukup\b/gi, 'Insufficient tokens')
+      .replace(/\bToken tidak mencukupi\b/gi, 'Insufficient tokens')
+      .replace(/\bToken habis\b/gi, 'Tokens exhausted')
+      .replace(/\bLangganan tidak aktif\b/gi, 'Subscription inactive')
+      .replace(/\bLangganan berakhir\b/gi, 'Subscription expired')
   }, [lang])
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [showLogs, setShowLogs] = useState(false);
@@ -70,6 +81,13 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
   }, [])
   const [progress,setProgress]=useState<number>(0)
   const [stats,setStats]=useState({total:0,done:0,success:0,failed:0,rejected:0})
+  const toolFileStateRef = useRef<{
+    csv: Map<string, string>,
+    dup: Map<string, string>,
+    tools: Map<string, string>,
+    ai: Map<string, string>
+  }>({ csv: new Map(), dup: new Map(), tools: new Map(), ai: new Map() })
+  const toolRootRef = useRef<{ csv: string, dup: string, tools: string, ai: string }>({ csv: '', dup: '', tools: '', ai: '' })
   const [stopped,setStopped]=useState(false)
   const stoppedRef = React.useRef(false);
   const [showHelp, setShowHelp] = useState(false)
@@ -86,6 +104,11 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       return null
     }
   })
+  const userProfileRef = useRef<any>(userProfile)
+  useEffect(() => {
+    userProfileRef.current = userProfile
+  }, [userProfile])
+  const lastProfileRefreshMsRef = useRef<number>(0)
   const [showDupModal, setShowDupModal] = useState(false)
   const [dupInputDir, setDupInputDir] = useState<string>('')
   const [dupAutoDelete, setDupAutoDelete] = useState<boolean>(true)
@@ -113,11 +136,69 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
   const [gatewayEnabled, setGatewayEnabled] = useState<boolean>(false);
   const autoResumeTriedRef = useRef(false);
   const isGeneratingRef = useRef(false)
+  const isCsvToolsRunningRef = useRef(false)
   const prevTokenRef = useRef<string>(token || '')
   const [showMonitoring, setShowMonitoring] = useState(false)
   const [auditLogs, setAuditLogs] = useState<any[]>([])
   const [auditFilter, setAuditFilter] = useState<'all' | 'error' | 'security'>('all')
   const [auditLoading, setAuditLoading] = useState(false)
+
+  const applyToolStats = React.useCallback((channel: 'csv' | 'dup' | 'tools' | 'ai', payload: any) => {
+    if (!payload || typeof payload !== 'object') return
+
+    if (payload.code === 'TOOL_TOTAL') {
+      const total = Number(payload.total ?? 0)
+      if (!Number.isFinite(total)) return
+      toolFileStateRef.current[channel].clear()
+      toolRootRef.current[channel] = String(payload.file || payload.root || '')
+      setStats({ total: Math.max(0, total), done: 0, success: 0, failed: 0, rejected: 0 })
+      setProgress(0)
+      return
+    }
+
+    if (payload.code === 'TOOL_PROGRESS') {
+      const total = Number(payload.total ?? 0)
+      const done = Number(payload.done ?? 0)
+      const success = Number(payload.success ?? 0)
+      const failed = Number(payload.failed ?? 0)
+      const rejected = Number(payload.rejected ?? 0)
+      if ([total, done, success, failed, rejected].some(v => !Number.isFinite(v))) return
+      setStats({
+        total: Math.max(0, total),
+        done: Math.max(0, done),
+        success: Math.max(0, success),
+        failed: Math.max(0, failed),
+        rejected: Math.max(0, rejected)
+      })
+      if (total > 0) {
+        setProgress(Math.max(0, Math.min(100, Math.round((done / total) * 100))))
+      }
+      return
+    }
+
+    const status = String(payload.status || '')
+    const isFinal = status === 'success' || status === 'error' || status === 'skipped' || status === 'deleted'
+    if (!isFinal) return
+
+    const key = String(payload.file_path || payload.path || payload.file || '')
+    if (!key) return
+    if (toolRootRef.current[channel] && key === toolRootRef.current[channel]) return
+
+    const m = toolFileStateRef.current[channel]
+    const prev = m.get(key)
+    const prevFinal = prev === 'success' || prev === 'error' || prev === 'skipped' || prev === 'deleted'
+    if (prevFinal) return
+
+    m.set(key, status)
+
+    setStats(s => {
+      const next = { ...s }
+      next.done = next.done + 1
+      if (status === 'error') next.failed = next.failed + 1
+      else next.success = next.success + 1
+      return next
+    })
+  }, [])
 
   useEffect(() => {
     // Fetch settings to get profit margin
@@ -314,6 +395,17 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       if (typeof payload === 'string') {
           logItem = { text: `[${pl('tagCsvGen')}] ${payload}`, color: '#aaa' };
       } else if (typeof payload === 'object') {
+          if ((payload.code === 'TOOL_TOTAL' || payload.code === 'TOOL_PROGRESS') && !String(payload.text || '').trim()) {
+            applyToolStats('csv', payload)
+            return
+          }
+          if (payload.code === 'CSV_MISSING_TITLE_DESC') {
+            const name = String(payload.file || '')
+            payload.text = pl('csvMissingTitleDesc', { name })
+          }
+          if (payload.code === 'CSV_STOP_REQUESTED') {
+            payload.text = pl('csvStopRequested')
+          }
           // Map backend status to colors
           let color = '#aaa';
           if (payload.status === 'success') color = '#4caf50';
@@ -332,6 +424,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
           };
       }
 
+      applyToolStats('csv', payload)
       setLogs(prev => {
           // Update existing log if file matches and previous status was processing
           if (payload.file) {
@@ -359,6 +452,10 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       if (typeof payload === 'string') {
         logItem = { text: `[${pl('tagDuplicate')}] ${payload}`, color: '#aaa' };
       } else if (typeof payload === 'object') {
+        if ((payload.code === 'TOOL_TOTAL' || payload.code === 'TOOL_PROGRESS') && !String(payload.text || '').trim()) {
+          applyToolStats('dup', payload)
+          return
+        }
         let color = '#aaa';
         if (payload.status === 'success') color = '#4caf50';
         else if (payload.status === 'error') color = '#f44336';
@@ -374,6 +471,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
           status: payload.status
         };
       }
+      applyToolStats('dup', payload)
       setLogs(prev => {
         if ((payload as any).file) {
           const idx = prev.findIndex(l => l.file === (payload as any).file && l.status === 'processing');
@@ -400,6 +498,10 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       if (typeof payload === 'string') {
           logItem = { text: `[${pl('tagAiCluster')}] ${payload}`, color: color };
       } else if (typeof payload === 'object') {
+          if ((payload.code === 'TOOL_TOTAL' || payload.code === 'TOOL_PROGRESS') && !String(payload.text || '').trim()) {
+            applyToolStats('ai', payload)
+            return
+          }
           if (payload.status === 'success') color = '#4caf50';
                 else if (payload.status === 'error') color = '#f44336';
                 else if (payload.status === 'processing') color = '#aaa'; // Standard Grey for consistency
@@ -414,6 +516,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
                 };
             }
 
+            applyToolStats('ai', payload)
             setLogs(prev => {
                 if ((payload as any).file) {
              const idx = prev.findIndex(l => l.file === (payload as any).file && l.status === 'processing');
@@ -440,6 +543,10 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       if (typeof payload === 'string') {
         logItem = { text: `[${pl('tagTools')}] ${payload}`, color: '#aaa' };
       } else if (typeof payload === 'object') {
+        if ((payload.code === 'TOOL_TOTAL' || payload.code === 'TOOL_PROGRESS') && !String(payload.text || '').trim()) {
+          applyToolStats('tools', payload)
+          return
+        }
         let color = '#aaa';
         if (payload.status === 'success') color = '#4caf50';
         else if (payload.status === 'error') color = '#f44336';
@@ -454,6 +561,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
           status: payload.status
         };
       }
+      applyToolStats('tools', payload)
       setLogs(prev => {
         if ((payload as any).file) {
           const idx = prev.findIndex(l => l.file === (payload as any).file && l.status === 'processing');
@@ -630,7 +738,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     setGatewayEnabled(isGateway);
 
     if (userProfile) {
-        if (!userProfile.subscription_active) {
+        if (!subscriptionActive) {
             setShowSubAlert(true);
             return;
         }
@@ -835,17 +943,95 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     pushLog({id: 'starting', text: pl('foundFilesStarting', { count: totalCount }), color:'#fff', animating: true})
 
     const CONCURRENCY = Math.max(1, Math.min(Number(s.max_threads || 8), 10));
+    const AUTO_STOP_CONSECUTIVE_FAILS = 5;
+    const stopSchedulingRef = { current: false };
+    const failStreakRef = { current: 0 };
      
      const activePromises: Promise<any>[] = [];
     
     let i=initialDone // shared counter for progress
     let filesStayingInInputCount = 0; // Tracks files that were processed but remain in input (failed, skipped, or failed to delete)
 
-    const processFile = async (file: string) => {
+    const requestStopSchedulingSystem = (detail?: string) => {
+      if (stopSchedulingRef.current) return;
+      stopSchedulingRef.current = true;
+      try {
+        const cur = loadBatchState()
+        if (cur) {
+          cur.running = false
+          cur.updatedAt = Date.now()
+          saveBatchState(cur)
+        }
+      } catch {}
+      pushLog({text: pl('stoppedBySystem', { detail: detail ? ` (${detail})` : '' }), color:'#ff5722'});
+    }
+
+    const trackAutoStop = (status: BatchFileStatus | null, lastFileName?: string) => {
+      if (!status || stopSchedulingRef.current) return;
+      if (status === 'failed') {
+        failStreakRef.current += 1;
+      } else {
+        failStreakRef.current = 0;
+      }
+      if (failStreakRef.current >= AUTO_STOP_CONSECUTIVE_FAILS) {
+        requestStopSchedulingSystem(`Auto-stop: ${AUTO_STOP_CONSECUTIVE_FAILS}x gagal beruntun. Stop untuk file berikutnya (tidak membatalkan yang sedang berjalan). Terakhir: ${String(lastFileName || '')}`);
+      }
+    }
+
+    const processFile = async (file: string, fileIndex: number) => {
         const currentFileName = file.split(/[\\/]/).pop();
         let finalStatus: BatchFileStatus | null = null;
 
         if(stoppedRef.current || criticalErrorRef.current) return;
+
+        const isSubscriptionValidNow = () => {
+          const p = userProfileRef.current as any
+          if (!p || !p.subscription_active) return false
+          const raw = p.subscription_expiry
+          if (!raw) return true
+          const ts = new Date(String(raw)).getTime()
+          if (!Number.isFinite(ts)) return false
+          return ts > Date.now()
+        }
+
+        const stopIfSubscriptionInvalid = () => {
+          if (stoppedRef.current) return
+          pushLog({ text: pl('subscriptionExpiredStop'), color: '#f44336' })
+          stopProcessSystem(pl('subscriptionExpiredDetail'))
+          setShowSubAlert(true)
+        }
+
+        if (!isSubscriptionValidNow()) {
+          stopIfSubscriptionInvalid()
+          return
+        }
+
+        if (token) {
+          const nowMs = Date.now()
+          if (nowMs - lastProfileRefreshMsRef.current > 30000) {
+            lastProfileRefreshMsRef.current = nowMs
+            apiGetUserProfile(token)
+              .then((fresh: any) => {
+                if (!fresh) return
+                setUserProfile((prev: any) => ({ ...(prev || {}), ...fresh }))
+              })
+              .catch(() => {})
+          }
+        }
+
+        if (isGateway && isTauri && token) {
+          try {
+            const bal = await invokeWithTimeout<number>(invoke, 'refresh_balance', { token }, 8000)
+            if (typeof bal === 'number' && Number.isFinite(bal)) {
+              setUserProfile((prev: any) => ({ ...(prev || {}), tokens: bal }))
+              if (bal <= 0) {
+                pushLog({ text: pl('tokensExhaustedStop'), color: '#f44336' })
+                stopProcessSystem(pl('tokensExhaustedDetail'))
+                return
+              }
+            }
+          } catch {}
+        }
         
         let fileRemoved = false;
         const logId = `${file}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -868,6 +1054,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
                      setStats(st=>({...st, done: i})); 
                      setProgress(Math.round((i/totalCount)*100));
                      filesStayingInInputCount++; // Skipped files remain in input
+                     trackAutoStop(finalStatus, currentFileName || '')
                      return;
                  }
              } catch(e) {}
@@ -909,6 +1096,10 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
               reqPayload.api_key = directApiKey;
             }
             const res = await invokeWithTimeout<any[]>(invoke, 'generate_metadata_batch', { req: reqPayload }, 180000)
+            if (stoppedRef.current || criticalErrorRef.current) {
+              finalStatus = 'skipped'
+              return
+            }
 
             const getCostUsd = (g: any): number | null => {
               const n = Number((g as any)?.cost ?? (g as any)?.cost_usd)
@@ -961,6 +1152,10 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
             }
             
             for(const g of res){
+                if (stoppedRef.current || criticalErrorRef.current) {
+                  finalStatus = finalStatus || 'skipped'
+                  break
+                }
                 const fileName = g.file.split(/[\\/]/).pop();
 
                 const balanceUpdate = await applyGatewayBalanceUpdate(g)
@@ -988,7 +1183,15 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
                     finalStatus = isRejection ? 'rejected' : 'failed'
                     
                     // Construct detail with token stats for rejected/failed files
-                    let detailMsg = localizeBackendError((g as any).description);
+                    const rawErr = String((g as any).description || '')
+                    let detailMsg = localizeBackendError(rawErr);
+                    if (!isRejection) {
+                      const errLower = rawErr.toLowerCase()
+                      if (errLower.includes('langganan tidak aktif') || errLower.includes('subscription inactive') || errLower.includes('subscription expired') || errLower.includes('langganan berakhir')) {
+                        stopIfSubscriptionInvalid()
+                        break
+                      }
+                    }
                     if (g.input_tokens !== undefined) {
                         detailMsg += `\n\n${pl('generationStatsTitle')}`;
                         const actualModel = pickActualModel(g);
@@ -1319,6 +1522,10 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
             // No throttling or sleeps on failure; continue at max speed
             const fileName = file.split(/[\\/]/).pop();
             const msg = String(e || '');
+            const lower = msg.toLowerCase()
+            if (lower.includes('langganan tidak aktif') || lower.includes('subscription inactive') || lower.includes('subscription expired') || lower.includes('langganan berakhir')) {
+              stopIfSubscriptionInvalid()
+            }
             if (msg.includes(' timeout')) {
               stopProcessSystem(pl('timeoutDetail'))
             }
@@ -1341,14 +1548,16 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
             if (finalStatus) markFileStatus(file, finalStatus)
             setLogs(l => l.map(x => x.id === logId ? { ...x, animating: false } : x));
             i++; setStats(st=>({...st,done:i})); setProgress(Math.round((i/totalCount)*100));
+            trackAutoStop(finalStatus, currentFileName || '')
         }
     };
 
-    for(const file of fileList){
-      if(stoppedRef.current || criticalErrorRef.current) break; 
+    for(let fileIndex = 0; fileIndex < fileList.length; fileIndex++){
+      const file = fileList[fileIndex]
+      if(stoppedRef.current || criticalErrorRef.current || stopSchedulingRef.current) break; 
       if(stoppedRef.current) break;
       
-      const p = processFile(file);
+      const p = processFile(file, fileIndex);
       activePromises.push(p);
       
       p.finally(() => {
@@ -1364,10 +1573,11 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     
     const remaining = [...activePromises];
     if (remaining.length) await Promise.allSettled(remaining);
-    pushLog({text: stoppedRef.current ? pl('stoppedBatch') : pl('doneText'), color: stoppedRef.current ? '#ff5722' : '#4caf50'})
+    const endedByStop = stoppedRef.current || stopSchedulingRef.current;
+    pushLog({text: endedByStop ? pl('stoppedBatch') : pl('doneText'), color: endedByStop ? '#ff5722' : '#4caf50'})
     
     // Auto-rescan to update file count
-    if (!stoppedRef.current && s.input_folder) {
+    if (!endedByStop && s.input_folder) {
         pushLog({text: pl('updatingFileCount'), color:'#aaa'});
         const left = await scan(s.input_folder);
         pushLog({text: pl('remainingFiles', { count: left.length }), color:'#4caf50'});
@@ -1375,7 +1585,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     
     setStopped(false); stoppedRef.current = false;
     markBatchStopped()
-    if (!stoppedRef.current && i >= totalCount) clearBatchState()
+    if (!endedByStop && i >= totalCount) clearBatchState()
 
     } catch (e) {
         console.error("Process Error", e);
@@ -1395,6 +1605,11 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     }
   }
   function stopProcess(){ 
+      if (isCsvToolsRunningRef.current) {
+        invoke('cancel_generate_csv_tools').catch(() => {})
+        pushLog({text: pl('csvStopRequested'), color:'#ff5722'})
+        return
+      }
       setStopped(true); 
       stoppedRef.current = true;
       try {
@@ -1454,6 +1669,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         // Log: Start (Grey color, animating)
         const logId = Date.now();
         setLogs(l => [...l, { id: logId, text: pl('csvGenGeneratingFrom', { path: inputDir }), color: '#aaa', animating: true }]);
+        isCsvToolsRunningRef.current = true;
         
         // Output folder is same as input folder
         const res = await invoke('generate_csv_from_folder', { input_folder: inputDir, output_folder: inputDir, inputFolder: inputDir, outputFolder: inputDir, api_key: apiKey, apiKey: apiKey, token });
@@ -1464,6 +1680,8 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     } catch (e) {
         setLogs(l => l.map(x => x.animating ? { ...x, animating: false } : x)); // Stop all animations
         setLogs(l => [...l, { text: pl('csvGenFailed', { error: String(e) }), color: '#f44336' }]);
+    } finally {
+        isCsvToolsRunningRef.current = false;
     }
   }
   async function openDupConfig(){

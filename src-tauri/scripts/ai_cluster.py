@@ -7,7 +7,7 @@ import subprocess
 import numpy as np
 
 # Setup logging to stdout for Tauri to capture
-def log_message(text, status="processing", detail=None, file=None):
+def log_message(text, status="processing", detail=None, file=None, extra=None):
     msg = {
         "text": text,
         "status": status
@@ -16,6 +16,9 @@ def log_message(text, status="processing", detail=None, file=None):
         msg["detail"] = detail
     if file:
         msg["file"] = file
+    if extra and isinstance(extra, dict):
+        for k, v in extra.items():
+            msg[k] = v
     print(json.dumps(msg), flush=True)
 
 def error_exit(message):
@@ -75,15 +78,19 @@ def main():
     files = []
     temp_frames = []
 
-    # Scan files
     all_files = sorted(os.listdir(folder))
-    total_files = len(all_files)
+    media_files = [f for f in all_files if os.path.splitext(f)[1].lower() in IMAGE_EXT + VIDEO_EXT]
+    total_files = len(media_files)
     
-    log_message(f"Found {total_files} files. Extracting embeddings...", "processing")
+    log_message("", "processing", extra={"code": "TOOL_TOTAL", "tool": "ai_cluster", "total": total_files, "root": folder})
+    log_message(f"Found {total_files} media files. Extracting embeddings...", "processing")
     
     processed_count = 0
+    done = 0
+    success = 0
+    failed = 0
     
-    for f in all_files:
+    for f in media_files:
         path = os.path.join(folder, f)
         ext = os.path.splitext(f)[1].lower()
         
@@ -106,13 +113,19 @@ def main():
                 features.append(feat.cpu().numpy()[0])
                 files.append(f)
                 
+                success += 1
                 log_message(f"Processed: {f}", "processing", file=f)
+            else:
+                failed += 1
+                log_message(f"Skip: {f}", "error", file=f)
             
         except Exception as e:
-            # print(f"DEBUG: Skip {f}: {e}", file=sys.stderr)
-            pass
+            failed += 1
+            log_message(f"Skip: {f}", "error", detail=str(e), file=f)
             
         processed_count += 1
+        done += 1
+        log_message("", "processing", extra={"code": "TOOL_PROGRESS", "tool": "ai_cluster", "total": total_files, "done": done, "success": success, "failed": failed, "rejected": 0})
 
     if not features:
         error_exit("No valid images or videos found to process.")
@@ -183,6 +196,7 @@ def main():
         except:
             pass
 
+    log_message("", "processing", extra={"code": "TOOL_PROGRESS", "tool": "ai_cluster", "total": total_files, "done": total_files, "success": success, "failed": failed, "rejected": 0})
     log_message(f"Done! Processed {moved_count} files into {len(clusters)} groups.", "success")
     log_message(f"Output: {output_dir}", "success")
 

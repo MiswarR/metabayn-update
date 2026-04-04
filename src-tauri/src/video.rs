@@ -122,7 +122,12 @@ fn run_exiftool(path: &Path, req: &crate::api::VideoMetaReq) -> Result<()> {
     args.push(format!("-XPComment={}", req.description));
 
     // Embed Extra Metadata
-    let cats = req.category.clone().unwrap_or_default();
+    let cats_raw = req.category.clone().unwrap_or_default();
+    let cats = if cats_raw.trim().is_empty() {
+        cats_raw
+    } else {
+        crate::metadata::normalize_shutterstock_categories(&cats_raw).0
+    };
     let extras_obj = serde_json::json!({
         "categories": cats,
         "editorial": "No",

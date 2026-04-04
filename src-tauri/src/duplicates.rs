@@ -141,6 +141,14 @@ pub async fn detect_duplicates(window: tauri::Window, input_folder: &str, auto_d
     }
 
     println!("DEBUG: Found {} files to scan", total);
+    let _ = window.emit("dup_log", serde_json::json!({
+        "code": "TOOL_TOTAL",
+        "tool": "duplicate",
+        "total": total,
+        "file": input_folder,
+        "text": "",
+        "status": "processing"
+    }));
     
     if total == 0 {
         let _ = window.emit("dup_log", serde_json::json!({

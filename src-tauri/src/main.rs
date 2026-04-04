@@ -96,6 +96,7 @@ fn main() {
             crate::api::get_machine_hash,
             crate::api::generate_metadata_batch,
             crate::api::cancel_generate_metadata_batch,
+            crate::api::cancel_generate_csv_tools,
             crate::api::get_settings,
             crate::api::save_settings,
             crate::api::save_auth_token,

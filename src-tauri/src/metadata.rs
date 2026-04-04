@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, Context};
 use serde::{Serialize, Deserialize};
 use std::process::Command;
 #[cfg(target_os = "windows")]
@@ -60,6 +60,7 @@ struct ImageCache { map: HashMap<String, (String, String)>, order: VecDeque<Stri
 static IMAGE_B64_CACHE: OnceLock<Mutex<ImageCache>> = OnceLock::new();
 static CANCEL_GENERATE_BATCH: AtomicBool = AtomicBool::new(false);
 static ACTIVE_GENERATE_BATCH: AtomicUsize = AtomicUsize::new(0);
+static STOP_CSV_TOOLS_SCHEDULING: AtomicBool = AtomicBool::new(false);
 
 pub fn request_cancel_generate_batch() {
     CANCEL_GENERATE_BATCH.store(true, Ordering::SeqCst);
@@ -69,12 +70,24 @@ pub fn clear_cancel_generate_batch() {
     CANCEL_GENERATE_BATCH.store(false, Ordering::SeqCst);
 }
 
+pub fn request_stop_csv_tools_scheduling() {
+    STOP_CSV_TOOLS_SCHEDULING.store(true, Ordering::SeqCst);
+}
+
+pub fn clear_stop_csv_tools_scheduling() {
+    STOP_CSV_TOOLS_SCHEDULING.store(false, Ordering::SeqCst);
+}
+
 pub fn active_generate_batch_count() -> usize {
     ACTIVE_GENERATE_BATCH.load(Ordering::SeqCst)
 }
 
 fn cancel_requested() -> bool {
     CANCEL_GENERATE_BATCH.load(Ordering::SeqCst)
+}
+
+fn csv_tools_stop_requested() -> bool {
+    STOP_CSV_TOOLS_SCHEDULING.load(Ordering::SeqCst)
 }
 
 struct ActiveBatchGuard;
@@ -156,6 +169,8 @@ fn split_natural(s: &str) -> Vec<Chunk> {
 }
 
 pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str, output_folder: &str, api_key: Option<String>, token: Option<String>) -> Result<String> {
+    clear_cancel_generate_batch();
+    clear_stop_csv_tools_scheduling();
     let exiftool = resolve_exiftool().ok_or(anyhow!("ExifTool not found"))?;
     
     // Run ExifTool on the folder
@@ -214,6 +229,14 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
 
     let json_str = String::from_utf8_lossy(&output.stdout);
     let mut items: Vec<serde_json::Value> = serde_json::from_str(&json_str)?;
+    let _ = window.emit("csv_log", serde_json::json!({
+        "code": "TOOL_TOTAL",
+        "tool": "csv_gen",
+        "total": items.len(),
+        "text": "",
+        "file": input_folder,
+        "status": "processing"
+    }));
 
     // Sort items naturally by SourceFile
     items.sort_by(|a, b| {
@@ -230,19 +253,35 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
     // Categories, Editorial, Mature, Illustration
     let settings = crate::settings::load_settings().unwrap_or_default();
     let model = settings.default_model.clone();
+    let cm_raw = settings.connection_mode.trim().to_lowercase();
+    let api_key_present = api_key.as_ref().map(|k| !k.trim().is_empty()).unwrap_or(false);
+    let effective_connection_mode = if cm_raw == "direct" || cm_raw == "standard" || cm_raw == "standard_ai" {
+        "direct".to_string()
+    } else if cm_raw == "gateway" || cm_raw == "ai_gateway" {
+        "gateway".to_string()
+    } else if api_key_present {
+        "direct".to_string()
+    } else {
+        "gateway".to_string()
+    };
+    let effective_token = if effective_connection_mode == "gateway" {
+        token.unwrap_or(settings.auth_token.clone())
+    } else {
+        String::new()
+    };
     
     // Construct BatchReq for AI calls
     let req_template = crate::api::BatchReq {
         files: vec![],
         model: model.clone(),
-        token: token.unwrap_or(settings.auth_token.clone()),
+        token: effective_token,
         retries: settings.retry_count,
         title_min_words: 0, title_max_words: 0,
         description_min_chars: 0, description_max_chars: 0,
         keywords_min_count: 0, keywords_max_count: 0,
         banned_words: String::new(),
         max_threads: 1,
-        connection_mode: settings.connection_mode.clone(),
+        connection_mode: effective_connection_mode,
         api_key: api_key.clone(),
         provider: settings.ai_provider.clone(),
     };
@@ -275,6 +314,15 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
     // Let's clone items for reading, and collect results.
     
     for (idx, item) in items.iter().enumerate() {
+        if csv_tools_stop_requested() {
+            let _ = window.emit("csv_log", serde_json::json!({
+                "code": "CSV_STOP_REQUESTED",
+                "text": "Stop requested.",
+                "file": input_folder,
+                "status": "warning"
+            }));
+            break;
+        }
         let item_clone = item.clone();
         let sem_clone = sem.clone();
         let window = window.clone();
@@ -288,6 +336,10 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
                 Ok(p) => p,
                 Err(_) => return (idx, None),
             };
+
+            if csv_tools_stop_requested() {
+                return (idx, None);
+            }
             
             let path_str = item_clone["SourceFile"].as_str().unwrap_or("").to_string();
             if path_str.is_empty() { return (idx, None); }
@@ -320,6 +372,9 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
             };
 
             if needs_fill {
+                if csv_tools_stop_requested() {
+                    return (idx, None);
+                }
                 let _ = window.emit("csv_log", serde_json::json!({
                     "text": format!("> {} missing metadata. AI identifying...", filename),
                     "file": filename.clone(),
@@ -330,7 +385,9 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
                 match prepare_image_data(&path_str, &model).await {
                     Ok((b64, mime)) => {
                         let prompt = "Analyze this image for Shutterstock metadata. Provide:
-                        1. Two most relevant Categories (comma separated) from standard Shutterstock categories (e.g. Abstract, Animals/Wildlife, Arts, Backgrounds/Textures, Beauty/Fashion, Buildings/Landmarks, Business/Finance, Celebrities, Education, Food and Drink, Healthcare/Medical, Holidays, Industrial, Interiors, Miscellaneous, Nature, Objects, Parks/Outdoor, People, Religion, Science, Signs/Symbols, Sports/Recreation, Technology, The Arts, Transportation, Vintage).
+                        1. Two most relevant Categories (comma separated).
+                           MUST be chosen ONLY from this list and MUST match EXACT spelling character-by-character:
+                           [Abstract, Animals/Wildlife, Arts, Backgrounds/Textures, Beauty/Fashion, Buildings/Landmarks, Business/Finance, Celebrities, Education, Food and drink, Healthcare/Medical, Holidays, Industrial, Interiors, Miscellaneous, Nature, Objects, Parks/Outdoor, People, Religion, Science, Signs/Symbols, Sports/Recreation, Technology, Transportation, Vintage]
                         2. Editorial (Yes/No).
                         3. Mature Content (Yes/No).
                         4. Illustration (Yes/No).
@@ -342,14 +399,15 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
                                 let clean_json = content.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
                                 
                                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(clean_json) {
-                                     let cats_str = if let Some(arr) = parsed["categories"].as_array() {
-                                         arr.iter().filter_map(|v| {
-                                             let s = v.as_str()?;
-                                             if s == "Vectors/Vintage" { Some("Vintage") } else { Some(s) }
-                                         }).collect::<Vec<_>>().join(", ")
+                                     let cats_raw = if let Some(arr) = parsed["categories"].as_array() {
+                                         arr.iter()
+                                             .filter_map(|v| v.as_str())
+                                             .collect::<Vec<_>>()
+                                             .join(", ")
                                      } else {
-                                         parsed["categories"].as_str().unwrap_or("Miscellaneous, Objects").replace("Vectors/Vintage", "Vintage")
+                                         parsed["categories"].as_str().unwrap_or("").to_string()
                                      };
+                                     let (cats_str, _cat_issues) = normalize_shutterstock_categories(&cats_raw);
     
                                      let new_extras = serde_json::json!({
                                          "categories": cats_str,
@@ -537,7 +595,7 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
              instructions = item["XMP:Instructions"].as_str().unwrap_or(""); // Try explicit XMP
         }
 
-        let (cats, editorial, mature, illustration) = if !instructions.is_empty() {
+        let (cats_raw, editorial, mature, illustration) = if !instructions.is_empty() {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(instructions) {
                  let c = if let Some(arr) = parsed["categories"].as_array() {
                      arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")
@@ -567,6 +625,12 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
              ("".to_string(), "No".to_string(), "No".to_string(), "No".to_string())
         };
 
+        let cats = if cats_raw.trim().is_empty() {
+            cats_raw
+        } else {
+            normalize_shutterstock_categories(&cats_raw).0
+        };
+
         if cats.is_empty() {
              let _ = window.emit("csv_log", format!("Warning: No Category found for {}", filename));
         }
@@ -580,8 +644,19 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
             }
         };
 
+        if title.trim().is_empty() && desc.trim().is_empty() {
+            let _ = window.emit("csv_log", serde_json::json!({
+                "code": "CSV_MISSING_TITLE_DESC",
+                "text": format!("> {} FAILED: Title & Description empty.", filename),
+                "file": filename.to_string(),
+                "status": "error"
+            }));
+            continue;
+        }
+
         mb_csv.push_str(&format!("{},{},{},{}\n", esc(&filename), esc(title), esc(desc), esc(&keywords)));
-        ss_csv.push_str(&format!("{},{},{},{},{},{},{}\n", esc(&filename), esc(desc), esc(&keywords), esc(&cats), esc(&editorial), esc(&mature), esc(&illustration)));
+        let ss_desc = title;
+        ss_csv.push_str(&format!("{},{},{},{},{},{},{}\n", esc(&filename), esc(ss_desc), esc(&keywords), esc(&cats), esc(&editorial), esc(&mature), esc(&illustration)));
     }
 
     // Write Files
@@ -650,8 +725,9 @@ Rules:
 - Category: Choose EXACTLY TWO relevant categories from this list, separated by a comma.
           You MUST provide TWO categories. If only one is perfectly relevant, choose the second most relevant one.
           NEVER provide just one category.
-          List: [Abstract, Animals/Wildlife, Arts, Backgrounds/Textures, Beauty/Fashion, Buildings/Landmarks, Business/Finance, Celebrities, Education, Food and Drink, Healthcare/Medical, Holidays, Industrial, Interiors, Miscellaneous, Nature, Objects, Parks/Outdoor, People, Religion, Science, Signs/Symbols, Sports/Recreation, Technology, Transportation, Vintage]
-          Example: \"Nature,Transportation\"
+          MUST match EXACT spelling character-by-character.
+          List: [Abstract, Animals/Wildlife, Arts, Backgrounds/Textures, Beauty/Fashion, Buildings/Landmarks, Business/Finance, Celebrities, Education, Food and drink, Healthcare/Medical, Holidays, Industrial, Interiors, Miscellaneous, Nature, Objects, Parks/Outdoor, People, Religion, Science, Signs/Symbols, Sports/Recreation, Technology, Transportation, Vintage]
+          Example: \"Nature, Transportation\"
         ",
         tmin, tmax,
         desc_rule,
@@ -810,11 +886,7 @@ async fn call_ai_base(
 
     let current_model = model.to_string();
     // Retry Loop
-    let max_attempts = if req.connection_mode == "direct" {
-        (req.retries as usize) + 1
-    } else {
-        1
-    };
+    let max_attempts = (req.retries as usize).saturating_add(1).max(1);
     for attempt in 0..max_attempts {
         if req.connection_mode == "direct" {
             let raw_key = req.api_key.as_ref().ok_or(anyhow!("Missing API key"))?;
@@ -898,7 +970,19 @@ async fn call_ai_base(
                     if !r.status().is_success() {
                         let status = r.status();
                         let err_text = r.text().await.unwrap_or_default();
-                         if attempt < max_attempts - 1 {
+                        let lower = err_text.to_lowercase();
+                        let is_transient =
+                            status.as_u16() == 429
+                                || status.as_u16() >= 500
+                                || lower.contains("queue timeout")
+                                || lower.contains("system busy")
+                                || lower.contains("bad gateway")
+                                || lower.contains("gateway timeout")
+                                || lower.contains("timeout")
+                                || lower.contains("temporarily unavailable")
+                                || lower.contains("service unavailable")
+                                || lower.contains("try again");
+                         if is_transient && attempt < max_attempts - 1 {
                             let exp = std::cmp::min(attempt as u32, 4);
                             let backoff_secs = std::cmp::min(30u64, 2u64.saturating_mul(1u64 << exp));
                             tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
@@ -1510,10 +1594,116 @@ fn is_meaningful_token(token: &str, stopwords: &std::collections::HashSet<String
     true
 }
 
+const SHUTTERSTOCK_CATEGORIES: [&str; 26] = [
+    "Abstract",
+    "Animals/Wildlife",
+    "Arts",
+    "Backgrounds/Textures",
+    "Beauty/Fashion",
+    "Buildings/Landmarks",
+    "Business/Finance",
+    "Celebrities",
+    "Education",
+    "Food and drink",
+    "Healthcare/Medical",
+    "Holidays",
+    "Industrial",
+    "Interiors",
+    "Miscellaneous",
+    "Nature",
+    "Objects",
+    "Parks/Outdoor",
+    "People",
+    "Religion",
+    "Science",
+    "Signs/Symbols",
+    "Sports/Recreation",
+    "Technology",
+    "Transportation",
+    "Vintage",
+];
+
+fn normalize_shutterstock_category_token(raw: &str) -> Option<&'static str> {
+    let t = raw.trim().trim_matches('"').trim_matches('\'').trim();
+    if t.is_empty() { return None; }
+    let lower = t.to_lowercase();
+    match lower.as_str() {
+        "abstract" => Some("Abstract"),
+        "animals/wildlife" | "animals & wildlife" | "animals and wildlife" => Some("Animals/Wildlife"),
+        "arts" | "the arts" => Some("Arts"),
+        "backgrounds/textures" | "backgrounds / textures" | "backgrounds & textures" => Some("Backgrounds/Textures"),
+        "beauty/fashion" | "beauty & fashion" | "beauty and fashion" => Some("Beauty/Fashion"),
+        "buildings/landmarks" | "buildings & landmarks" | "buildings and landmarks" => Some("Buildings/Landmarks"),
+        "business/finance" | "business & finance" | "business and finance" => Some("Business/Finance"),
+        "celebrities" => Some("Celebrities"),
+        "education" => Some("Education"),
+        "food and drink" | "food and drinks" | "food & drink" | "food & drinks" | "food and drink." | "food and drink," => Some("Food and drink"),
+        "healthcare/medical" | "healthcare & medical" | "healthcare and medical" | "health care/medical" => Some("Healthcare/Medical"),
+        "holidays" => Some("Holidays"),
+        "industrial" => Some("Industrial"),
+        "interiors" => Some("Interiors"),
+        "miscellaneous" => Some("Miscellaneous"),
+        "nature" => Some("Nature"),
+        "objects" => Some("Objects"),
+        "parks/outdoor" | "parks/outdoors" | "parks & outdoor" | "parks and outdoor" => Some("Parks/Outdoor"),
+        "people" => Some("People"),
+        "religion" => Some("Religion"),
+        "science" => Some("Science"),
+        "signs/symbols" | "signs & symbols" | "signs and symbols" => Some("Signs/Symbols"),
+        "sports/recreation" | "sports & recreation" | "sports and recreation" => Some("Sports/Recreation"),
+        "technology" => Some("Technology"),
+        "transportation" => Some("Transportation"),
+        "vintage" | "vectors/vintage" => Some("Vintage"),
+        _ => {
+            for c in SHUTTERSTOCK_CATEGORIES {
+                if c.eq_ignore_ascii_case(t) {
+                    return Some(c);
+                }
+            }
+            None
+        }
+    }
+}
+
+pub(crate) fn normalize_shutterstock_categories(raw: &str) -> (String, bool) {
+    let raw_clean = raw.replace("Vectors/Vintage", "Vintage");
+    let mut out: Vec<&'static str> = Vec::new();
+    let mut had_issues = false;
+
+    for part in raw_clean.split(&[',', ';', '|', '\n', '\r'][..]) {
+        let token = part.trim();
+        if token.is_empty() { continue; }
+        match normalize_shutterstock_category_token(token) {
+            Some(canon) => {
+                if !out.contains(&canon) {
+                    out.push(canon);
+                }
+            }
+            None => {
+                had_issues = true;
+            }
+        }
+        if out.len() >= 2 { break; }
+    }
+
+    if out.is_empty() {
+        return ("Miscellaneous, Objects".to_string(), true);
+    }
+    if out.len() == 1 {
+        had_issues = true;
+        let second = if out[0] == "Miscellaneous" { "Objects" } else { "Miscellaneous" };
+        out.push(second);
+    }
+
+    (format!("{}, {}", out[0], out[1]), had_issues)
+}
+
 fn enforce_generation_contract(g: &mut Generated, req: &crate::api::BatchReq) {
     if g.title.trim().eq_ignore_ascii_case("ERROR") {
         return;
     }
+    let (cat_norm, _cat_issues) = normalize_shutterstock_categories(&g.category);
+    g.category = cat_norm;
     let (tmin, tmax, dmin, dmax, kw_min, kw_max) = effective_generation_bounds(req);
 
     let banned_list: Vec<String> = req
@@ -1742,9 +1932,10 @@ mod tests {
     fn excessive_dimensions_guard() {
         assert!(!is_excessive_image_dimensions(512, 512));
         assert!(!is_excessive_image_dimensions(8000, 8000));
-        assert!(is_excessive_image_dimensions(20001, 10));
-        assert!(is_excessive_image_dimensions(10, 20001));
-        assert!(is_excessive_image_dimensions(12000, 12000));
+        assert!(!is_excessive_image_dimensions(12096, 6912));
+        assert!(!is_excessive_image_dimensions(20001, 10));
+        assert!(!is_excessive_image_dimensions(10, 20001));
+        assert!(!is_excessive_image_dimensions(12000, 12000));
     }
 
     #[test]
@@ -1979,14 +2170,7 @@ async fn prepare_image_data(path: &str, _model: &str) -> Result<(String, String)
         crate::video::extract_frame(path)?
     } else {
         let file_len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-        if file_len > 200 * 1024 * 1024 {
-            return Err(anyhow!("File terlalu besar untuk diproses: {} bytes", file_len));
-        }
-
         let (w, h) = ImageReader::open(path)?.with_guessed_format()?.into_dimensions()?;
-        if is_excessive_image_dimensions(w, h) {
-            return Err(anyhow!("Resolusi gambar terlalu besar untuk diproses: {}x{}", w, h));
-        }
 
         if cancel_requested() {
             return Err(anyhow!("CANCELLED_BY_USER"));
@@ -2057,10 +2241,8 @@ async fn prepare_image_data(path: &str, _model: &str) -> Result<(String, String)
 }
 
 fn is_excessive_image_dimensions(w: u32, h: u32) -> bool {
-    let max_dim: u64 = 20_000;
-    let pixels: u64 = (w as u64).saturating_mul(h as u64);
-    let max_pixels: u64 = 80_000_000;
-    (w as u64) > max_dim || (h as u64) > max_dim || pixels > max_pixels
+    let _ = (w, h);
+    false
 }
 
 fn map_failure_to_tag(fail: &str) -> String {
@@ -2135,7 +2317,24 @@ pub async fn strip_metadata_batch(window: tauri::Window, input_folder: &str, rec
 
     let exiftool = resolve_exiftool().ok_or(anyhow!("ExifTool not found"))?;
 
-    let _ = window.emit("csv_log", serde_json::json!({
+    let total = {
+        use walkdir::WalkDir;
+        let mut n = 0usize;
+        let walker = if recurse { WalkDir::new(root) } else { WalkDir::new(root).max_depth(1) };
+        for e in walker.into_iter().flatten() {
+            let p = e.path();
+            if !p.is_file() { continue; }
+            let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+            let ok = matches!(ext.as_str(), "jpg"|"jpeg"|"png"|"webp"|"bmp"|"tif"|"tiff"|"mp4"|"mov"|"mkv"|"webm"|"avi"|"m2ts"|"3gp"|"wmv");
+            if ok { n += 1; }
+        }
+        n
+    };
+
+    let _ = window.emit("tools_log", serde_json::json!({
+        "code": "TOOL_TOTAL",
+        "tool": "strip_meta",
+        "total": total,
         "text": format!("Removing metadata: {}...", input_folder),
         "file": input_folder,
         "status": "processing"
@@ -2171,7 +2370,14 @@ pub async fn strip_metadata_batch(window: tauri::Window, input_folder: &str, rec
         return Err(anyhow!("{}", String::from_utf8_lossy(&output.stderr)));
     }
 
-    let _ = window.emit("csv_log", serde_json::json!({
+    let _ = window.emit("tools_log", serde_json::json!({
+        "code": "TOOL_PROGRESS",
+        "tool": "strip_meta",
+        "total": total,
+        "done": total,
+        "success": total,
+        "failed": 0,
+        "rejected": 0,
         "text": "Metadata removed successfully",
         "file": input_folder,
         "status": "success"
@@ -2284,7 +2490,12 @@ pub async fn move_to_rejected_with_metadata(
     args.push(format!("-UserComment={}", req.description));
     args.push(format!("-XPComment={}", req.description));
     
-    let cats = req.category.clone().unwrap_or_default();
+    let cats_raw = req.category.clone().unwrap_or_default();
+    let cats = if cats_raw.trim().is_empty() {
+        cats_raw
+    } else {
+        normalize_shutterstock_categories(&cats_raw).0
+    };
     let extras_obj = serde_json::json!({
         "categories": cats,
         "editorial": "No",
@@ -2443,14 +2654,28 @@ pub async fn write_image(req: &crate::api::ImageMetaReq) -> Result<Option<String
     let working_path = if target == source {
         source.to_path_buf()
     } else {
-        if let Some(parent) = target.parent() { let _ = fs::create_dir_all(parent); }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("Gagal membuat folder output: {}", parent.to_string_lossy()))?;
+        }
         let ext = target.extension().and_then(|s| s.to_str()).unwrap_or("");
         let stem = target.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
         let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
         let pid = std::process::id();
         let tmp_name = if ext.is_empty() { format!(".{}.tmp-{}-{}", stem, ms, pid) } else { format!(".{}.tmp-{}-{}.{}", stem, ms, pid, ext) };
         let tmp_path = target.with_file_name(tmp_name);
-        fs::copy(source, &tmp_path)?;
+        let mut last = None;
+        for _ in 0..5 {
+            match fs::copy(source, &tmp_path) {
+                Ok(_) => { last = None; break; }
+                Err(e) => {
+                    last = Some(e);
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+            }
+        }
+        if let Some(e) = last {
+            return Err(anyhow!(e).context(format!("Gagal menulis file sementara di folder output: {}", tmp_path.to_string_lossy())));
+        }
         tmp_path
     };
 
@@ -2479,8 +2704,31 @@ pub async fn write_image(req: &crate::api::ImageMetaReq) -> Result<Option<String
     let final_path = if target == source {
         target.clone()
     } else {
-        if fs::rename(&working_path, &target).is_err() {
-            fs::copy(&working_path, &target)?;
+        let mut moved = false;
+        for _ in 0..5 {
+            if fs::rename(&working_path, &target).is_ok() { moved = true; break; }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        if !moved {
+            let mut copied = false;
+            let mut last = None;
+            for _ in 0..5 {
+                match fs::copy(&working_path, &target) {
+                    Ok(_) => { copied = true; last = None; break; }
+                    Err(e) => {
+                        last = Some(e);
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                    }
+                }
+            }
+            if !copied {
+                if let Some(e) = last {
+                    let _ = fs::remove_file(&working_path);
+                    return Err(anyhow!(e).context(format!("Gagal menulis hasil ke folder output: {}", target.to_string_lossy())));
+                }
+                let _ = fs::remove_file(&working_path);
+                return Err(anyhow!("Gagal menulis hasil ke folder output: {}", target.to_string_lossy()));
+            }
             let _ = fs::remove_file(&working_path);
         }
         target.clone()

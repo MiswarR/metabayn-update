@@ -560,15 +560,11 @@ export default function App(){
   }, [token]);
 
   useEffect(() => {
-    if (!token) {
-      setUpdateModalOpen(false);
-      setUpdateInstallLoading(false);
-      setUpdateGateDone(false);
-      setUpdateInfo(null);
-      updateCheckedRef.current = false;
+    if (!isTauri) {
+      setUpdateGateDone(true);
       return;
     }
-    if (!isTauri) {
+    if (page === 'video_player') {
       setUpdateGateDone(true);
       return;
     }
@@ -619,7 +615,7 @@ export default function App(){
     })();
 
     return () => { cancelled = true; };
-  }, [token]);
+  }, [page]);
 
   useEffect(() => {
     if (!token) {
