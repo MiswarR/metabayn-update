@@ -205,8 +205,26 @@ pub async fn write_video_metadata(req: VideoMetaReq) -> Result<Option<String>, S
 }
 
 #[tauri::command]
-pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: String, output_folder: String, api_key: Option<String>, token: Option<String>) -> Result<String, String> {
-    crate::metadata::generate_csv_from_folder(window, &input_folder, &output_folder, api_key, token)
+pub async fn generate_csv_from_folder(
+    window: tauri::Window,
+    input_folder: String,
+    output_folder: String,
+    api_key: Option<String>,
+    token: Option<String>,
+    auto_stop_enabled: Option<bool>,
+    auto_stop_fail_threshold: Option<u32>,
+    request_timeout_sec: Option<u64>,
+) -> Result<String, String> {
+    crate::metadata::generate_csv_from_folder(
+        window,
+        &input_folder,
+        &output_folder,
+        api_key,
+        token,
+        auto_stop_enabled,
+        auto_stop_fail_threshold,
+        request_timeout_sec,
+    )
         .await
         .map_err(|e| e.to_string())
 }
