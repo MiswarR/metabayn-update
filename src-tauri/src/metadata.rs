@@ -168,7 +168,16 @@ fn split_natural(s: &str) -> Vec<Chunk> {
     chunks
 }
 
-pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str, output_folder: &str, api_key: Option<String>, token: Option<String>) -> Result<String> {
+pub async fn generate_csv_from_folder(
+    window: tauri::Window,
+    input_folder: &str,
+    output_folder: &str,
+    api_key: Option<String>,
+    token: Option<String>,
+    auto_stop_enabled: Option<bool>,
+    auto_stop_fail_threshold: Option<u32>,
+    request_timeout_sec: Option<u64>,
+) -> Result<String> {
     clear_cancel_generate_batch();
     clear_stop_csv_tools_scheduling();
     let exiftool = resolve_exiftool().ok_or(anyhow!("ExifTool not found"))?;
@@ -290,6 +299,28 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
     use std::sync::Arc;
     use tokio::sync::Semaphore;
 
+    let csv_auto_stop_enabled = auto_stop_enabled.unwrap_or(true);
+    let csv_auto_stop_fail_threshold = auto_stop_fail_threshold
+        .unwrap_or(5)
+        .clamp(1, 50) as usize;
+    let csv_request_timeout_sec = request_timeout_sec.unwrap_or(180).clamp(15, 900);
+    let fail_streak = Arc::new(tokio::sync::Mutex::new(0usize));
+
+    let _ = window.emit("csv_log", serde_json::json!({
+        "code": "CSV_CFG",
+        "text": format!(
+            "[Sistem] CSV AI: mode={}, provider={}, model={}, timeout={} dtk, auto_stop={}{}",
+            req_template.connection_mode,
+            req_template.provider,
+            model,
+            csv_request_timeout_sec,
+            if csv_auto_stop_enabled { "on" } else { "off" },
+            if csv_auto_stop_enabled { format!(", ambang={}", csv_auto_stop_fail_threshold) } else { "".to_string() }
+        ),
+        "file": input_folder,
+        "status": "processing"
+    }));
+
     let max_threads = if settings.max_threads > 0 { settings.max_threads as usize } else { 1 };
     let sem = Arc::new(Semaphore::new(max_threads));
     
@@ -330,6 +361,7 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
         let model = model.clone();
         let req_template = req_template.clone();
         let exiftool = exiftool.clone();
+        let fail_streak = fail_streak.clone();
         
         let task = tokio::spawn(async move {
             let _permit = match sem_clone.acquire().await {
@@ -394,7 +426,7 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
                         
                         Output ONLY valid JSON: { \"categories\": \"Cat1, Cat2\", \"editorial\": \"No\", \"mature\": \"No\", \"illustration\": \"No\" }";
     
-                        match call_ai_base(&model, prompt, Some((b64, mime)), &req_template).await {
+                        match call_ai_base(&model, prompt, Some((b64, mime)), &req_template, csv_request_timeout_sec).await {
                             Ok((content, usage, used_model, _cost, _balance_after, _tokens_deducted)) => {
                                 let clean_json = content.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
                                 
@@ -469,6 +501,13 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
                                         "detail": detail_msg,
                                         "status": "success"
                                     }));
+
+                                    if let Ok(mut st) = fail_streak.try_lock() {
+                                        *st = 0;
+                                    } else {
+                                        let mut st = fail_streak.lock().await;
+                                        *st = 0;
+                                    }
                                     
                                     // Return updated fields to merge back to items
                                     return (idx, Some(new_instr));
@@ -478,6 +517,18 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
                                         "file": filename.clone(),
                                         "status": "error"
                                     }));
+
+                                    let mut st = fail_streak.lock().await;
+                                    *st = st.saturating_add(1);
+                                    if csv_auto_stop_enabled && *st >= csv_auto_stop_fail_threshold {
+                                        request_stop_csv_tools_scheduling();
+                                        let _ = window.emit("csv_log", serde_json::json!({
+                                            "code": "CSV_AUTO_STOP",
+                                            "text": format!("Auto-stop: {}x gagal beruntun. Melewati file berikutnya.", csv_auto_stop_fail_threshold),
+                                            "file": filename.clone(),
+                                            "status": "warning"
+                                        }));
+                                    }
                                 }
                             },
                             Err(e) => {
@@ -486,6 +537,18 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
                                      "file": filename.clone(),
                                      "status": "error"
                                  }));
+
+                                 let mut st = fail_streak.lock().await;
+                                 *st = st.saturating_add(1);
+                                 if csv_auto_stop_enabled && *st >= csv_auto_stop_fail_threshold {
+                                     request_stop_csv_tools_scheduling();
+                                     let _ = window.emit("csv_log", serde_json::json!({
+                                         "code": "CSV_AUTO_STOP",
+                                         "text": format!("Auto-stop: {}x gagal beruntun. Melewati file berikutnya.", csv_auto_stop_fail_threshold),
+                                         "file": filename.clone(),
+                                         "status": "warning"
+                                     }));
+                                 }
                             }
                         }
                     },
@@ -495,6 +558,18 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
                             "file": filename.clone(),
                             "status": "error"
                         }));
+
+                        let mut st = fail_streak.lock().await;
+                        *st = st.saturating_add(1);
+                        if csv_auto_stop_enabled && *st >= csv_auto_stop_fail_threshold {
+                            request_stop_csv_tools_scheduling();
+                            let _ = window.emit("csv_log", serde_json::json!({
+                                "code": "CSV_AUTO_STOP",
+                                "text": format!("Auto-stop: {}x gagal beruntun. Melewati file berikutnya.", csv_auto_stop_fail_threshold),
+                                "file": filename.clone(),
+                                "status": "warning"
+                            }));
+                        }
                     }
                 }
             } else {
@@ -503,6 +578,13 @@ pub async fn generate_csv_from_folder(window: tauri::Window, input_folder: &str,
                     "file": filename.clone(),
                     "status": "skipped"
                 }));
+
+                if let Ok(mut st) = fail_streak.try_lock() {
+                    *st = 0;
+                } else {
+                    let mut st = fail_streak.lock().await;
+                    *st = 0;
+                }
             }
             
             (idx, None)
@@ -859,10 +941,13 @@ async fn call_ai_base(
     model: &str, 
     prompt: &str, 
     image_b64: Option<(String, String)>, 
-    req: &crate::api::BatchReq
+    req: &crate::api::BatchReq,
+    request_timeout_sec: u64,
 ) -> Result<(String, Option<TokenUsage>, Option<String>, Option<f64>, Option<f64>, Option<f64>)> {
     
-    let client = reqwest::Client::builder().timeout(Duration::from_secs(120)).build()?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(request_timeout_sec.clamp(15, 900)))
+        .build()?;
     let settings = crate::settings::load_settings().unwrap_or_default();
     
     // Construct System/User messages
@@ -1163,7 +1248,7 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
         // CASE B: Single pass (Metadata + Selection)
         let prompt = get_primary_prompt_with_selection(req, &settings, None);
         if cancel_requested() { return Err(anyhow!("CANCELLED_BY_USER")); }
-        match call_ai_base(vision_model, &prompt, img_data.clone(), req).await {
+        match call_ai_base(vision_model, &prompt, img_data.clone(), req, 120).await {
             Ok((txt, usage, prov, cost, balance_after, tokens_deducted)) => {
                 add_usage(&mut acc_vis_usage, &mut acc_vis_cost, usage, cost);
                 if let Some(b) = balance_after { file_balance_after = Some(b); }
@@ -1230,7 +1315,7 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
             get_primary_prompt(req, None)
         };
         if cancel_requested() { return Err(anyhow!("CANCELLED_BY_USER")); }
-        match call_ai_base(vision_model, &prompt, img_data.clone(), req).await {
+        match call_ai_base(vision_model, &prompt, img_data.clone(), req, 120).await {
             Ok((txt, usage, prov, cost, balance_after, tokens_deducted)) => {
                 add_usage(&mut acc_vis_usage, &mut acc_vis_cost, usage, cost);
                 if let Some(b) = balance_after { file_balance_after = Some(b); }

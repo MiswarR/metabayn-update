@@ -137,6 +137,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
   const autoResumeTriedRef = useRef(false);
   const isGeneratingRef = useRef(false)
   const isCsvToolsRunningRef = useRef(false)
+  const inFlightCountRef = useRef(0)
   const prevTokenRef = useRef<string>(token || '')
   const [showMonitoring, setShowMonitoring] = useState(false)
   const [auditLogs, setAuditLogs] = useState<any[]>([])
@@ -858,6 +859,26 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         ? normalizeModelForProvider('OpenAI', rawModel)
         : rawModel;
 
+    const loadGenModelCfg = (provider: string, model: string): any => {
+      try {
+        const key = `metabayn:gen:modelcfg:v1:${String(provider || '')}:${String(model || '').trim()}`
+        const raw = localStorage.getItem(key)
+        if (!raw) return {}
+        const parsed = JSON.parse(raw)
+        return parsed && typeof parsed === 'object' ? parsed : {}
+      } catch {
+        return {}
+      }
+    }
+
+    const genCfg = loadGenModelCfg(String(s.ai_provider || ''), effectiveModel)
+    const autoStopEnabledCfg = (genCfg as any)?.auto_stop_enabled
+    const autoStopEnabled = typeof autoStopEnabledCfg === 'boolean' ? autoStopEnabledCfg : true
+    const autoStopFailThresholdRaw = Number((genCfg as any)?.auto_stop_fail_threshold)
+    const autoStopFailThreshold = Number.isFinite(autoStopFailThresholdRaw) ? Math.max(1, Math.min(Math.round(autoStopFailThresholdRaw), 50)) : 5
+    const reqTimeoutSecRaw = Number((genCfg as any)?.request_timeout_sec)
+    const requestTimeoutMs = (Number.isFinite(reqTimeoutSecRaw) ? Math.max(15, Math.min(Math.round(reqTimeoutSecRaw), 900)) : 180) * 1000
+
     if ((String(s.ai_provider || '') === 'OpenAI' || String(s.ai_provider || '') === 'Gemini') && !isVisionLikeModelId(effectiveModel)) {
       pushLog({ text: pl('modelNotVisionSupported', { model: effectiveModel }), color: '#f44336' })
       stopProcessSystem(pl('modelNotVisionSupportedDetail'))
@@ -943,7 +964,6 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     pushLog({id: 'starting', text: pl('foundFilesStarting', { count: totalCount }), color:'#fff', animating: true})
 
     const CONCURRENCY = Math.max(1, Math.min(Number(s.max_threads || 8), 10));
-    const AUTO_STOP_CONSECUTIVE_FAILS = 5;
     const stopSchedulingRef = { current: false };
     const failStreakRef = { current: 0 };
      
@@ -967,14 +987,14 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     }
 
     const trackAutoStop = (status: BatchFileStatus | null, lastFileName?: string) => {
-      if (!status || stopSchedulingRef.current) return;
+      if (!autoStopEnabled || !status || stopSchedulingRef.current) return;
       if (status === 'failed') {
         failStreakRef.current += 1;
       } else {
         failStreakRef.current = 0;
       }
-      if (failStreakRef.current >= AUTO_STOP_CONSECUTIVE_FAILS) {
-        requestStopSchedulingSystem(`Auto-stop: ${AUTO_STOP_CONSECUTIVE_FAILS}x gagal beruntun. Stop untuk file berikutnya (tidak membatalkan yang sedang berjalan). Terakhir: ${String(lastFileName || '')}`);
+      if (failStreakRef.current >= autoStopFailThreshold) {
+        requestStopSchedulingSystem(`Auto-stop: ${autoStopFailThreshold}x gagal beruntun. Stop untuk file berikutnya (tidak membatalkan yang sedang berjalan). Terakhir: ${String(lastFileName || '')}`);
       }
     }
 
@@ -1095,8 +1115,8 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
               reqPayload.connection_mode = 'direct';
               reqPayload.api_key = directApiKey;
             }
-            const res = await invokeWithTimeout<any[]>(invoke, 'generate_metadata_batch', { req: reqPayload }, 180000)
-            if (stoppedRef.current || criticalErrorRef.current) {
+            const res = await invokeWithTimeout<any[]>(invoke, 'generate_metadata_batch', { req: reqPayload }, requestTimeoutMs)
+            if (criticalErrorRef.current) {
               finalStatus = 'skipped'
               return
             }
@@ -1152,7 +1172,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
             }
             
             for(const g of res){
-                if (stoppedRef.current || criticalErrorRef.current) {
+                if (criticalErrorRef.current) {
                   finalStatus = finalStatus || 'skipped'
                   break
                 }
@@ -1559,10 +1579,12 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       
       const p = processFile(file, fileIndex);
       activePromises.push(p);
+      inFlightCountRef.current = activePromises.length
       
       p.finally(() => {
           const idx = activePromises.indexOf(p);
           if (idx > -1) activePromises.splice(idx, 1);
+          inFlightCountRef.current = activePromises.length
       });
 
       while (activePromises.length >= CONCURRENCY) {
@@ -1573,6 +1595,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     
     const remaining = [...activePromises];
     if (remaining.length) await Promise.allSettled(remaining);
+    inFlightCountRef.current = 0
     const endedByStop = stoppedRef.current || stopSchedulingRef.current;
     pushLog({text: endedByStop ? pl('stoppedBatch') : pl('doneText'), color: endedByStop ? '#ff5722' : '#4caf50'})
     
@@ -1610,6 +1633,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         pushLog({text: pl('csvStopRequested'), color:'#ff5722'})
         return
       }
+      if (stoppedRef.current) return
       setStopped(true); 
       stoppedRef.current = true;
       try {
@@ -1620,7 +1644,12 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
           saveBatchState(cur)
         }
       } catch {}
-      pushLog({text: pl('stoppedByUser'), color:'#ff5722'});
+      const inFlight = Number(inFlightCountRef.current || 0)
+      if (inFlight > 0) {
+        pushLog({text: pl('stopRequestedDraining', { count: inFlight }), color:'#ff5722'});
+      } else {
+        pushLog({text: pl('stoppedByUser'), color:'#ff5722'});
+      }
   }
 
   function stopProcessSystem(detail?: string){
@@ -1655,7 +1684,38 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         // Fetch settings
         const s = await invoke<any>('get_settings');
 
-        // Prepare API Key (Always Direct Mode)
+        const normalizeModelForProvider = (provider: string, model: string): string => {
+          const p = String(provider || '')
+          let m = String(model || '').trim()
+          if (p === 'OpenAI') {
+            if (m.includes('/')) m = m.split('/').pop() || m
+          }
+          return m
+        }
+
+        const loadGenModelCfg = (provider: string, model: string): any => {
+          try {
+            const key = `metabayn:gen:modelcfg:v1:${String(provider || '')}:${String(model || '').trim()}`
+            const raw = localStorage.getItem(key)
+            if (!raw) return {}
+            const parsed = JSON.parse(raw)
+            return parsed && typeof parsed === 'object' ? parsed : {}
+          } catch {
+            return {}
+          }
+        }
+
+        const providerName = String(s?.ai_provider || '')
+        const rawModel = String(s?.default_model || '').trim()
+        const effectiveModel = providerName === 'OpenAI' ? normalizeModelForProvider('OpenAI', rawModel) : rawModel
+        const cfg = loadGenModelCfg(providerName, effectiveModel)
+        const autoStopEnabled = typeof (cfg as any)?.auto_stop_enabled === 'boolean' ? (cfg as any).auto_stop_enabled : true
+        const autoStopFailThresholdRaw = Number((cfg as any)?.auto_stop_fail_threshold)
+        const autoStopFailThreshold = Number.isFinite(autoStopFailThresholdRaw) ? Math.max(1, Math.min(Math.round(autoStopFailThresholdRaw), 50)) : 5
+        const reqTimeoutSecRaw = Number((cfg as any)?.request_timeout_sec)
+        const requestTimeoutSec = Number.isFinite(reqTimeoutSecRaw) ? Math.max(15, Math.min(Math.round(reqTimeoutSecRaw), 900)) : 180
+
+        // Prepare API Key
         let apiKey = "";
         
         try {
@@ -1672,7 +1732,18 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         isCsvToolsRunningRef.current = true;
         
         // Output folder is same as input folder
-        const res = await invoke('generate_csv_from_folder', { input_folder: inputDir, output_folder: inputDir, inputFolder: inputDir, outputFolder: inputDir, api_key: apiKey, apiKey: apiKey, token });
+        const res = await invoke('generate_csv_from_folder', {
+          input_folder: inputDir,
+          output_folder: inputDir,
+          inputFolder: inputDir,
+          outputFolder: inputDir,
+          api_key: apiKey,
+          apiKey: apiKey,
+          token,
+          auto_stop_enabled: autoStopEnabled,
+          auto_stop_fail_threshold: autoStopFailThreshold,
+          request_timeout_sec: requestTimeoutSec
+        });
         
         // Log: Success (Update previous log to stop animation, add new success log)
         setLogs(l => l.map(x => x.id === logId ? { ...x, animating: false } : x));

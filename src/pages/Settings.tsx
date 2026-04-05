@@ -37,6 +37,10 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
   const [output,setOutput]=useState('')
   const [threads,setThreads]=useState(4)
   const [retry,setRetry]=useState(1)
+  const [autoStopEnabled, setAutoStopEnabled] = useState(true)
+  const [autoStopFailThreshold, setAutoStopFailThreshold] = useState(5)
+  const [requestTimeoutSec, setRequestTimeoutSec] = useState(180)
+  const [requestTimeoutSecInput, setRequestTimeoutSecInput] = useState('180')
   const [tmin,setTmin]=useState(5)
   const [tmax,setTmax]=useState(13)
   const [dmin,setDmin]=useState(80)
@@ -114,12 +118,60 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
   const [activeTab, setActiveTab] = useState<'General'|'Provider'|'Generation'|'Selection'|'Output'|'Tools'>('General')
   const [selectionSubTab, setSelectionSubTab] = useState<'Human'|'Animal'|'Text'|'Other'>('Human')
 
+  const normalizeModelForProvider = (provider: string, model: string): string => {
+    const p = String(provider || '')
+    let m = String(model || '').trim()
+    if (p === 'OpenAI') {
+      if (m.includes('/')) m = m.split('/').pop() || m
+    }
+    return m
+  }
+
+  const getGenModelCfgKey = (provider: string, model: string) => {
+    const p = String(provider || '')
+    const m = normalizeModelForProvider(provider, model)
+    return `metabayn:gen:modelcfg:v1:${p}:${m}`
+  }
+
+  const loadGenModelCfg = (provider: string, model: string): any => {
+    try {
+      const raw = localStorage.getItem(getGenModelCfgKey(provider, model))
+      if (!raw) return {}
+      const parsed = JSON.parse(raw)
+      return parsed && typeof parsed === 'object' ? parsed : {}
+    } catch {
+      return {}
+    }
+  }
+
+  const saveGenModelCfg = (provider: string, model: string, patch: any) => {
+    try {
+      const key = getGenModelCfgKey(provider, model)
+      const current = loadGenModelCfg(provider, model)
+      localStorage.setItem(key, JSON.stringify({ ...(current || {}), ...(patch || {}) }))
+    } catch {}
+  }
+
   function showToast(text: string, type: 'success'|'error'|'info' = 'info'){
     setToast({ text, type })
     window.setTimeout(() => {
       setToast(cur => (cur && cur.text === text ? null : cur))
     }, 2200)
   }
+
+  useEffect(() => {
+    if (!loaded) return
+    const cfg = loadGenModelCfg(provider, model)
+    const enabled = (cfg as any)?.auto_stop_enabled
+    setAutoStopEnabled(typeof enabled === 'boolean' ? enabled : true)
+    const thresholdRaw = Number((cfg as any)?.auto_stop_fail_threshold)
+    const threshold = Number.isFinite(thresholdRaw) ? Math.max(1, Math.min(Math.round(thresholdRaw), 50)) : 5
+    setAutoStopFailThreshold(threshold)
+    const timeoutRaw = Number((cfg as any)?.request_timeout_sec)
+    const timeout = Number.isFinite(timeoutRaw) ? Math.max(15, Math.min(Math.round(timeoutRaw), 900)) : 180
+    setRequestTimeoutSec(timeout)
+    setRequestTimeoutSecInput(String(timeout))
+  }, [provider, model, loaded])
 
   const pressHandlers = {
     onMouseEnter:(e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.filter = 'brightness(1.05)'; },
@@ -1303,47 +1355,17 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       )}
       
       {activeTab==='Generation' && (
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, marginTop: 8 }}>
-        <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 12, minWidth: 0 }}>
-          <div style={{ color: '#a1a1aa', fontSize: 11, fontWeight: 700, marginBottom: 10 }}>{t.generationPerformance}</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-            <div>
-              <div style={{ color: '#a1a1aa', fontSize: 10, marginBottom: 4 }}>{t.threads}</div>
-              <input 
-                type="number" 
-                value={threads} 
-                onChange={e=>{
-                  const n = Number(e.target.value);
-                  if (!Number.isFinite(n)) { setThreads(1); return; }
-                  setThreads(Math.max(1, Math.min(n, 10)));
-                }} 
-                min={1} 
-                max={10} 
-                style={{ width: '100%', background: '#18181b', border: '1px solid #27272a', color: '#fff', padding: '6px 8px', borderRadius: 8, fontSize: 11, outline: 'none' }}
-              />
-            </div>
-            <div>
-              <div style={{ color: '#a1a1aa', fontSize: 10, marginBottom: 4 }}>{t.retry}</div>
-              <input 
-                type="number" 
-                value={retry} 
-                onChange={e=>setRetry(Number(e.target.value))} 
-                style={{ width: '100%', background: '#18181b', border: '1px solid #27272a', color: '#fff', padding: '6px 8px', borderRadius: 8, fontSize: 11, outline: 'none' }}
-              />
-            </div>
-          </div>
-        </div>
-
-        <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 12, minWidth: 0 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10, marginTop: 8 }}>
+        <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 10, minWidth: 0 }}>
           <div style={{ color: '#a1a1aa', fontSize: 11, fontWeight: 700, marginBottom: 10 }}>{t.generationTitle}</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
             <div>
               <div style={{ color: '#a1a1aa', fontSize: 10, marginBottom: 4 }}>{t.titleMin}</div>
               <input 
                 type="number" 
                 value={tmin} 
                 onChange={e=>setTmin(Number(e.target.value))} 
-                style={{ width: '100%', background: '#18181b', border: '1px solid #27272a', color: '#fff', padding: '6px 8px', borderRadius: 8, fontSize: 11, outline: 'none' }}
+                style={{ width: '100%', background: '#18181b', border: '1px solid #27272a', color: '#fff', padding: '5px 6px', borderRadius: 8, fontSize: 10, outline: 'none' }}
               />
             </div>
             <div>
@@ -1352,22 +1374,22 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
                 type="number" 
                 value={tmax} 
                 onChange={e=>setTmax(Number(e.target.value))} 
-                style={{ width: '100%', background: '#18181b', border: '1px solid #27272a', color: '#fff', padding: '6px 8px', borderRadius: 8, fontSize: 11, outline: 'none' }}
+                style={{ width: '100%', background: '#18181b', border: '1px solid #27272a', color: '#fff', padding: '5px 6px', borderRadius: 8, fontSize: 10, outline: 'none' }}
               />
             </div>
           </div>
         </div>
 
-        <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 12, minWidth: 0 }}>
+        <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 10, minWidth: 0 }}>
           <div style={{ color: '#a1a1aa', fontSize: 11, fontWeight: 700, marginBottom: 10 }}>{t.generationTags}</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
             <div>
               <div style={{ color: '#a1a1aa', fontSize: 10, marginBottom: 4 }}>{t.tagsMin}</div>
               <input 
                 type="number" 
                 value={kmin} 
                 onChange={e=>setKmin(Number(e.target.value))} 
-                style={{ width: '100%', background: '#18181b', border: '1px solid #27272a', color: '#fff', padding: '6px 8px', borderRadius: 8, fontSize: 11, outline: 'none' }}
+                style={{ width: '100%', background: '#18181b', border: '1px solid #27272a', color: '#fff', padding: '5px 6px', borderRadius: 8, fontSize: 10, outline: 'none' }}
               />
             </div>
             <div>
@@ -1376,13 +1398,13 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
                 type="number" 
                 value={kmax} 
                 onChange={e=>setKmax(Number(e.target.value))} 
-                style={{ width: '100%', background: '#18181b', border: '1px solid #27272a', color: '#fff', padding: '6px 8px', borderRadius: 8, fontSize: 11, outline: 'none' }}
+                style={{ width: '100%', background: '#18181b', border: '1px solid #27272a', color: '#fff', padding: '5px 6px', borderRadius: 8, fontSize: 10, outline: 'none' }}
               />
             </div>
           </div>
         </div>
 
-        <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 12, minWidth: 0 }}>
+        <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 10, minWidth: 0 }}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: 10 }}>
             <div style={{ color: '#a1a1aa', fontSize: 11, fontWeight: 700 }}>{t.generationDescription}</div>
             <div style={{display:'flex',alignItems:'center',gap:6}}>
@@ -1425,7 +1447,7 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
               </button>
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
             <div>
               <div style={{ color: '#a1a1aa', fontSize: 10, marginBottom: 4 }}>{t.descMin}</div>
               <input 
@@ -1433,7 +1455,7 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
                 value={dmin} 
                 onChange={e=>setDmin(Number(e.target.value))} 
                 disabled={!descEnabled}
-                style={{ width: '100%', background: descEnabled ? '#18181b' : '#0f0f12', opacity: descEnabled ? 1 : 0.5, border: '1px solid #27272a', color: '#fff', padding: '6px 8px', borderRadius: 8, fontSize: 11, outline: 'none' }}
+                style={{ width: '100%', background: descEnabled ? '#18181b' : '#0f0f12', opacity: descEnabled ? 1 : 0.5, border: '1px solid #27272a', color: '#fff', padding: '5px 6px', borderRadius: 8, fontSize: 10, outline: 'none' }}
               />
             </div>
             <div>
@@ -1443,9 +1465,121 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
                 value={dmax} 
                 onChange={e=>setDmax(Number(e.target.value))} 
                 disabled={!descEnabled}
-                style={{ width: '100%', background: descEnabled ? '#18181b' : '#0f0f12', opacity: descEnabled ? 1 : 0.5, border: '1px solid #27272a', color: '#fff', padding: '6px 8px', borderRadius: 8, fontSize: 11, outline: 'none' }}
+                style={{ width: '100%', background: descEnabled ? '#18181b' : '#0f0f12', opacity: descEnabled ? 1 : 0.5, border: '1px solid #27272a', color: '#fff', padding: '5px 6px', borderRadius: 8, fontSize: 10, outline: 'none' }}
               />
             </div>
+          </div>
+        </div>
+
+        <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 10, minWidth: 0 }}>
+          <div style={{ color: '#a1a1aa', fontSize: 11, fontWeight: 700, marginBottom: 10 }}>{t.generationPerformance}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+            <div>
+              <div style={{ color: '#a1a1aa', fontSize: 10, marginBottom: 4 }}>{t.threads}</div>
+              <input 
+                type="number" 
+                value={threads} 
+                onChange={e=>{
+                  const n = Number(e.target.value);
+                  if (!Number.isFinite(n)) { setThreads(1); return; }
+                  setThreads(Math.max(1, Math.min(n, 10)));
+                }} 
+                min={1} 
+                max={10} 
+                style={{ width: '100%', background: '#18181b', border: '1px solid #27272a', color: '#fff', padding: '5px 6px', borderRadius: 8, fontSize: 10, outline: 'none' }}
+              />
+            </div>
+            <div>
+              <div style={{ color: '#a1a1aa', fontSize: 10, marginBottom: 4 }}>{t.retry}</div>
+              <input 
+                type="number" 
+                value={retry} 
+                onChange={e=>setRetry(Number(e.target.value))} 
+                style={{ width: '100%', background: '#18181b', border: '1px solid #27272a', color: '#fff', padding: '5px 6px', borderRadius: 8, fontSize: 10, outline: 'none' }}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 10, minWidth: 0 }}>
+          <div style={{ color: '#a1a1aa', fontSize: 11, fontWeight: 700, marginBottom: 10 }}>{(t as any)?.timeoutTitle || 'Timeout'}</div>
+          <div>
+            <div style={{ color: '#a1a1aa', fontSize: 10, marginBottom: 4 }}>{(t as any)?.timeoutUnit || 'Seconds'}</div>
+            <input
+              type="number"
+              value={requestTimeoutSecInput}
+              onChange={e=>setRequestTimeoutSecInput(e.target.value)}
+              onBlur={() => {
+                const raw = Number(requestTimeoutSecInput)
+                const clamped = Number.isFinite(raw) ? Math.max(15, Math.min(Math.round(raw), 900)) : requestTimeoutSec
+                setRequestTimeoutSec(clamped)
+                setRequestTimeoutSecInput(String(clamped))
+                saveGenModelCfg(provider, model, { request_timeout_sec: clamped })
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return
+                ;(e.currentTarget as HTMLInputElement).blur()
+              }}
+              min={15}
+              max={900}
+              style={{ width: '100%', background: '#18181b', border: '1px solid #27272a', color: '#fff', padding: '5px 6px', borderRadius: 8, fontSize: 10, outline: 'none' }}
+            />
+          </div>
+        </div>
+
+        <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 10, minWidth: 0 }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: 10 }}>
+            <div style={{ color: '#a1a1aa', fontSize: 11, fontWeight: 700 }}>{(t as any)?.autoStop || 'Auto Stop'}</div>
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <span style={{fontSize:11, color:'#888', minWidth:24, textAlign:'right'}}>{autoStopEnabled ? t.on : t.off}</span>
+              <button
+                onClick={()=>{
+                  const next = !autoStopEnabled
+                  setAutoStopEnabled(next)
+                  saveGenModelCfg(provider, model, { auto_stop_enabled: next })
+                }}
+                style={{
+                  width:26,
+                  height:14,
+                  borderRadius:7,
+                  background: autoStopEnabled ? '#4caf50' : '#444',
+                  border:'1px solid #666',
+                  position:'relative',
+                  padding:0,
+                  cursor:'pointer',
+                }}
+                aria-label={(t as any)?.aria?.toggleAutoStop || 'Toggle Auto Stop'}
+              >
+                <span style={{
+                  display:'block',
+                  width:10,
+                  height:10,
+                  borderRadius:'50%',
+                  background:'#fff',
+                  position:'absolute',
+                  top:1,
+                  left: autoStopEnabled ? 13 : 1,
+                  transition: 'left 0.2s'
+                }}></span>
+              </button>
+            </div>
+          </div>
+          <div>
+            <div style={{ color: '#a1a1aa', fontSize: 10, marginBottom: 4 }}>{(t as any)?.autoStopFailThreshold || 'Stop fail streak'}</div>
+            <input
+              type="number"
+              value={autoStopFailThreshold}
+              onChange={e=>{
+                const n = Number(e.target.value)
+                const clamped = Number.isFinite(n) ? Math.max(1, Math.min(Math.round(n), 50)) : 5
+                setAutoStopFailThreshold(clamped)
+                saveGenModelCfg(provider, model, { auto_stop_fail_threshold: clamped })
+              }}
+              min={1}
+              max={50}
+              disabled={!autoStopEnabled}
+              style={{ width: '100%', background: autoStopEnabled ? '#18181b' : '#0f0f12', opacity: autoStopEnabled ? 1 : 0.5, border: '1px solid #27272a', color: '#fff', padding: '5px 6px', borderRadius: 8, fontSize: 10, outline: 'none' }}
+            />
           </div>
         </div>
       </div>
@@ -1668,7 +1802,7 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       )}
       
       {activeTab==='Output' && (
-      <div className="setting-row" style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+      <div className="setting-row" style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 10}}>
         <label>{t.generateCsv}</label>
         <div style={{display:'flex',alignItems:'center',gap:6}}>
           <span style={{fontSize:11, color:'#888', minWidth:20, textAlign:'right'}}>{generateCsv ? t.on : t.off}</span>
