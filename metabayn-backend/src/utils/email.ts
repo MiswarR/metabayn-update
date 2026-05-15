@@ -1,7 +1,40 @@
 import { Env } from '../types';
 
+function htmlToText(html: string) {
+  const s = String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<\/h[1-6]>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/\s+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return s.length > 0 ? s : undefined;
+}
+
 export async function sendEmail(to: string, subject: string, html: string, env: Env) {
   if (String((env as any)?.EMAIL_TEST_MODE || '') === '1') {
+    try {
+      await env.DB.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
+        .bind('last_email_test_to', String(to || '').slice(0, 254))
+        .run();
+      await env.DB.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
+        .bind('last_email_test_subject', String(subject || '').slice(0, 500))
+        .run();
+      await env.DB.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
+        .bind('last_email_test_html', String(html || '').slice(0, 20000))
+        .run();
+      await env.DB.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
+        .bind('last_email_test_at', String(Date.now()))
+        .run();
+    } catch {}
     return;
   }
   const apiKey =
@@ -16,9 +49,9 @@ export async function sendEmail(to: string, subject: string, html: string, env: 
   }
 
   try {
-    const from = env.EMAIL_FROM && env.EMAIL_FROM.includes('<')
-      ? env.EMAIL_FROM
-      : `Metabayn Studio <${env.EMAIL_FROM || 'admin@albayn.site'}>`;
+    const fromEmail = String(env.EMAIL_FROM || 'no-reply@albayn.site').trim();
+    const from = fromEmail.includes('<') ? fromEmail : `Metabayn <${fromEmail}>`;
+    const text = htmlToText(html);
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -27,9 +60,10 @@ export async function sendEmail(to: string, subject: string, html: string, env: 
       },
       body: JSON.stringify({
         from: from,
-        reply_to: 'no-reply@albayn.site',
+        reply_to: fromEmail.includes('<') ? undefined : fromEmail,
         to: [to],
         subject: subject,
+        ...(text ? { text } : {}),
         html: html
       })
     });
@@ -357,12 +391,12 @@ export function getLicenseVoucherTemplate(email: string, voucherCode: string, du
   
       <div style="background: #f0f9ff; border: 1px solid #bae6fd; padding: 15px; border-radius: 8px; margin: 20px 0;">
         <ul style="list-style: none; padding: 0; margin: 0;">
-          <li style="margin-bottom: 8px;">Langganan: <strong>${durationDays} hari</strong></li>
-          <li>Bonus Token: <strong>${bonusTokens.toLocaleString('id-ID')} Tokens</strong> (hangus saat langganan berakhir)</li>
+          <li style="margin-bottom: 8px;">Produk: <strong>Lisensi Aplikasi (1 perangkat)</strong></li>
+          <li>Masa aktif: <strong>Permanen</strong></li>
         </ul>
       </div>
   
-      <h3>Kode Voucher Anda</h3>
+      <h3>Kode Lisensi Anda</h3>
       <div style="background: #f5f5f5; padding: 12px 16px; border-radius: 4px; text-align: center; margin: 10px 0 20px 0;">
         <span style="font-size: 20px; letter-spacing: 3px; font-weight: bold; color: #222;">
           ${voucherCode}
@@ -370,24 +404,70 @@ export function getLicenseVoucherTemplate(email: string, voucherCode: string, du
       </div>
   
       <p style="color: #d32f2f; font-size: 12px; margin-top: -8px;">
-        * Voucher ini hanya bisa digunakan 1 kali.
+        * Lisensi ini hanya bisa digunakan 1 kali (1 perangkat).
       </p>
   
-      <h3>Cara Redeem</h3>
+      <h3>Cara Aktivasi</h3>
       <ol>
-        <li>Login ke aplikasi <strong>Metabayn Studio</strong>.</li>
-        <li>Masukkan kode voucher saat popup Redeem muncul.</li>
-        <li>Klik <strong>Redeem</strong>.</li>
+        <li>Install aplikasi <strong>Metabayn</strong>.</li>
+        <li>Login / Register menggunakan email ini, lalu verifikasi email.</li>
+        <li>Buka menu <strong>Lisensi</strong>, lalu masukkan kode lisensi di atas.</li>
+        <li>Klik <strong>Aktifkan</strong>. Lisensi akan terikat ke perangkat ini.</li>
       </ol>
   
       <br>
-      <p>Best regards,</p>
-      <p><strong>Metabayn Studio Team</strong></p>
+      <p style="margin: 0;">Metabayn Team</p>
   
       <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
       <p style="font-size: 12px; color: #888; text-align: center;">
-        Ini email otomatis, mohon tidak dibalas.<br>
-        Untuk support, join <a href="https://chat.whatsapp.com/JD1KDEjKPV3Fp6fJMRz6qS" style="color: #25D366; text-decoration: none;">WhatsApp Community</a>.
+        Ini email otomatis, mohon tidak dibalas.
+      </p>
+  </div>
+  `;
+}
+
+export function getToolLicenseVoucherTemplate(email: string, voucherCode: string, toolName: string) {
+  const name = String(toolName || 'Tools').trim() || 'Tools';
+  return `
+  <div style="font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 8px;">
+      <div style="text-align: center; margin-bottom: 20px;">
+           <h2 style="color: #333;">Pembelian Berhasil (Lynk.id)</h2>
+      </div>
+  
+      <p>Hi ${email},</p>
+      <p>Terima kasih. Kami sudah menerima pembayaran Anda untuk <strong>${name}</strong>.</p>
+  
+      <div style="background: #f0f9ff; border: 1px solid #bae6fd; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <ul style="list-style: none; padding: 0; margin: 0;">
+          <li style="margin-bottom: 8px;">Produk: <strong>Lisensi Tools (1 perangkat)</strong></li>
+          <li>Masa aktif: <strong>Permanen</strong></li>
+        </ul>
+      </div>
+  
+      <h3>Kode Lisensi Anda</h3>
+      <div style="background: #f5f5f5; padding: 12px 16px; border-radius: 4px; text-align: center; margin: 10px 0 20px 0;">
+        <span style="font-size: 20px; letter-spacing: 3px; font-weight: bold; color: #222;">
+          ${voucherCode}
+        </span>
+      </div>
+  
+      <p style="color: #d32f2f; font-size: 12px; margin-top: -8px;">
+        * Lisensi ini hanya bisa digunakan 1 kali (1 perangkat).
+      </p>
+  
+      <h3>Cara Aktivasi</h3>
+      <ol>
+        <li>Login ke aplikasi <strong>Metabayn</strong> menggunakan email ini.</li>
+        <li>Buka menu <strong>Tools</strong>, lalu pilih tools yang Anda beli.</li>
+        <li>Klik <strong>Enter Code</strong> lalu masukkan kode lisensi di atas, atau klik <strong>Check Activation</strong>.</li>
+      </ol>
+  
+      <br>
+      <p style="margin: 0;">Metabayn Team</p>
+  
+      <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+      <p style="font-size: 12px; color: #888; text-align: center;">
+        Ini email otomatis, mohon tidak dibalas.
       </p>
   </div>
   `;

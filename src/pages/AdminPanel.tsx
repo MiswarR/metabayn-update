@@ -2,10 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
 import { 
     getApiUrl, getTokenLocal,
-    apiGetAdminTransactions, apiUpdateTransactionStatus, apiManualApproveTopup, apiDeleteAllTransactions, apiExportTopupCsv, apiExportUsersCsv,
-    apiManualUpdateUser,
+    apiExportUsersCsv,
     apiGetAdminLynkPurchases, apiGetAdminLynkWebhookLogs,
     apiAdminListVouchers, apiAdminCreateVoucher,
+    apiAdminListLicenseSupport, apiAdminFindLynkPurchasesByEmail, apiAdminApproveLicenseSupport, apiAdminRejectLicenseSupport,
 } from '../api/backend';
 
 type UserItem = {
@@ -37,114 +37,7 @@ type UserItem = {
   } | null;
 };
 
-// --- Components ---
-
-const ManualUpdateCard = ({ 
-    title, 
-    users, 
-    type, 
-    onSuccess 
-}: { 
-    title: string; 
-    users: UserItem[]; 
-    type: 'subscription' | 'tokens'; 
-    onSuccess: () => void;
-}) => {
-    const [selectedUserId, setSelectedUserId] = useState<string>('');
-    const [value, setValue] = useState<string>('');
-    const [loading, setLoading] = useState(false);
-    const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
-
-    const handleUpdate = async () => {
-        if (!selectedUserId) return setStatus({ ok: false, msg: 'Pilih user dulu.' });
-        if (!value) return setStatus({ ok: false, msg: 'Masukkan nilai.' });
-
-        setLoading(true);
-        setStatus(null);
-        try {
-            const token = getTokenLocal();
-            if (!token) throw new Error("Unauthorized");
-
-            if (type === 'subscription') {
-                // Subscription: activate and set expiry date
-                // Value is datetime-local string (YYYY-MM-DDTHH:mm) - Convert to ISO for Backend
-                const dateObj = new Date(value);
-                if (isNaN(dateObj.getTime())) throw new Error("Tanggal tidak valid");
-                const isoDate = dateObj.toISOString();
-                
-                await apiManualUpdateUser(token, selectedUserId, undefined, true, undefined, isoDate);
-            } else {
-                // Tokens: add tokens (increment)
-                const numVal = Number(value);
-                if (isNaN(numVal)) throw new Error("Nilai harus angka");
-                await apiManualUpdateUser(token, selectedUserId, numVal, undefined, undefined);
-            }
-
-            setStatus({ ok: true, msg: 'Berhasil!' });
-            setValue('');
-            onSuccess();
-        } catch (e: any) {
-            setStatus({ ok: false, msg: e.message || String(e) });
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    return (
-        <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 14 }}>
-            <div style={{ color: '#a1a1aa', fontSize: 12, marginBottom: 8 }}>{title}</div>
-            
-            <select 
-                value={selectedUserId}
-                onChange={e => setSelectedUserId(e.target.value)}
-                style={{ 
-                    width: '100%', background: '#18181b', border: '1px solid #27272a', color: '#fff', 
-                    padding: '8px 12px', borderRadius: 8, fontSize: 13, outline: 'none', marginBottom: 8, cursor: 'pointer'
-                }}
-            >
-                <option value="">-- Pilih User --</option>
-                {users.map(u => (
-                    <option key={u.id} value={u.id}>
-                        {u.email} ({type === 'tokens' ? Math.round(u.tokens) : (u.subscription_active ? 'Active' : 'Inactive')})
-                    </option>
-                ))}
-            </select>
-
-            <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                    type={type === 'subscription' ? "datetime-local" : "number"}
-                    placeholder={type === 'subscription' ? "Pilih Tanggal Expiry" : "Token (Tambah)"}
-                    value={value}
-                    onChange={e => setValue(e.target.value)}
-                    style={{ 
-                        flex: 1, background: '#18181b', border: '1px solid #27272a', color: '#fff', 
-                        padding: '8px 12px', borderRadius: 8, fontSize: 13, outline: 'none',
-                        colorScheme: 'dark' 
-                    }}
-                />
-                <button 
-                    onClick={handleUpdate}
-                    disabled={loading}
-                    style={{ 
-                        background: '#4f46e5', border: '1px solid rgba(99,102,241,0.6)', color: '#fff', 
-                        padding: '8px 12px', borderRadius: 8, cursor: loading ? 'wait' : 'pointer', 
-                        fontWeight: 600, fontSize: 13 
-                    }}
-                >
-                    {loading ? '...' : 'OK'}
-                </button>
-            </div>
-            
-            {status && (
-                <div style={{ color: status.ok ? '#34d399' : '#f87171', fontSize: 11, marginTop: 8 }}>
-                    {status.msg}
-                </div>
-            )}
-        </div>
-    );
-};
-
-const ConfirmModal = ({ title, message, onConfirm, onCancel, confirmText = "Ya", cancelText = "Batal", danger = false }: any) => (
+const ConfirmModal = ({ title, message, onConfirm, onCancel, confirmText = "Confirm", cancelText = "Cancel", danger = false }: any) => (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
         <div style={{ background: '#18181b', padding: 24, borderRadius: 12, border: '1px solid #27272a', width: 400, maxWidth: '90%' }}>
             <h3 style={{ margin: '0 0 12px 0', color: '#fff', fontSize: 16 }}>{title}</h3>
@@ -228,145 +121,11 @@ const StatCard = ({ title, value, icon, color }: any) => (
     </div>
 );
 
-const EditUserModal = ({ user, onClose, onSuccess }: { user: UserItem; onClose: () => void; onSuccess: () => void }) => {
-    const [addTokens, setAddTokens] = useState<string>('');
-    const [subActive, setSubActive] = useState<boolean>(!!user.subscription_active);
-    const [subDays, setSubDays] = useState<string>('');
-    const [expiryDate, setExpiryDate] = useState<string>(() => {
-        if (!user.subscription_expiry) return '';
-        try {
-            const d = new Date(user.subscription_expiry);
-            const pad = (n: number) => n < 10 ? '0'+n : n;
-            return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-        } catch { return ''; }
-    });
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
-
-    const handleSubmit = async () => {
-        setLoading(true);
-        setError('');
-        try {
-            const token = getTokenLocal();
-            if (!token) throw new Error("No auth token");
-            
-            // Backend sekarang menggunakan logika INCREMENT untuk tokens.
-            // Jadi kita hanya kirim nilai jika user ingin MENAMBAH token.
-            const tokensToAdd = addTokens ? Number(addTokens) : undefined;
-
-            let isoDate = undefined;
-            if (expiryDate) {
-                const d = new Date(expiryDate);
-                if (!isNaN(d.getTime())) isoDate = d.toISOString();
-            }
-
-            await apiManualUpdateUser(
-                token, 
-                user.id, 
-                tokensToAdd, 
-                subActive, 
-                subDays ? Number(subDays) : undefined,
-                isoDate
-            );
-            
-            onSuccess();
-            onClose();
-        } catch (e: any) {
-            setError(e.message || String(e));
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    return (
-        <div style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999
-        }}>
-            <div style={{
-                background: '#18181b', padding: 24, borderRadius: 12, border: '1px solid #27272a',
-                width: 400, maxWidth: '90%', maxHeight: '90vh', overflowY: 'auto'
-            }}>
-                <h3 style={{ margin: '0 0 16px 0', color: '#fff' }}>Edit User: {user.email}</h3>
-                
-                <div style={{ marginBottom: 16 }}>
-                    <label style={{ display: 'block', marginBottom: 6, color: '#a1a1aa', fontSize: 13 }}>
-                        Tambah Token (Saat ini: {Math.round(user.tokens)})
-                    </label>
-                    <input 
-                        type="number" 
-                        placeholder="0"
-                        value={addTokens} 
-                        onChange={e => setAddTokens(e.target.value)}
-                        style={{ width: '100%', background: '#27272a', border: '1px solid #3f3f46', padding: '8px 12px', borderRadius: 6, color: '#fff' }}
-                    />
-                    <div style={{ fontSize: 11, color: '#71717a', marginTop: 4 }}>
-                        Masukkan jumlah token yang ingin DITAMBAHKAN. Kosongkan jika tidak ingin mengubah.
-                    </div>
-                </div>
-
-                <div style={{ marginBottom: 16 }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#fff', fontSize: 14, cursor: 'pointer' }}>
-                        <input 
-                            type="checkbox" 
-                            checked={subActive} 
-                            onChange={e => setSubActive(e.target.checked)}
-                            style={{ width: 16, height: 16 }}
-                        />
-                        Subscription Active
-                    </label>
-                </div>
-
-                {subActive && (
-                    <>
-                        <div style={{ marginBottom: 16 }}>
-                            <label style={{ display: 'block', marginBottom: 6, color: '#a1a1aa', fontSize: 13 }}>Set Specific Expiry</label>
-                            <input 
-                                type="datetime-local" 
-                                value={expiryDate} 
-                                onChange={e => setExpiryDate(e.target.value)}
-                                style={{ width: '100%', background: '#27272a', border: '1px solid #3f3f46', padding: '8px 12px', borderRadius: 6, color: '#fff', colorScheme: 'dark' }}
-                            />
-                            <div style={{ fontSize: 11, color: '#71717a', marginTop: 4 }}>
-                                Atur tanggal kadaluarsa spesifik (WIB/Lokal).
-                            </div>
-                        </div>
-
-                        <div style={{ marginBottom: 16, borderTop: '1px solid #27272a', paddingTop: 16 }}>
-                            <label style={{ display: 'block', marginBottom: 6, color: '#a1a1aa', fontSize: 13 }}>OR Add Days</label>
-                            <input 
-                                type="number" 
-                                placeholder="e.g. 30"
-                                value={subDays} 
-                                onChange={e => setSubDays(e.target.value)}
-                                style={{ width: '100%', background: '#27272a', border: '1px solid #3f3f46', padding: '8px 12px', borderRadius: 6, color: '#fff' }}
-                            />
-                            <div style={{ fontSize: 11, color: '#71717a', marginTop: 4 }}>
-                                Leave empty to use specific date above. Enter days to extend from NOW.
-                            </div>
-                        </div>
-                    </>
-                )}
-
-                {error && <div style={{ color: '#ef4444', marginBottom: 16, fontSize: 13 }}>{error}</div>}
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                    <button onClick={onClose} disabled={loading} style={{ background: 'transparent', border: '1px solid #3f3f46', color: '#fff', padding: '8px 16px', borderRadius: 6, cursor: 'pointer' }}>
-                        Cancel
-                    </button>
-                    <button onClick={handleSubmit} disabled={loading} style={{ background: '#4f46e5', border: '1px solid rgba(99,102,241,0.6)', color: '#fff', padding: '8px 16px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer' }}>
-                        {loading ? 'Saving...' : 'Save Changes'}
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
 // --- Main Page ---
 
-export default function AdminPanel({ onBack }: { onBack: () => void }) {
-  const [editingUser, setEditingUser] = useState<UserItem | null>(null);
+export default function AdminPanel({ onBack, lang }: { onBack: () => void, lang: 'id' | 'en' }) {
+  const isId = lang === 'id';
+  const t = (id: string, en: string) => (isId ? id : en);
   const [users, setUsers] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -404,7 +163,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
     try {
       const apiUrl = await getApiUrl();
       const token = getTokenLocal();
-      if (!token) { setError('Unauthorized'); setLoading(false); return; }
+      if (!token) { setError(t('Tidak punya akses', 'Unauthorized')); setLoading(false); return; }
       const res = await fetch(`${apiUrl}/admin/users/overview`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -450,13 +209,16 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
   }
 
   async function cleanupOpenRouterKeys() {
-    const confirmText = prompt("Ketik CLEANUP untuk menghapus OpenRouter API key yang tidak terpakai (nama metabayn-...)");
+    const confirmText = prompt(t(
+      "Ketik CLEANUP untuk menghapus OpenRouter API key yang tidak terpakai (nama metabayn-...)",
+      "Type CLEANUP to delete unused OpenRouter API keys (metabayn-...)"
+    ));
     if (confirmText !== 'CLEANUP') return;
     setOrCleanupLoading(true);
     try {
       const apiUrl = await getApiUrl();
       const token = getTokenLocal();
-      if (!token) throw new Error('Unauthorized');
+      if (!token) throw new Error(t('Tidak punya akses', 'Unauthorized'));
       const res = await fetch(`${apiUrl}/admin/openrouter/cleanup?limit=200`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
@@ -466,10 +228,16 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
         try { throw new Error(JSON.parse(txt).error || txt); } catch { throw new Error(txt || `HTTP ${res.status}`); }
       }
       const data = (() => { try { return JSON.parse(txt); } catch { return null; } })();
-      alert(`Cleanup OpenRouter selesai.\nDeleted: ${data?.deleted_count ?? '-'}\nFailed: ${data?.failed_count ?? '-'}`);
+      alert(t(
+        `Cleanup OpenRouter selesai.\nDeleted: ${data?.deleted_count ?? '-'}\nFailed: ${data?.failed_count ?? '-'}`,
+        `OpenRouter cleanup done.\nDeleted: ${data?.deleted_count ?? '-'}\nFailed: ${data?.failed_count ?? '-'}`
+      ));
       await fetchUsers();
     } catch (e: any) {
-      alert(`Cleanup OpenRouter gagal: ${String(e?.message || e)}`);
+      alert(t(
+        `Cleanup OpenRouter gagal: ${String(e?.message || e)}`,
+        `OpenRouter cleanup failed: ${String(e?.message || e)}`
+      ));
     } finally {
       setOrCleanupLoading(false);
     }
@@ -481,7 +249,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
     try {
       const apiUrl = await getApiUrl();
       const token = getTokenLocal();
-      if (!token) throw new Error('Unauthorized');
+      if (!token) throw new Error(t('Tidak punya akses', 'Unauthorized'));
       const res = await fetch(`${apiUrl}/admin/config`, { headers: { 'Authorization': `Bearer ${token}` } });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
@@ -502,11 +270,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
     }
   }
 
-  // --- Transactions ---
-  const [activeTab, setActiveTab] = useState<'users' | 'transactions' | 'lynk' | 'vouchers'>('users');
-  const [transactions, setTransactions] = useState<any[]>([]);
-  const [transLoading, setTransLoading] = useState(false);
-  const [transError, setTransError] = useState('');
+  const [activeTab, setActiveTab] = useState<'users' | 'lynk' | 'vouchers' | 'support'>('users');
 
   const [lynkPurchases, setLynkPurchases] = useState<any[]>([]);
   const [lynkCounts, setLynkCounts] = useState<Record<string, number>>({});
@@ -524,94 +288,111 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
   const [voucherStatus, setVoucherStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [voucherForm, setVoucherForm] = useState({
     code: '',
-    type: 'subscription' as 'token' | 'subscription' | 'license',
-    amount: '',
-    duration_days: '30',
     max_usage: '1',
     expires_at: '',
     allowed_emails: ''
   });
 
-  async function purgeTransactions() {
-    if (!confirm('Are you sure you want to DELETE ALL transaction history? This action cannot be undone.')) return;
-    
-    setTransLoading(true);
-    try {
-        const token = getTokenLocal();
-        if (!token) return;
-        await apiDeleteAllTransactions(token);
-        // Add artificial delay to make user feel something happened if it's too fast
-        await new Promise(r => setTimeout(r, 500));
-        await fetchTransactions();
-        alert('All transactions deleted successfully');
-    } catch (e: any) {
-        alert(`Error: ${e.message}`);
-    } finally {
-        setTransLoading(false);
-    }
-  }
-
-  async function fetchTransactions() {
-    setTransLoading(true);
-    setTransError('');
-    try {
-        const token = getTokenLocal();
-        if (!token) return;
-        const data = await apiGetAdminTransactions(token);
-        setTransactions(data);
-    } catch (e: any) {
-        setTransError(e.message || String(e));
-    } finally {
-        setTransLoading(false);
-    }
-  }
-
-  async function updateTransaction(id: number, status: 'success' | 'failed' | 'pending') {
-      const actionName = status === 'success' ? 'Approve' : (status === 'failed' ? 'Reject' : 'Update');
-      // No confirm dialog for quicker action, or keep it but make it optional? 
-      // User said "kurang responsiv", removing confirm makes it faster.
-      // But let's keep it safe. Instead, let's show loading state ON THE BUTTON.
-      if (!confirm(`Are you sure you want to ${actionName} transaction #${id}?`)) return;
-      
-      setActionLoading(id);
-      try {
-          const token = getTokenLocal();
-          if (!token) return;
-          
-          if (status === 'success') {
-              await apiManualApproveTopup(token, id);
-          } else {
-              await apiUpdateTransactionStatus(token, id, status);
-          }
-          
-          await fetchTransactions();
-          // Remove alert for smoother experience, or use a toast. 
-          // User said "tombol Approve dan Reject kurang responsiv", alerts stop the flow.
-          // Let's remove alert and just rely on UI update, or show a small non-blocking message if possible.
-          // For now, I'll keep a small delay and maybe no alert if it's obvious.
-          // Actually, let's keep alert but maybe the issue was they didn't see loading state.
-      } catch (e: any) {
-          alert(`Error: ${e.message}`);
-      } finally {
-          setActionLoading(null);
-      }
-  }
-
-  async function exportTransactions() {
-      try {
-          const token = getTokenLocal();
-          if (!token) return;
-          await apiExportTopupCsv(token);
-      } catch (e: any) {
-          alert(`Export failed: ${e.message}`);
-      }
-  }
-
   useEffect(() => {
-      if (activeTab === 'transactions') fetchTransactions();
       if (activeTab === 'lynk') fetchLynkPurchases();
       if (activeTab === 'vouchers') fetchVouchers();
+      if (activeTab === 'support') fetchSupportRequests();
   }, [activeTab]);
+
+  const [supportRequests, setSupportRequests] = useState<any[]>([]);
+  const [supportLoading, setSupportLoading] = useState(false);
+  const [supportError, setSupportError] = useState('');
+  const [supportStatusFilter, setSupportStatusFilter] = useState<string>('pending');
+  const [supportQuery, setSupportQuery] = useState<string>('');
+  const [supportBusyId, setSupportBusyId] = useState<string>('');
+  const [supportPurchasesMap, setSupportPurchasesMap] = useState<Record<string, any[]>>({});
+  const [supportVoucherInput, setSupportVoucherInput] = useState<Record<string, string>>({});
+  const [supportNewEmailInput, setSupportNewEmailInput] = useState<Record<string, string>>({});
+
+  async function fetchSupportRequests() {
+    setSupportLoading(true);
+    setSupportError('');
+    try {
+      const token = getTokenLocal();
+      if (!token) return;
+      const data = await apiAdminListLicenseSupport(token, { status: supportStatusFilter, q: supportQuery || undefined, limit: 200 });
+      const list = Array.isArray(data?.results) ? data.results : [];
+      setSupportRequests(list);
+      setSupportPurchasesMap({});
+      setSupportVoucherInput({});
+      setSupportNewEmailInput((prev) => {
+        const next: Record<string, string> = { ...prev };
+        for (const r of list) {
+          const id = String(r?.id || '');
+          if (!id) continue;
+          const existing = String(next[id] || '').trim();
+          if (!existing) {
+            const accountEmail = String(r?.account_email || '').trim();
+            if (accountEmail) next[id] = accountEmail;
+          }
+        }
+        return next;
+      });
+    } catch (e: any) {
+      setSupportError(e?.message || String(e));
+    } finally {
+      setSupportLoading(false);
+    }
+  }
+
+  async function findPurchasesForSupport(ticketId: string, email: string) {
+    const tkn = getTokenLocal();
+    if (!tkn) return;
+    const id = String(ticketId || '');
+    if (!id) return;
+    setSupportBusyId(id);
+    try {
+      const data = await apiAdminFindLynkPurchasesByEmail(tkn, email, 50);
+      const list = Array.isArray(data?.results) ? data.results : [];
+      setSupportPurchasesMap((prev) => ({ ...prev, [id]: list }));
+    } catch (e: any) {
+      alert(t(`Gagal cari pembelian: ${String(e?.message || e)}`, `Search failed: ${String(e?.message || e)}`));
+    } finally {
+      setSupportBusyId('');
+    }
+  }
+
+  async function approveSupport(ticketId: string) {
+    const tkn = getTokenLocal();
+    if (!tkn) return;
+    const id = String(ticketId || '');
+    const voucherCode = String(supportVoucherInput[id] || '').trim();
+    const newEmail = String(supportNewEmailInput[id] || '').trim();
+    if (!voucherCode || !newEmail) {
+      alert(t('Voucher code dan email baru wajib diisi.', 'Voucher code and new email are required.'));
+      return;
+    }
+    setSupportBusyId(id);
+    try {
+      await apiAdminApproveLicenseSupport(tkn, { ticket_id: id, voucher_code: voucherCode, new_email: newEmail, resend: true });
+      await fetchSupportRequests();
+    } catch (e: any) {
+      alert(t(`Approve gagal: ${String(e?.message || e)}`, `Approve failed: ${String(e?.message || e)}`));
+    } finally {
+      setSupportBusyId('');
+    }
+  }
+
+  async function rejectSupport(ticketId: string) {
+    const tkn = getTokenLocal();
+    if (!tkn) return;
+    const id = String(ticketId || '');
+    const note = prompt(t('Alasan penolakan (opsional):', 'Rejection reason (optional):')) || '';
+    setSupportBusyId(id);
+    try {
+      await apiAdminRejectLicenseSupport(tkn, { ticket_id: id, admin_note: note });
+      await fetchSupportRequests();
+    } catch (e: any) {
+      alert(t(`Reject gagal: ${String(e?.message || e)}`, `Reject failed: ${String(e?.message || e)}`));
+    } finally {
+      setSupportBusyId('');
+    }
+  }
 
   async function fetchVouchers() {
     setVoucherLoading(true);
@@ -620,7 +401,8 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
       const token = getTokenLocal();
       if (!token) return;
       const data = await apiAdminListVouchers(token);
-      setVouchers(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      setVouchers(list.filter((v: any) => String(v?.type || 'license').toLowerCase() === 'license'));
     } catch (e: any) {
       setVoucherError(e?.message || String(e));
     } finally {
@@ -634,10 +416,14 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
     try {
       const token = getTokenLocal();
       if (!token) throw new Error('Unauthorized');
-      const code = String(voucherForm.code || '').trim().toUpperCase();
-      if (!code) throw new Error('Kode voucher wajib diisi.');
+      const genCode = () => {
+        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let out = "";
+        for (let i = 0; i < 6; i++) out += chars[Math.floor(Math.random() * chars.length)];
+        return out;
+      };
+      const code = (String(voucherForm.code || '').trim() ? String(voucherForm.code || '').trim().toUpperCase() : genCode());
 
-      const type = voucherForm.type;
       const maxUsageRaw = String(voucherForm.max_usage || '').trim();
       const maxUsageNum = maxUsageRaw ? Number(maxUsageRaw) : 1;
       if (!Number.isFinite(maxUsageNum) || maxUsageNum < 0) throw new Error('Max usage tidak valid.');
@@ -648,35 +434,18 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
 
       const allowedEmails = String(voucherForm.allowed_emails || '').trim();
 
-      const amountNum = String(voucherForm.amount || '').trim() ? Number(voucherForm.amount) : undefined;
-      const durationNum = String(voucherForm.duration_days || '').trim() ? Number(voucherForm.duration_days) : undefined;
-
-      if (type === 'token') {
-        if (!amountNum || !Number.isFinite(amountNum) || amountNum < 1) throw new Error('Amount wajib diisi untuk voucher token.');
-      }
-      if (type === 'subscription') {
-        if (!durationNum || !Number.isFinite(durationNum) || durationNum < 1) throw new Error('Duration wajib diisi untuk voucher subscription.');
-      }
-      if (type === 'license') {
-        if (amountNum !== undefined && (!Number.isFinite(amountNum) || amountNum < 1)) throw new Error('Amount tidak valid untuk voucher license.');
-        if (durationNum !== undefined && (!Number.isFinite(durationNum) || durationNum < 1)) throw new Error('Duration tidak valid untuk voucher license.');
-      }
-
       await apiAdminCreateVoucher(token, {
         code,
-        type,
-        amount: amountNum,
-        duration_days: durationNum,
+        type: 'license',
         max_usage: maxUsageNum,
         expires_at: expiresAtIso,
         allowed_emails: allowedEmails ? allowedEmails : null
       });
 
-      setVoucherStatus({ ok: true, msg: 'Voucher berhasil dibuat.' });
+      setVoucherStatus({ ok: true, msg: t('Kode lisensi berhasil dibuat.', 'License code created.') });
       setVoucherForm(v => ({
         ...v,
         code: '',
-        amount: '',
         allowed_emails: ''
       }));
       await fetchVouchers();
@@ -759,7 +528,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
 
       const apiUrl = await getApiUrl();
       const token = getTokenLocal();
-      if (!token) throw new Error('Unauthorized');
+      if (!token) throw new Error(t('Tidak punya akses', 'Unauthorized'));
       
       // Save local settings (important for app usage)
       try {
@@ -774,7 +543,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
         body: JSON.stringify(payload)
       });
       if (!res.ok) throw new Error(await res.text());
-      setConfigStatus({ ok: true, message: 'Pengaturan tersimpan.' });
+      setConfigStatus({ ok: true, message: t('Pengaturan tersimpan.', 'Settings saved.') });
       await fetchConfig();
     } catch (e: any) {
       setConfigStatus({ ok: false, message: String(e?.message || e) });
@@ -816,7 +585,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
     try {
       const apiUrl = await getApiUrl();
       const token = getTokenLocal();
-      if (!token) throw new Error('Unauthorized');
+      if (!token) throw new Error(t('Tidak punya akses', 'Unauthorized'));
       const path = kind === 'official' ? '/admin/model-prices/sync' : '/admin/model-prices/sync-live';
       const res = await fetch(`${apiUrl}${path}`, {
         method: 'POST',
@@ -827,7 +596,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
       if (!res.ok) throw new Error(txt || `HTTP ${res.status}`);
       let count: any = null;
       try { count = JSON.parse(txt)?.count; } catch {}
-      setConfigStatus({ ok: true, message: `Sync harga model selesai${count ? ` (${count} model)` : ''}.` });
+      setConfigStatus({ ok: true, message: t(`Sync harga model selesai${count ? ` (${count} model)` : ''}.`, `Model prices synced${count ? ` (${count} models)` : ''}.`) });
     } catch (e: any) {
       setConfigStatus({ ok: false, message: String(e?.message || e) });
     } finally {
@@ -839,7 +608,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
   useEffect(() => { fetchConfig(); }, []);
 
   async function deleteUser(user: UserItem) {
-    if (user.email === 'metabayn@gmail.com') return alert("Tidak bisa menghapus akun super admin.");
+    if (user.email === 'metabayn@gmail.com') return alert(t("Tidak bisa menghapus akun super admin.", "Cannot delete super admin account."));
     
     // Konfirmasi sudah dilakukan via Modal sebelum fungsi ini dipanggil
     setActionLoading(user.id);
@@ -853,13 +622,16 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
         body: JSON.stringify({ user_id: user.id })
       });
       if (res.ok) await fetchUsers();
-      else alert(`Failed: ${await res.text()}`);
-    } catch (e: any) { alert(`Error: ${e.message}`); }
+      else alert(t(`Gagal: ${await res.text()}`, `Failed: ${await res.text()}`));
+    } catch (e: any) { alert(t(`Error: ${e.message}`, `Error: ${e.message}`)); }
     finally { setActionLoading(null); }
   }
 
   async function purgeNonAdminUsers() {
-    const confirmText = prompt("Ketik PURGE untuk menghapus semua user kecuali metabayn@gmail.com:");
+    const confirmText = prompt(t(
+      "Ketik PURGE untuk menghapus semua user kecuali metabayn@gmail.com:",
+      "Type PURGE to delete all users except metabayn@gmail.com:"
+    ));
     if (confirmText !== 'PURGE') return;
 
     setPurgeLoading(true);
@@ -875,25 +647,31 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
       const txt = await res.text();
       if (!res.ok) {
         if (res.status === 404 && (txt || '').includes('Admin Route Not Found')) {
-          return alert('Endpoint purge belum tersedia di backend yang sedang dipakai. Pastikan backend sudah dideploy versi terbaru.');
+          return alert(t(
+            'Endpoint purge belum tersedia di backend yang sedang dipakai. Pastikan backend sudah dideploy versi terbaru.',
+            'Purge endpoint is not available on the current backend. Deploy the latest backend version.'
+          ));
         }
-        return alert(`Failed: ${txt}`);
+        return alert(t(`Gagal: ${txt}`, `Failed: ${txt}`));
       }
       await fetchUsers();
       try {
         const data = JSON.parse(txt);
-        alert(`Purge selesai. Deleted: ${data.deleted_count}, Failed: ${data.failed_count}`);
+        alert(t(
+          `Purge selesai. Deleted: ${data.deleted_count}, Failed: ${data.failed_count}`,
+          `Purge done. Deleted: ${data.deleted_count}, Failed: ${data.failed_count}`
+        ));
       } catch {
-        alert('Purge selesai.');
+        alert(t('Purge selesai.', 'Purge done.'));
       }
-    } catch (e: any) { alert(`Error: ${e.message}`); }
+    } catch (e: any) { alert(t(`Error: ${e.message}`, `Error: ${e.message}`)); }
     finally { setPurgeLoading(false); }
   }
 
   async function resetPassword(user: UserItem) {
-    if (!confirm(`Reset password untuk ${user.email}?`)) return;
-    const newPass = prompt("Masukkan password baru:");
-    if (!newPass || newPass.length < 6) return alert("Password minimal 6 karakter.");
+    if (!confirm(t(`Reset password untuk ${user.email}?`, `Reset password for ${user.email}?`))) return;
+    const newPass = prompt(t("Masukkan password baru:", "Enter new password:"));
+    if (!newPass || newPass.length < 6) return alert(t("Password minimal 6 karakter.", "Password must be at least 6 characters."));
 
     setActionLoading(user.id);
     try {
@@ -905,27 +683,9 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: user.id, new_password: newPass })
       });
-      if (res.ok) alert(`Success: Password reset for ${user.email}`);
-      else alert(`Failed: ${await res.text()}`);
-    } catch (e: any) { alert(`Error: ${e.message}`); } 
-    finally { setActionLoading(null); }
-  }
-
-  async function deactivateSubscription(user: UserItem) {
-    setActionLoading(user.id);
-    try {
-      const apiUrl = await getApiUrl();
-      const token = getTokenLocal();
-      if (!token) return;
-      
-      const res = await fetch(`${apiUrl}/admin/users/subscription`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: user.id, is_active: false, expiry_date: null })
-      });
-      if (res.ok) await fetchUsers();
-      else alert(`Failed: ${await res.text()}`);
-    } catch (e: any) { alert(`Error: ${e.message}`); } 
+      if (res.ok) alert(t(`Berhasil: password direset untuk ${user.email}`, `Success: password reset for ${user.email}`));
+      else alert(t(`Gagal: ${await res.text()}`, `Failed: ${await res.text()}`));
+    } catch (e: any) { alert(t(`Error: ${e.message}`, `Error: ${e.message}`)); } 
     finally { setActionLoading(null); }
   }
 
@@ -937,15 +697,8 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
 
   // Stats
   const totalUsers = users.length;
-  const premiumUsers = users.filter(u => {
-    const isActive = !!u.subscription_active;
-    if (!isActive) return false;
-    if (!u.subscription_expiry) return true;
-    const d = new Date(u.subscription_expiry);
-    if (isNaN(d.getTime())) return true;
-    return d.getTime() > Date.now();
-  }).length;
-  const freeUsers = totalUsers - premiumUsers;
+  const licensedUsers = users.filter(u => (Number((u as any)?.license_active_count ?? 0) || 0) > 0).length;
+  const adminUsers = users.filter(u => !!u.is_admin).length;
 
   return (
     <div style={{ 
@@ -969,13 +722,13 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
               display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500
           }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg>
-            Back
+            {isId ? 'Kembali' : 'Back'}
           </button>
           <div style={{ width: 1, height: 24, background: '#27272a' }}></div>
-          <h1 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#fff' }}>Admin Dashboard</h1>
+          <h1 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#fff' }}>{isId ? 'Panel Admin' : 'Admin Panel'}</h1>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ fontSize: '13px', color: '#71717a' }}>Logged in as Admin</div>
+            <div style={{ fontSize: '13px', color: '#71717a' }}>{isId ? 'Login sebagai Admin' : 'Logged in as Admin'}</div>
             <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#3f3f46', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             </div>
@@ -985,7 +738,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
       {error && (
         <div style={{ background: 'rgba(239, 68, 68, 0.1)', borderBottom: '1px solid rgba(239, 68, 68, 0.2)', padding: '12px 24px', color: '#f87171', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span>Error: {error}</span>
-            <button onClick={() => { fetchUsers(); fetchConfig(); }} style={{ background: 'transparent', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', borderRadius: 4, padding: '4px 12px', cursor: 'pointer' }}>Retry</button>
+            <button onClick={() => { fetchUsers(); fetchConfig(); }} style={{ background: 'transparent', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', borderRadius: 4, padding: '4px 12px', cursor: 'pointer' }}>{t('Coba lagi', 'Retry')}</button>
         </div>
       )}
       {notice && (
@@ -999,22 +752,11 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
           justifyContent: 'space-between'
         }}>
           <span>{notice.message}</span>
-          <button onClick={() => setNotice(null)} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#e4e4e7', borderRadius: 4, padding: '4px 12px', cursor: 'pointer' }}>Tutup</button>
+          <button onClick={() => setNotice(null)} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#e4e4e7', borderRadius: 4, padding: '4px 12px', cursor: 'pointer' }}>{t('Tutup', 'Close')}</button>
         </div>
       )}
 
       {/* Modals */}
-      {editingUser && (
-        <EditUserModal 
-            user={editingUser} 
-            onClose={() => setEditingUser(null)} 
-            onSuccess={() => {
-                fetchUsers();
-                setNotice({ type: 'info', message: 'User updated successfully' });
-            }} 
-        />
-      )}
-      
       {confirmAction && (
           <ConfirmModal 
               title={confirmAction.title}
@@ -1033,16 +775,16 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
             {/* Stats Row */}
             <div style={{ display: 'flex', gap: 24, marginBottom: 32 }}>
                 <StatCard 
-                    title="Total Users" value={totalUsers} color="#4f46e5"
+                    title={isId ? "Total Pengguna" : "Total Users"} value={totalUsers} color="#4f46e5"
                     icon={<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>}
                 />
                 <StatCard 
-                    title="Premium Active" value={premiumUsers} color="#059669"
+                    title={isId ? "Lisensi Aktif" : "Licensed"} value={licensedUsers} color="#059669"
                     icon={<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>}
                 />
                 <StatCard 
-                    title="Free Tier" value={freeUsers} color="#52525b"
-                    icon={<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M16 12H8"/></svg>}
+                    title="Admin" value={adminUsers} color="#52525b"
+                    icon={<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1l3 5 6 .5-4 4 1 6-6-3-6 3 1-6-4-4L9 6z"/></svg>}
                 />
             </div>
 
@@ -1054,15 +796,15 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 15l2 2 4-4"/><path d="M20 7h-9"/><path d="M20 11h-9"/><path d="M20 15h-9"/><path d="M4 7h3"/><path d="M4 11h3"/><path d="M4 15h3"/></svg>
                   </div>
                   <div>
-                    <div style={{ color: '#fff', fontWeight: 700, fontSize: 14 }}>Pengaturan Admin</div>
+                    <div style={{ color: '#fff', fontWeight: 700, fontSize: 14 }}>{t('Pengaturan Admin', 'Admin Settings')}</div>
                     <div style={{ color: '#71717a', fontSize: 12 }}>
-                      Profit, kurs, throttling, dan sinkronisasi harga.
+                      {t('Profit, kurs, throttling, dan sinkronisasi harga.', 'Profit, exchange rate, throttling, and model price sync.')}
                     </div>
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <button onClick={() => setConfigOpen(v => !v)} style={{ background: '#27272a', border: '1px solid #3f3f46', color: '#fff', padding: '8px 12px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
-                    {configOpen ? 'Tutup' : 'Buka'}
+                    {configOpen ? t('Tutup', 'Close') : t('Buka', 'Open')}
                   </button>
                 </div>
               </div>
@@ -1071,7 +813,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                 <div style={{ padding: 16 }}>
                   {!configLoaded ? (
                     <div style={{ color: '#71717a', fontSize: 13, padding: 6 }}>
-                      Memuat config...
+                      {t('Memuat konfigurasi...', 'Loading config...')}
                     </div>
                   ) : (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
@@ -1140,7 +882,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                         <div style={{ color: '#a1a1aa', fontSize: 12, marginBottom: 8 }}>Harga Model</div>
                         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                           <button onClick={() => syncModelPrices('official')} disabled={configSaving} style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', color: '#34d399', padding: '10px 12px', borderRadius: 10, cursor: configSaving ? 'wait' : 'pointer', fontWeight: 800, fontSize: 12 }}>
-                            Sync Resmi
+                            {t('Sync Resmi', 'Sync Official')}
                           </button>
                           <button onClick={() => syncModelPrices('live')} disabled={configSaving} style={{ background: 'rgba(249,115,22,0.12)', border: '1px solid rgba(249,115,22,0.25)', color: '#fb923c', padding: '10px 12px', borderRadius: 10, cursor: configSaving ? 'wait' : 'pointer', fontWeight: 800, fontSize: 12 }}>
                             Sync Live
@@ -1150,33 +892,19 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                           Sync akan mengisi tabel model_prices untuk kalkulasi biaya.
                         </div>
                       </div>
- 
-                      <ManualUpdateCard 
-                          title="Manual Langganan (Set Expiry)" 
-                          users={users} 
-                          type="subscription" 
-                          onSuccess={() => { fetchUsers(); setNotice({ type: 'info', message: 'Durasi langganan berhasil diupdate.' }); }} 
-                      />
- 
-                      <ManualUpdateCard 
-                          title="Manual Saldo Token (Add)" 
-                          users={users} 
-                          type="tokens" 
-                          onSuccess={() => { fetchUsers(); setNotice({ type: 'info', message: 'Saldo token berhasil ditambahkan.' }); }} 
-                      />
                     </div>
                   )}
 
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 14 }}>
                     <div style={{ color: configStatus ? (configStatus.ok ? '#34d399' : '#f87171') : '#71717a', fontSize: 12 }}>
-                      {configLoading ? 'Memuat config...' : (configStatus ? (configStatus.ok ? `OK: ${configStatus.message}` : `Gagal: ${configStatus.message}`) : '')}
+                      {configLoading ? t('Memuat konfigurasi...', 'Loading config...') : (configStatus ? (configStatus.ok ? `OK: ${configStatus.message}` : `${t('Gagal', 'Failed')}: ${configStatus.message}`) : '')}
                     </div>
                     <div style={{ display: 'flex', gap: 10 }}>
                       <button onClick={() => fetchConfig()} disabled={configLoading || configSaving} style={{ background: '#27272a', border: '1px solid #3f3f46', color: '#fff', padding: '10px 14px', borderRadius: 10, cursor: (configLoading || configSaving) ? 'wait' : 'pointer', fontWeight: 700, fontSize: 13 }}>
-                        Reload
+                        {t('Muat ulang', 'Reload')}
                       </button>
                       <button onClick={() => saveConfig()} disabled={configSaving} style={{ background: '#4f46e5', border: '1px solid rgba(99,102,241,0.6)', color: '#fff', padding: '10px 14px', borderRadius: 10, cursor: configSaving ? 'wait' : 'pointer', fontWeight: 800, fontSize: 13 }}>
-                        {configSaving ? 'Menyimpan...' : 'Simpan'}
+                        {configSaving ? t('Menyimpan...', 'Saving...') : t('Simpan', 'Save')}
                       </button>
                     </div>
                   </div>
@@ -1195,18 +923,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                         padding: '12px 4px', cursor: 'pointer', fontWeight: 500, fontSize: 14
                     }}
                 >
-                    Users Management
-                </button>
-                <button 
-                    onClick={() => setActiveTab('transactions')}
-                    style={{ 
-                        background: 'transparent', border: 'none', 
-                        borderBottom: activeTab === 'transactions' ? '2px solid #6366f1' : '2px solid transparent',
-                        color: activeTab === 'transactions' ? '#fff' : '#a1a1aa',
-                        padding: '12px 4px', cursor: 'pointer', fontWeight: 500, fontSize: 14
-                    }}
-                >
-                    Transactions
+                    {t('Pengguna', 'Users')}
                 </button>
                 <button 
                     onClick={() => setActiveTab('lynk')}
@@ -1217,7 +934,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                         padding: '12px 4px', cursor: 'pointer', fontWeight: 500, fontSize: 14
                     }}
                 >
-                    Lynk Purchases
+                    {t('Pembelian Lynk.id', 'Lynk Purchases')}
                 </button>
                 <button 
                     onClick={() => setActiveTab('vouchers')}
@@ -1228,7 +945,18 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                         padding: '12px 4px', cursor: 'pointer', fontWeight: 500, fontSize: 14
                     }}
                 >
-                    Vouchers
+                    {t('Kode Lisensi', 'License Codes')}
+                </button>
+                <button 
+                    onClick={() => setActiveTab('support')}
+                    style={{ 
+                        background: 'transparent', border: 'none', 
+                        borderBottom: activeTab === 'support' ? '2px solid #6366f1' : '2px solid transparent',
+                        color: activeTab === 'support' ? '#fff' : '#a1a1aa',
+                        padding: '12px 4px', cursor: 'pointer', fontWeight: 500, fontSize: 14
+                    }}
+                >
+                    {t('Klaim Lisensi', 'License Claims')}
                 </button>
             </div>
 
@@ -1247,7 +975,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                     <input 
                         value={query} 
                         onChange={e => setQuery(e.target.value)} 
-                        placeholder="Search users by email or ID..." 
+                        placeholder={t('Cari user via email / ID...', 'Search users by email or ID...')} 
                         style={{ 
                             width: '100%', background: '#18181b', border: '1px solid #27272a', color: '#fff', 
                             padding: '10px 12px 10px 40px', borderRadius: 8, fontSize: '14px', outline: 'none',
@@ -1268,7 +996,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                         }}
                     >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-                        {purgeLoading ? 'Purging...' : 'Purge Non-Admin'}
+                        {purgeLoading ? t('Menghapus...', 'Purging...') : t('Hapus Non-Admin', 'Purge Non-Admin')}
                     </button>
                     <button
                         onClick={() => cleanupOpenRouterKeys()}
@@ -1278,10 +1006,13 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                             padding: '10px 16px', borderRadius: 8, cursor: orCleanupLoading ? 'wait' : 'pointer',
                             display: 'flex', alignItems: 'center', gap: 8, fontSize: '14px', fontWeight: 600
                         }}
-                        title="Hapus OpenRouter key metabayn-* yang tidak terpakai (tidak ada di DB users)"
+                        title={t(
+                          "Hapus OpenRouter key metabayn-* yang tidak terpakai (tidak ada di DB users)",
+                          "Delete unused metabayn-* OpenRouter keys (missing from users DB)"
+                        )}
                     >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6 9 17l-5-5"/><path d="M22 6 11 17l-1-1"/></svg>
-                        {orCleanupLoading ? 'Cleaning...' : 'Cleanup OpenRouter'}
+                        {orCleanupLoading ? t('Membersihkan...', 'Cleaning...') : t('Cleanup OpenRouter', 'Cleanup OpenRouter')}
                     </button>
                     <button 
                         onClick={exportUsers} 
@@ -1305,7 +1036,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                         }}
                     >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                        Refresh List
+                        {t('Muat Ulang', 'Refresh')}
                     </button>
                 </div>
             </div>
@@ -1315,41 +1046,23 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                     <thead>
                         <tr style={{ background: '#27272a', textAlign: 'left' }}>
-                            <th style={{ padding: '12px 24px', color: '#a1a1aa', fontWeight: 500 }}>User</th>
-                            <th style={{ padding: '12px 24px', color: '#a1a1aa', fontWeight: 500 }}>Status</th>
-                            <th style={{ padding: '12px 24px', color: '#a1a1aa', fontWeight: 500 }}>Subscription</th>
-                            <th style={{ padding: '12px 24px', color: '#a1a1aa', fontWeight: 500 }}>Bonus</th>
-                            <th style={{ padding: '12px 24px', color: '#a1a1aa', fontWeight: 500 }}>Top-up</th>
-                            <th style={{ padding: '12px 24px', color: '#a1a1aa', fontWeight: 500 }}>Tokens</th>
-                            <th style={{ padding: '12px 24px', color: '#a1a1aa', fontWeight: 500 }}>Registered</th>
-                            <th style={{ padding: '12px 24px', color: '#a1a1aa', fontWeight: 500 }}>Usage (OR/App)</th>
-                            <th style={{ padding: '12px 24px', color: '#a1a1aa', fontWeight: 500, textAlign: 'right' }}>Actions</th>
+                            <th style={{ padding: '12px 24px', color: '#a1a1aa', fontWeight: 500 }}>{t('User', 'User')}</th>
+                            <th style={{ padding: '12px 24px', color: '#a1a1aa', fontWeight: 500 }}>{t('Role', 'Role')}</th>
+                            <th style={{ padding: '12px 24px', color: '#a1a1aa', fontWeight: 500 }}>{t('Lisensi', 'License')}</th>
+                            <th style={{ padding: '12px 24px', color: '#a1a1aa', fontWeight: 500 }}>{t('Terdaftar', 'Registered')}</th>
+                            <th style={{ padding: '12px 24px', color: '#a1a1aa', fontWeight: 500 }}>{t('Usage (OR/App)', 'Usage (OR/App)')}</th>
+                            <th style={{ padding: '12px 24px', color: '#a1a1aa', fontWeight: 500, textAlign: 'right' }}>{t('Aksi', 'Actions')}</th>
                         </tr>
                     </thead>
                     <tbody>
                         {loading && filtered.length === 0 ? (
-                            <tr><td colSpan={9} style={{ padding: 48, textAlign: 'center', color: '#71717a' }}>Loading...</td></tr>
+                            <tr><td colSpan={6} style={{ padding: 48, textAlign: 'center', color: '#71717a' }}>{isId ? 'Memuat...' : 'Loading...'}</td></tr>
                         ) : filtered.length === 0 ? (
-                            <tr><td colSpan={9} style={{ padding: 48, textAlign: 'center', color: '#71717a' }}>No users found.</td></tr>
+                            <tr><td colSpan={6} style={{ padding: 48, textAlign: 'center', color: '#71717a' }}>{t('Tidak ada user.', 'No users found.')}</td></tr>
                         ) : (
                             filtered.map((u, i) => {
-                                // Calculate Expiry Real-time
-                                let expiryDate = u.subscription_expiry ? new Date(u.subscription_expiry) : null;
-                                let isExpired = false;
-                                let diffTime = 0;
-                                
-                                if (expiryDate && !isNaN(expiryDate.getTime())) {
-                                    diffTime = expiryDate.getTime() - new Date().getTime();
-                                    if (diffTime <= 0) isExpired = true;
-                                } else {
-                                    expiryDate = null; // Invalid date treated as no expiry
-                                }
-
-                                // Visual Status: Premium ONLY if DB says active AND time hasn't passed
-                                const isSubActive = !!u.subscription_active;
-                                const isPremiumDisplay = isSubActive && !isExpired;
-
                                 const isAdmin = !!u.is_admin;
+                                const licenseCount = Number((u as any)?.license_active_count ?? 0) || 0;
                                 const or = u.openrouter_usage;
                                 const app = u.app_usage;
                                 return (
@@ -1365,56 +1078,11 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                                         </td>
                                         <td style={{ padding: '16px 24px' }}>
                                             <div style={{ display: 'flex', gap: 6 }}>
-                                                {isAdmin && <Badge color="orange">Admin</Badge>}
-                                                {isPremiumDisplay ? <Badge color="green">Premium</Badge> : <Badge color="gray">Free</Badge>}
+                                                {isAdmin ? <Badge color="orange">Admin</Badge> : <Badge color="gray">{t('User', 'User')}</Badge>}
                                             </div>
                                         </td>
-                                        <td style={{ padding: '16px 24px', color: '#a1a1aa', fontSize: '13px' }}>
-                                            {isSubActive && expiryDate ? (() => {
-                                                const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-                                                const diffHours = Math.floor(diffTime / (1000 * 60 * 60));
-                                                const diffMinutes = Math.floor(diffTime / (1000 * 60));
-                                                
-                                                let timeLeftStr = 'Expired';
-                                                let color = '#ef4444'; // Red
-
-                                                if (!isExpired) {
-                                                    if (diffDays > 0) {
-                                                        timeLeftStr = `${diffDays} days left`;
-                                                        color = diffDays > 5 ? '#a1a1aa' : '#f59e0b';
-                                                    } else if (diffHours > 0) {
-                                                        timeLeftStr = `${diffHours} hours left`;
-                                                        color = '#f59e0b'; // Orange
-                                                    } else {
-                                                        timeLeftStr = `${Math.max(0, diffMinutes)} mins left`;
-                                                        color = '#f59e0b';
-                                                    }
-                                                }
-
-                                                return (
-                                                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                                        <span style={{ color: isExpired ? '#ef4444' : '#fff' }}>
-                                                            {expiryDate.toLocaleString()}
-                                                        </span>
-                                                        <span style={{ fontSize: 11, color }}>
-                                                            {timeLeftStr}
-                                                        </span>
-                                                    </div>
-                                                );
-                                            })() : '-'}
-                                        </td>
-                                        <td style={{ padding: '16px 24px', color: '#d4d4d8', fontFamily: 'monospace' }}>
-                                            {typeof u.bonus_tokens === 'number' && Number.isFinite(u.bonus_tokens)
-                                              ? Math.round(u.bonus_tokens || 0).toLocaleString()
-                                              : '-'}
-                                        </td>
-                                        <td style={{ padding: '16px 24px', color: '#d4d4d8', fontFamily: 'monospace' }}>
-                                            {typeof u.topup_tokens === 'number' && Number.isFinite(u.topup_tokens)
-                                              ? Math.round(u.topup_tokens || 0).toLocaleString()
-                                              : '-'}
-                                        </td>
-                                        <td style={{ padding: '16px 24px', color: '#d4d4d8', fontFamily: 'monospace' }}>
-                                            {Math.round(u.tokens || 0).toLocaleString()}
+                                        <td style={{ padding: '16px 24px' }}>
+                                            {licenseCount > 0 ? <Badge color="green">{t('Aktif', 'Active')} · {licenseCount}</Badge> : <Badge color="gray">{t('Tidak ada', 'None')}</Badge>}
                                         </td>
                                         <td style={{ padding: '16px 24px', color: '#71717a' }}>
                                             {u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}
@@ -1440,34 +1108,11 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                                         <td style={{ padding: '16px 24px' }}>
                                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                                                 <IconButton 
-                                                    icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>}
-                                                    onClick={() => setEditingUser(u)}
-                                                    title="Edit Manual"
-                                                />
-                                                <IconButton 
                                                     icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>}
                                                     onClick={() => resetPassword(u)}
-                                                    title="Reset Password"
+                                                    title={t('Reset Password', 'Reset Password')}
                                                     disabled={actionLoading === u.id}
                                                 />
-                                                {isPremiumDisplay && (
-                                                    <IconButton 
-                                                        color="red"
-                                                        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>}
-                                                        onClick={() => setConfirmAction({
-                                                            title: "Hapus Status Premium",
-                                                            message: `Yakin ingin menghapus status premium ${u.email}?`,
-                                                            danger: true,
-                                                            confirmText: "Hapus",
-                                                            onConfirm: () => {
-                                                                deactivateSubscription(u);
-                                                                setConfirmAction(null);
-                                                            }
-                                                        })}
-                                                        title="Hapus Status Premium"
-                                                        disabled={actionLoading === u.id}
-                                                    />
-                                                )}
                                                 <IconButton 
                                                     color="red"
                                                     icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>}
@@ -1481,7 +1126,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                                                             setConfirmAction(null);
                                                         }
                                                     })}
-                                                    title="Delete User"
+                                                    title={t('Hapus User', 'Delete User')}
                                                     disabled={actionLoading === u.id || u.email === 'metabayn@gmail.com'}
                                                 />
                                             </div>
@@ -1496,125 +1141,23 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
             </>
             )}
 
-            {/* Transaction Tab */}
-            {activeTab === 'transactions' && (
-                <div style={{ background: '#18181b', borderRadius: 12, border: '1px solid #27272a', overflow: 'hidden' }}>
-                    <div style={{ padding: '16px 24px', borderBottom: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: '#fff' }}>Transaction History</h3>
-                        <div style={{ display: 'flex', gap: 8 }}>
-                            <button className="btn-click-anim" onClick={exportTransactions} disabled={transLoading} style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', color: '#60a5fa', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>Export CSV</button>
-                            <button className="btn-click-anim" onClick={purgeTransactions} disabled={transLoading} style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', color: '#f87171', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>{transLoading ? 'Deleting...' : 'Delete All'}</button>
-                            <button className="btn-click-anim" onClick={fetchTransactions} disabled={transLoading} style={{ background: 'transparent', border: '1px solid #3f3f46', color: '#fff', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>
-                                {transLoading ? (
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                        <svg className="spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                                        Refreshing...
-                                    </span>
-                                ) : 'Refresh'}
-                            </button>
-                        </div>
-                    </div>
-                    {transError && <div style={{ padding: 16, color: '#f87171' }}>Error: {transError}</div>}
-                    <div style={{ overflowX: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                            <thead>
-                                <tr style={{ background: '#27272a', textAlign: 'left' }}>
-                                    <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>ID</th>
-                                    <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>User</th>
-                                    <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Type</th>
-                                    <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Amount</th>
-                                    <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Method (Source)</th>
-                                    <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Date</th>
-                                    <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Status</th>
-                                    <th style={{ padding: '10px 16px', color: '#a1a1aa', textAlign: 'right' }}>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {transLoading && transactions.length === 0 ? (
-                                    <tr><td colSpan={8} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>Loading...</td></tr>
-                                ) : transactions.length === 0 ? (
-                                    <tr><td colSpan={8} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>No transactions found.</td></tr>
-                                ) : (
-                                    transactions.map((t) => (
-                                        <tr key={t.id} style={{ borderBottom: '1px solid #27272a' }}>
-                                            <td style={{ padding: '10px 16px', color: '#71717a' }}>#{t.id}</td>
-                                            <td style={{ padding: '10px 16px', color: '#fff' }}>{t.user_email || t.user_id}</td>
-                                            <td style={{ padding: '10px 16px', color: '#e4e4e7' }}>
-                                                {(t.type === 'subscription' || t.method === 'paypal_subscription' || Number(t.duration_days) > 0) ? <Badge color="blue">Subscription</Badge> : <Badge color="orange">Token</Badge>}
-                                            </td>
-                                            <td style={{ padding: '10px 16px', color: '#fff', fontWeight: 500 }}>
-                                                {(t.amount_rp || t.amount) ? `Rp ${Number(t.amount_rp || t.amount).toLocaleString()}` : (t.amount_usd ? `$${t.amount_usd}` : '-')}
-                                            </td>
-                                            <td style={{ padding: '10px 16px', color: '#a1a1aa' }}>
-                                                {t.method === 'lynkid' ? 'Lynk.id' : (t.method?.includes('paypal') ? 'PayPal' : t.method)}
-                                            </td>
-                                            <td style={{ padding: '10px 16px', color: '#71717a' }}>{new Date(t.created_at).toLocaleString()}</td>
-                                            <td style={{ padding: '10px 16px' }}>
-                                                {t.status === 'success' || t.status === 'paid' ? <Badge color="green">Success</Badge> : 
-                                                t.status === 'pending' ? <Badge color="orange">Pending</Badge> : 
-                                                <Badge color="red">Failed</Badge>}
-                                            </td>
-                                            <td style={{ padding: '10px 16px', textAlign: 'right' }}>
-                                                {t.status === 'pending' && (
-                                                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
-                                                        <button 
-                                                            className="btn-click-anim"
-                                                            onClick={() => updateTransaction(t.id, 'success')} 
-                                                            disabled={actionLoading === t.id}
-                                                            style={{ 
-                                                                background: 'rgba(16,185,129,0.1)', color: '#34d399', 
-                                                                border: '1px solid rgba(16,185,129,0.2)', borderRadius: 4, 
-                                                                padding: '6px 12px', cursor: actionLoading === t.id ? 'wait' : 'pointer', fontSize: 11,
-                                                                display: 'flex', alignItems: 'center', gap: 4
-                                                            }}>
-                                                            {actionLoading === t.id ? (
-                                                                <>
-                                                                    <svg className="spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                                                                    Processing
-                                                                </>
-                                                            ) : 'Approve'}
-                                                        </button>
-                                                        <button 
-                                                            className="btn-click-anim"
-                                                            onClick={() => updateTransaction(t.id, 'failed')} 
-                                                            disabled={actionLoading === t.id}
-                                                            style={{ 
-                                                                background: 'rgba(239,68,68,0.1)', color: '#f87171', 
-                                                                border: '1px solid rgba(239,68,68,0.2)', borderRadius: 4, 
-                                                                padding: '6px 12px', cursor: actionLoading === t.id ? 'wait' : 'pointer', fontSize: 11 
-                                                            }}>
-                                                            Reject
-                                                        </button>
-                                                    </div>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            )}
-
             {/* Lynk Purchases Tab */}
             {activeTab === 'lynk' && (
                 <div style={{ background: '#18181b', borderRadius: 12, border: '1px solid #27272a', overflow: 'hidden' }}>
                     <div style={{ padding: '16px 24px', borderBottom: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: '#fff' }}>Lynk.id Purchases</h3>
+                        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: '#fff' }}>{isId ? 'Pembelian Lynk.id' : 'Lynk.id Purchases'}</h3>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                             <select value={lynkStatus} onChange={e => setLynkStatus(e.target.value)} style={{ background: '#0f0f12', border: '1px solid #27272a', color: '#fff', padding: '6px 8px', borderRadius: 6 }}>
                                 <option value="">All</option>
-                                <option value="pending_activation">Pending Activation</option>
-                                <option value="voucher_pending">Voucher Pending</option>
-                                <option value="voucher_sent">Voucher Sent</option>
-                                <option value="activated">Activated</option>
-                                <option value="failed">Failed</option>
+                                <option value="voucher_pending">{t('Menunggu', 'Pending')}</option>
+                                <option value="voucher_sent">{t('Terkirim', 'Sent')}</option>
+                                <option value="activated">{t('Aktif', 'Activated')}</option>
+                                <option value="failed">{t('Gagal', 'Failed')}</option>
                             </select>
                             <input 
                                 value={lynkQuery}
                                 onChange={e => setLynkQuery(e.target.value)}
-                                placeholder="Cari email / order id"
+                                placeholder={t('Cari email / order id', 'Search email / order id')}
                                 style={{ background: '#0f0f12', border: '1px solid #27272a', color: '#fff', padding: '6px 8px', borderRadius: 6 }}
                             />
                             <button className="btn-click-anim" onClick={fetchLynkPurchases} disabled={lynkLoading} style={{ background: 'transparent', border: '1px solid #3f3f46', color: '#fff', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>
@@ -1632,11 +1175,10 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                         <div>Total: {lynkPurchases.length}</div>
                         {Object.keys(lynkCounts).length > 0 && (
                             <>
-                                <div>Pending Activation: {lynkCounts.pending_activation ?? 0}</div>
-                                <div>Voucher Pending: {lynkCounts.voucher_pending ?? 0}</div>
-                                <div>Voucher Sent: {lynkCounts.voucher_sent ?? 0}</div>
-                                <div>Activated: {lynkCounts.activated ?? 0}</div>
-                                <div>Failed: {lynkCounts.failed ?? 0}</div>
+                                <div>{t('Menunggu', 'Pending')}: {lynkCounts.voucher_pending ?? 0}</div>
+                                <div>{t('Terkirim', 'Sent')}: {lynkCounts.voucher_sent ?? 0}</div>
+                                <div>{t('Aktif', 'Activated')}: {lynkCounts.activated ?? 0}</div>
+                                <div>{t('Gagal', 'Failed')}: {lynkCounts.failed ?? 0}</div>
                             </>
                         )}
                     </div>
@@ -1646,21 +1188,21 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                                 <tr style={{ background: '#27272a', textAlign: 'left' }}>
                                     <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>ID</th>
                                     <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Email</th>
-                                    <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Voucher</th>
+                                    <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>{t('Kode Lisensi', 'License Code')}</th>
                                     <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Redeem</th>
                                     <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Status</th>
                                     <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Payment</th>
                                     <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Purchase Time</th>
                                     <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Retry</th>
                                     <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Email Status</th>
-                                    <th style={{ padding: '10px 16px', color: '#a1a1aa', textAlign: 'right' }}>Actions</th>
+                                    <th style={{ padding: '10px 16px', color: '#a1a1aa', textAlign: 'right' }}>{t('Aksi', 'Actions')}</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {lynkLoading && lynkPurchases.length === 0 ? (
-                                    <tr><td colSpan={10} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>Loading...</td></tr>
+                                    <tr><td colSpan={10} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>{isId ? 'Memuat...' : 'Loading...'}</td></tr>
                                 ) : lynkPurchases.length === 0 ? (
-                                    <tr><td colSpan={10} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>No purchases found.</td></tr>
+                                    <tr><td colSpan={10} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>{t('Tidak ada pembelian.', 'No purchases found.')}</td></tr>
                                 ) : (
                                     lynkPurchases.map((p) => (
                                         <tr key={p.id} style={{ borderBottom: '1px solid #27272a' }}>
@@ -1680,7 +1222,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                                             </td>
                                             <td style={{ padding: '10px 16px' }}>
                                                 {p.status === 'activated' ? <Badge color="green">Activated</Badge> : 
-                                                (p.status === 'pending_activation' || p.status === 'voucher_pending' || p.status === 'voucher_sent') ? <Badge color="orange">Pending</Badge> : 
+                                                (p.status === 'voucher_pending' || p.status === 'voucher_sent') ? <Badge color="orange">Pending</Badge> : 
                                                 <Badge color="red">Failed</Badge>}
                                             </td>
                                             <td style={{ padding: '10px 16px', color: '#a1a1aa' }}>{p.payment_status || '-'}</td>
@@ -1697,7 +1239,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                                                     onClick={async () => { setLynkSelectedPurchaseId(p.id); await fetchLynkLogs(p.id); }}
                                                     style={{ background: 'transparent', border: '1px solid #3f3f46', color: '#fff', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}
                                                 >
-                                                    View Logs
+                                                    {t('Lihat Log', 'View Logs')}
                                                 </button>
                                             </td>
                                         </tr>
@@ -1727,7 +1269,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                                     </thead>
                                     <tbody>
                                         {lynkLogs.length === 0 ? (
-                                            <tr><td colSpan={5} style={{ padding: 16, textAlign: 'center', color: '#71717a' }}>No logs.</td></tr>
+                                            <tr><td colSpan={5} style={{ padding: 16, textAlign: 'center', color: '#71717a' }}>{t('Tidak ada log.', 'No logs.')}</td></tr>
                                         ) : (
                                             lynkLogs.map((l: any) => (
                                                 <tr key={l.id} style={{ borderBottom: '1px solid #27272a' }}>
@@ -1749,13 +1291,171 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                 </div>
             )}
 
+            {activeTab === 'support' && (
+              <div style={{ background: '#18181b', borderRadius: 12, border: '1px solid #27272a', overflow: 'hidden' }}>
+                <div style={{ padding: '16px 24px', borderBottom: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#fff' }}>{t('Klaim Lisensi', 'License Claims')}</h3>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <select value={supportStatusFilter} onChange={e => setSupportStatusFilter(e.target.value)} style={{ background: '#0f0f12', border: '1px solid #27272a', color: '#fff', padding: '6px 8px', borderRadius: 6 }}>
+                      <option value="pending">{t('Menunggu', 'Pending')}</option>
+                      <option value="approved">{t('Disetujui', 'Approved')}</option>
+                      <option value="rejected">{t('Ditolak', 'Rejected')}</option>
+                      <option value="all">All</option>
+                    </select>
+                    <input
+                      value={supportQuery}
+                      onChange={e => setSupportQuery(e.target.value)}
+                      placeholder={t('Cari email / catatan', 'Search email / note')}
+                      style={{ background: '#0f0f12', border: '1px solid #27272a', color: '#fff', padding: '6px 8px', borderRadius: 6 }}
+                    />
+                    <button className="btn-click-anim" onClick={fetchSupportRequests} disabled={supportLoading} style={{ background: 'transparent', border: '1px solid #3f3f46', color: '#fff', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>
+                      {supportLoading ? (isId ? 'Memuat...' : 'Loading...') : 'Refresh'}
+                    </button>
+                  </div>
+                </div>
+
+                {supportError && <div style={{ padding: 16, color: '#f87171' }}>Error: {supportError}</div>}
+
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                    <thead>
+                      <tr style={{ background: '#27272a', textAlign: 'left' }}>
+                        <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>ID</th>
+                        <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>{t('Email Akun', 'Account Email')}</th>
+                        <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>{t('Email Pembelian', 'Purchase Email')}</th>
+                        <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>{t('Produk', 'Product')}</th>
+                        <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>{t('Catatan', 'Note')}</th>
+                        <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>{t('Voucher', 'Voucher')}</th>
+                        <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>{t('Email Baru', 'New Email')}</th>
+                        <th style={{ padding: '10px 16px', color: '#a1a1aa', textAlign: 'right' }}>{t('Aksi', 'Actions')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {supportLoading && supportRequests.length === 0 ? (
+                        <tr><td colSpan={8} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>{isId ? 'Memuat...' : 'Loading...'}</td></tr>
+                      ) : supportRequests.length === 0 ? (
+                        <tr><td colSpan={8} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>{t('Tidak ada klaim.', 'No claims.')}</td></tr>
+                      ) : (
+                        supportRequests.map((r: any) => {
+                          const id = String(r?.id || '');
+                          const status = String(r?.status || '');
+                          const busy = supportBusyId === id;
+                          const purchases = supportPurchasesMap[id] || [];
+                          return (
+                            <React.Fragment key={id}>
+                              <tr style={{ borderBottom: '1px solid #27272a', verticalAlign: 'top' }}>
+                                <td style={{ padding: '10px 16px', color: '#71717a', whiteSpace: 'nowrap' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    <div>{id}</div>
+                                    {status === 'pending' ? <Badge color="orange">Pending</Badge> : status === 'approved' ? <Badge color="green">Approved</Badge> : <Badge color="red">Rejected</Badge>}
+                                  </div>
+                                </td>
+                                <td style={{ padding: '10px 16px', color: '#fff' }}>{r?.account_email || '-'}</td>
+                                <td style={{ padding: '10px 16px', color: '#a1a1aa' }}>{r?.purchase_email || '-'}</td>
+                                <td style={{ padding: '10px 16px', color: '#a1a1aa' }}>{r?.product_code || '-'}</td>
+                                <td style={{ padding: '10px 16px', color: '#a1a1aa', maxWidth: 280, whiteSpace: 'pre-wrap' }}>
+                                  {r?.note || '-'}
+                                  {r?.purchase_time_hint ? `\n${t('Waktu:', 'Time:')} ${r.purchase_time_hint}` : ''}
+                                  {r?.amount_hint ? `\n${t('Nominal:', 'Amount:')} ${r.amount_hint}` : ''}
+                                </td>
+                                <td style={{ padding: '10px 16px' }}>
+                                  <input
+                                    value={supportVoucherInput[id] || ''}
+                                    onChange={(e) => setSupportVoucherInput((prev) => ({ ...prev, [id]: e.target.value }))}
+                                    disabled={busy || status !== 'pending'}
+                                    placeholder="ABC123"
+                                    style={{ width: 140, background: '#0f0f12', border: '1px solid #27272a', color: '#fff', padding: '6px 8px', borderRadius: 8, fontSize: 12 }}
+                                  />
+                                </td>
+                                <td style={{ padding: '10px 16px' }}>
+                                  <input
+                                    value={supportNewEmailInput[id] || ''}
+                                    onChange={(e) => setSupportNewEmailInput((prev) => ({ ...prev, [id]: e.target.value }))}
+                                    disabled={busy || status !== 'pending'}
+                                    placeholder="email@domain.com"
+                                    style={{ width: 200, background: '#0f0f12', border: '1px solid #27272a', color: '#fff', padding: '6px 8px', borderRadius: 8, fontSize: 12 }}
+                                  />
+                                </td>
+                                <td style={{ padding: '10px 16px', textAlign: 'right' }}>
+                                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                                    <button
+                                      className="btn-click-anim"
+                                      onClick={() => findPurchasesForSupport(id, String(r?.purchase_email || ''))}
+                                      disabled={busy}
+                                      style={{ background: 'transparent', border: '1px solid #3f3f46', color: '#fff', padding: '6px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}
+                                    >
+                                      {t('Cari', 'Find')}
+                                    </button>
+                                    <button
+                                      className="btn-click-anim"
+                                      onClick={() => approveSupport(id)}
+                                      disabled={busy || status !== 'pending'}
+                                      style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', color: '#34d399', padding: '6px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 800 }}
+                                    >
+                                      {t('Approve', 'Approve')}
+                                    </button>
+                                    <button
+                                      className="btn-click-anim"
+                                      onClick={() => rejectSupport(id)}
+                                      disabled={busy || status !== 'pending'}
+                                      style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', padding: '6px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 800 }}
+                                    >
+                                      {t('Reject', 'Reject')}
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                              {purchases.length > 0 && (
+                                <tr style={{ borderBottom: '1px solid #27272a' }}>
+                                  <td colSpan={8} style={{ padding: '10px 16px' }}>
+                                    <div style={{ color: '#a1a1aa', fontSize: 12, marginBottom: 8 }}>
+                                      {t('Hasil pencarian pembelian (klik voucher untuk mengisi):', 'Search results (click voucher to fill):')}
+                                    </div>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                      {purchases.map((p: any) => {
+                                        const vc = String(p?.voucher_code || '').trim();
+                                        return (
+                                          <button
+                                            key={String(p?.id || '') + vc}
+                                            onClick={() => { if (vc) setSupportVoucherInput((prev) => ({ ...prev, [id]: vc })); }}
+                                            style={{
+                                              background: '#0f0f12',
+                                              border: '1px solid #27272a',
+                                              color: vc ? '#fff' : '#71717a',
+                                              padding: '6px 10px',
+                                              borderRadius: 999,
+                                              cursor: vc ? 'pointer' : 'default',
+                                              fontSize: 12
+                                            }}
+                                            title={String(p?.product_ref || '')}
+                                            disabled={!vc}
+                                          >
+                                            {vc || '-'}
+                                            {p?.purchase_ts ? ` · ${new Date(p.purchase_ts).toLocaleString()}` : ''}
+                                          </button>
+                                        )
+                                      })}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          )
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             {activeTab === 'vouchers' && (
               <div style={{ display: 'grid', gridTemplateColumns: '420px 1fr', gap: 16, alignItems: 'start' }}>
                 <div style={{ background: '#18181b', borderRadius: 12, border: '1px solid #27272a', padding: 16 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 12 }}>
-                    <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: '#fff' }}>Buat Voucher</h3>
+                    <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: '#fff' }}>{t('Buat Kode Lisensi', 'Create License Code')}</h3>
                     <button className="btn-click-anim" onClick={() => fetchVouchers()} disabled={voucherLoading} style={{ background: 'transparent', border: '1px solid #3f3f46', color: '#fff', padding: '6px 10px', borderRadius: 8, cursor: voucherLoading ? 'wait' : 'pointer', fontSize: 12, fontWeight: 700 }}>
-                      {voucherLoading ? 'Loading...' : 'Refresh'}
+                      {voucherLoading ? (isId ? 'Memuat...' : 'Loading...') : (isId ? 'Muat Ulang' : 'Refresh')}
                     </button>
                   </div>
 
@@ -1771,49 +1471,10 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                       <input
                         value={voucherForm.code}
                         onChange={e => setVoucherForm(v => ({ ...v, code: e.target.value }))}
-                        placeholder="contoh: ABC123"
+                        placeholder="kosongkan untuk auto-generate"
                         style={{ width: '100%', background: '#0f0f12', border: '1px solid #27272a', color: '#fff', padding: '10px 12px', borderRadius: 10, fontSize: 14, outline: 'none' }}
                       />
                     </div>
-
-                    <div>
-                      <div style={{ color: '#a1a1aa', fontSize: 12, marginBottom: 6 }}>Type</div>
-                      <select
-                        value={voucherForm.type}
-                        onChange={e => setVoucherForm(v => ({ ...v, type: e.target.value as any }))}
-                        style={{ width: '100%', background: '#0f0f12', border: '1px solid #27272a', color: '#fff', padding: '10px 12px', borderRadius: 10, fontSize: 14, outline: 'none' }}
-                      >
-                        <option value="subscription">subscription</option>
-                        <option value="token">token</option>
-                        <option value="license">license</option>
-                      </select>
-                    </div>
-
-                    {(voucherForm.type === 'token' || voucherForm.type === 'license') && (
-                      <div>
-                        <div style={{ color: '#a1a1aa', fontSize: 12, marginBottom: 6 }}>Amount</div>
-                        <input
-                          value={voucherForm.amount}
-                          onChange={e => setVoucherForm(v => ({ ...v, amount: e.target.value }))}
-                          inputMode="numeric"
-                          placeholder={voucherForm.type === 'token' ? 'contoh: 1000 (token)' : 'contoh: 50000 (harga)'}
-                          style={{ width: '100%', background: '#0f0f12', border: '1px solid #27272a', color: '#fff', padding: '10px 12px', borderRadius: 10, fontSize: 14, outline: 'none' }}
-                        />
-                      </div>
-                    )}
-
-                    {(voucherForm.type === 'subscription' || voucherForm.type === 'license') && (
-                      <div>
-                        <div style={{ color: '#a1a1aa', fontSize: 12, marginBottom: 6 }}>Duration (days)</div>
-                        <input
-                          value={voucherForm.duration_days}
-                          onChange={e => setVoucherForm(v => ({ ...v, duration_days: e.target.value }))}
-                          inputMode="numeric"
-                          placeholder="contoh: 30"
-                          style={{ width: '100%', background: '#0f0f12', border: '1px solid #27272a', color: '#fff', padding: '10px 12px', borderRadius: 10, fontSize: 14, outline: 'none' }}
-                        />
-                      </div>
-                    )}
 
                     <div>
                       <div style={{ color: '#a1a1aa', fontSize: 12, marginBottom: 6 }}>Max usage</div>
@@ -1854,14 +1515,14 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                       disabled={voucherCreating}
                       style={{ width: '100%', padding: '10px 14px', backgroundColor: '#4f46e5', border: '1px solid rgba(99,102,241,0.6)', color: '#fff', borderRadius: 10, cursor: voucherCreating ? 'wait' : 'pointer', fontWeight: 800, fontSize: 13 }}
                     >
-                      {voucherCreating ? 'Membuat...' : 'Buat Voucher'}
+                      {voucherCreating ? t('Membuat...', 'Creating...') : t('Buat', 'Create')}
                     </button>
                   </div>
                 </div>
 
                 <div style={{ background: '#18181b', borderRadius: 12, border: '1px solid #27272a', overflow: 'hidden' }}>
                   <div style={{ padding: '16px 24px', borderBottom: '1px solid #27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: '#fff' }}>Daftar Voucher</h3>
+                    <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: '#fff' }}>{t('Daftar Kode Lisensi', 'License Codes')}</h3>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#a1a1aa', fontSize: 12 }}>
                       <div>Total: {vouchers.length}</div>
                     </div>
@@ -1872,9 +1533,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                       <thead>
                         <tr style={{ background: '#27272a', textAlign: 'left' }}>
                           <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Code</th>
-                          <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Type</th>
-                          <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Amount</th>
-                          <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Days</th>
+                          <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Allowed</th>
                           <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Usage</th>
                           <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Expires</th>
                           <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Created</th>
@@ -1882,16 +1541,14 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                       </thead>
                       <tbody>
                         {voucherLoading && vouchers.length === 0 ? (
-                          <tr><td colSpan={7} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>Loading...</td></tr>
+                          <tr><td colSpan={5} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>{isId ? 'Memuat...' : 'Loading...'}</td></tr>
                         ) : vouchers.length === 0 ? (
-                          <tr><td colSpan={7} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>Belum ada voucher.</td></tr>
+                          <tr><td colSpan={5} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>{t('Belum ada kode lisensi.', 'No license codes yet.')}</td></tr>
                         ) : (
                           vouchers.map((v: any) => (
                             <tr key={v.code} style={{ borderBottom: '1px solid #27272a' }}>
                               <td style={{ padding: '10px 16px', color: '#fff', fontWeight: 700, letterSpacing: 0.5 }}>{v.code}</td>
-                              <td style={{ padding: '10px 16px', color: '#a1a1aa' }}>{v.type || '-'}</td>
-                              <td style={{ padding: '10px 16px', color: '#a1a1aa' }}>{typeof v.amount === 'number' ? v.amount : (v.amount ?? '-')}</td>
-                              <td style={{ padding: '10px 16px', color: '#a1a1aa' }}>{typeof v.duration_days === 'number' ? v.duration_days : (v.duration_days ?? '-')}</td>
+                              <td style={{ padding: '10px 16px', color: '#a1a1aa' }}>{String(v.allowed_emails || '-') || '-'}</td>
                               <td style={{ padding: '10px 16px', color: '#a1a1aa' }}>
                                 {String(v.current_usage ?? 0)} / {String(v.max_usage ?? 0)}
                               </td>

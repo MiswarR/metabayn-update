@@ -115,7 +115,7 @@ pub fn load_settings() -> Result<AppSettings> {
   if !p.exists() {
     let d = default_paths();
     return Ok(AppSettings{
-      openrouter_endpoint: String::new(),
+      openrouter_endpoint: "https://openrouter.ai/api/v1/chat/completions".to_string(),
       server_url: "https://metabayn-backend.metabayn.workers.dev".into(),
       default_model: "gemini-flash".into(),
       overwrite: true,

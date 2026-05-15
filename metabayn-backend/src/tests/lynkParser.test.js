@@ -121,9 +121,9 @@ test('lynkid webhook: pembelian pertama akun baru mengirim voucher email', { tim
   assert.equal(resp.status, 200);
   const json = await resp.json();
   assert.equal(json?.success, true);
-  assert.equal(String(json?.bundle_mode || ''), 'single_voucher_v2');
-  assert.ok(Array.isArray(json?.generated));
-  assert.ok(json.generated.some((g) => g?.type === 'license'));
+  assert.ok(String(json?.purchase_id || '').length > 0);
+  assert.equal(String(json?.idempotency_key || ''), String(payload.data.order_id));
+  assert.equal(String(json?.version || ''), 'license_v1');
 
   const q = encodeURIComponent(payload.data.order_id);
   const adminResp = await worker.fetch(`http://localhost/admin/lynk/purchases?q=${q}`, {
@@ -137,10 +137,10 @@ test('lynkid webhook: pembelian pertama akun baru mengirim voucher email', { tim
   const row = adminJson.purchases.find((p) => String(p?.idempotency_key || '') === String(payload.data.order_id));
   assert.ok(row);
   assert.equal(String(row.status), 'voucher_sent');
-  assert.equal(String(row.email_status), 'sent');
+  assert.equal(String(row.email_status), 'test');
   assert.ok(String(row.voucher_code || '').length > 0);
 
-  const deviceHash = 'test-device-1';
+  const deviceHash = `test-device-${uniq}-1`;
   const email = `newuser-${uniq}@example.com`;
   const password = 'Passw0rd!234';
 
@@ -161,7 +161,7 @@ test('lynkid webhook: pembelian pertama akun baru mengirim voucher email', { tim
   assert.ok(loginJson?.token);
   assert.ok(loginJson?.user?.id);
 
-  const redeemResp = await worker.fetch('http://localhost/voucher/redeem', {
+  const redeemResp = await worker.fetch('http://localhost/license/activate', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -173,7 +173,7 @@ test('lynkid webhook: pembelian pertama akun baru mengirim voucher email', { tim
   const redeemJson = await redeemResp.json();
   assert.equal(redeemJson?.success, true);
 
-  const redeemAgainResp = await worker.fetch('http://localhost/voucher/redeem', {
+  const redeemAgainResp = await worker.fetch('http://localhost/license/activate', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -181,21 +181,35 @@ test('lynkid webhook: pembelian pertama akun baru mengirim voucher email', { tim
     },
     body: JSON.stringify({ code: row.voucher_code, userId: String(loginJson.user.id), deviceHash })
   });
-  assert.equal(redeemAgainResp.status, 409);
+  assert.equal(redeemAgainResp.status, 200);
   const redeemAgainJson = await redeemAgainResp.json();
-  assert.ok(String(redeemAgainJson?.error || '').length > 0);
+  assert.equal(redeemAgainJson?.success, true);
 
-  const badResp = await worker.fetch('http://localhost/voucher/redeem', {
+  const otherDeviceHash = `test-device-${uniq}-2`;
+  const redeemOtherDeviceResp = await worker.fetch('http://localhost/license/activate', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       'Authorization': `Bearer ${loginJson.token}`
     },
-    body: JSON.stringify({ code: 'AAAAAA', userId: String(loginJson.user.id), deviceHash })
+    body: JSON.stringify({ code: row.voucher_code, userId: String(loginJson.user.id), deviceHash: otherDeviceHash })
+  });
+  assert.equal(redeemOtherDeviceResp.status, 409);
+  const redeemOtherDeviceJson = await redeemOtherDeviceResp.json();
+  assert.equal(String(redeemOtherDeviceJson?.error_code || ''), 'license_already_used');
+
+  const badDeviceHash = `test-device-${uniq}-3`;
+  const badResp = await worker.fetch('http://localhost/license/activate', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'Authorization': `Bearer ${loginJson.token}`
+    },
+    body: JSON.stringify({ code: 'AAAAAA', userId: String(loginJson.user.id), deviceHash: badDeviceHash })
   });
   assert.equal(badResp.status, 404);
   const badJson = await badResp.json();
-  assert.equal(String(badJson?.error_code || ''), 'invalid_voucher_code');
+  assert.equal(String(badJson?.error_code || ''), 'invalid_license');
 
   const adminResp2 = await worker.fetch(`http://localhost/admin/lynk/purchases?q=${q}`, {
     headers: { 'x-admin-key': 'test-admin-secret' }
@@ -208,7 +222,7 @@ test('lynkid webhook: pembelian pertama akun baru mengirim voucher email', { tim
   assert.equal(String(row2.voucher_redeemed_by_user_id || ''), String(loginJson.user.id));
 });
 
-test('lynkid webhook: topup token auto-apply tanpa voucher', { timeout: 60000 }, async (t) => {
+test('lynkid webhook: produk topup diabaikan (deprecated)', { timeout: 60000 }, async (t) => {
   const logsDir = path.join(process.cwd(), '.wrangler', 'logs');
   await mkdir(logsDir, { recursive: true });
   process.env.WRANGLER_LOG_PATH = path.join(logsDir, 'wrangler-test.log');
@@ -284,13 +298,12 @@ test('lynkid webhook: topup token auto-apply tanpa voucher', { timeout: 60000 },
     body: JSON.stringify(payload)
   });
 
-  assert.equal(resp.status, 200);
+  assert.equal(resp.status, 202);
   const json = await resp.json();
   assert.equal(json?.success, true);
-  assert.equal(String(json?.mode || ''), 'auto_apply_v1');
-  assert.equal(json?.applied, true);
-  assert.ok(Array.isArray(json?.result));
-  assert.ok(!('bundle_mode' in json));
+  assert.equal(json?.ignored, true);
+  assert.equal(String(json?.reason || ''), 'product_not_matched');
+  assert.equal(String(json?.version || ''), 'license_v1');
 
   const balAfterResp = await worker.fetch('http://localhost/token/balance', {
     headers: { 'Authorization': `Bearer ${loginJson.token}` }
@@ -298,18 +311,7 @@ test('lynkid webhook: topup token auto-apply tanpa voucher', { timeout: 60000 },
   assert.equal(balAfterResp.status, 200);
   const balAfterJson = await balAfterResp.json();
   const afterTokens = Number(balAfterJson?.tokens ?? balAfterJson?.balance ?? 0);
-  assert.equal(afterTokens - beforeTokens, 20000);
-
-  const q = encodeURIComponent(orderId);
-  const adminResp = await worker.fetch(`http://localhost/admin/lynk/purchases?q=${q}`, {
-    headers: { 'x-admin-key': 'test-admin-secret' }
-  });
-  assert.equal(adminResp.status, 200);
-  const adminJson = await adminResp.json();
-  const row = adminJson.purchases.find((p) => String(p?.idempotency_key || '') === String(orderId));
-  assert.ok(row);
-  assert.equal(String(row.status), 'applied');
-  assert.ok(!row.voucher_code);
+  assert.equal(afterTokens, beforeTokens);
 });
 
 test('lynkid webhook: license tanpa items memakai title fallback', { timeout: 60000 }, async (t) => {
@@ -363,9 +365,9 @@ test('lynkid webhook: license tanpa items memakai title fallback', { timeout: 60
   assert.equal(resp.status, 200);
   const json = await resp.json();
   assert.equal(json?.success, true);
-  assert.equal(String(json?.bundle_mode || ''), 'single_voucher_v2');
-  assert.ok(Array.isArray(json?.generated));
-  assert.ok(json.generated.some((g) => g?.type === 'license'));
+  assert.ok(String(json?.purchase_id || '').length > 0);
+  assert.equal(String(json?.idempotency_key || ''), String(orderId));
+  assert.equal(String(json?.version || ''), 'license_v1');
 
   const q = encodeURIComponent(orderId);
   const adminResp = await worker.fetch(`http://localhost/admin/lynk/purchases?q=${q}`, {
@@ -376,6 +378,6 @@ test('lynkid webhook: license tanpa items memakai title fallback', { timeout: 60
   const row = adminJson.purchases.find((p) => String(p?.idempotency_key || '') === String(orderId));
   assert.ok(row);
   assert.equal(String(row.status), 'voucher_sent');
-  assert.equal(String(row.email_status), 'sent');
+  assert.equal(String(row.email_status), 'test');
   assert.ok(String(row.voucher_code || '').length > 0);
 });

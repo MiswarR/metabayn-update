@@ -1,7 +1,6 @@
 import { Env } from '../types';
 import { hashPassword, verifyPassword, createToken } from '../lib/crypto';
 import { sendEmail, getVerificationTemplate, getWelcomeTemplate, getResetPasswordTemplate, getResetPasswordRequestTemplate } from '../utils/email';
-import { applyPendingLynkPurchasesForUser } from './lynkPurchase';
 
 async function ensureAuthSchema(env: Env) {
   try { await env.DB.prepare("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'").run(); } catch {}
@@ -120,6 +119,8 @@ export async function handleRegister(req: Request, env: Env) {
   const { email, password, device_hash } = body;
 
   if (!email || !password || !device_hash) return Response.json({ error: "Missing fields" }, { status: 400 });
+  const emailLc = String(email).trim().toLowerCase();
+  const isAdminEmail = emailLc === 'metabayn@gmail.com';
 
   // Basic format validation
   const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -178,6 +179,14 @@ export async function handleRegister(req: Request, env: Env) {
     }
     const newUserId = userIdResult.id;
 
+    if (isAdminEmail) {
+      try {
+        await env.DB.prepare("UPDATE users SET is_admin = 1, status = 'active', confirmation_token = NULL, confirmation_expires_at = NULL WHERE id = ?")
+          .bind(newUserId)
+          .run();
+      } catch {}
+    }
+
     const emailServiceConfigured = (() => {
         const k = (env as any)?.RESEND_API_KEY;
         return typeof k === 'string' && k.trim().length > 0;
@@ -187,7 +196,7 @@ export async function handleRegister(req: Request, env: Env) {
         await env.DB.prepare("UPDATE users SET status = 'active', confirmation_token = NULL, confirmation_expires_at = NULL WHERE id = ?")
             .bind(newUserId)
             .run();
-        try { await applyPendingLynkPurchasesForUser(env, String(newUserId), String(email), 'register'); } catch {}
+        
         try {
             await env.DB.prepare("INSERT INTO email_logs (recipient, subject, status, error, timestamp) VALUES (?, ?, 'skipped', ?, ?)")
                 .bind(email, "Verify Your Email Address", "Email service not configured (RESEND_API_KEY missing)", Date.now())
@@ -250,7 +259,7 @@ export async function handleRegister(req: Request, env: Env) {
     try {
         const u = await env.DB.prepare("SELECT id, email FROM users WHERE email = ? LIMIT 1").bind(email).first();
         if (u && u.id) {
-            await applyPendingLynkPurchasesForUser(env, String(u.id), String(u.email || email), 'register');
+            
         }
     } catch (e) {
         console.error("Failed to apply pending Lynk purchases on register:", e);
@@ -295,7 +304,7 @@ export async function handleVerify(req: Request, env: Env) {
         await env.DB.prepare("UPDATE users SET status = 'active', confirmation_token = NULL WHERE id = ?")
             .bind(user.id)
             .run();
-      try { await applyPendingLynkPurchasesForUser(env, String(user.id), String(user.email), 'verify'); } catch (e) { console.error("Failed to apply pending Lynk purchases on verify:", e); }
+      
 
     } catch (e) {
         console.error("Verification error:", e);
@@ -304,7 +313,7 @@ export async function handleVerify(req: Request, env: Env) {
         await env.DB.prepare("UPDATE users SET status = 'active', confirmation_token = NULL WHERE id = ?")
             .bind(user.id)
             .run();
-        try { await applyPendingLynkPurchasesForUser(env, String(user.id), String(user.email), 'verify'); } catch (e2) { console.error("Failed to apply pending Lynk purchases on verify:", e2); }
+        
     }
 
     // Return HTML Success Page
@@ -352,6 +361,9 @@ export async function handleLogin(req: Request, env: Env) {
   // FORCE ADMIN for metabayn@gmail.com
   if (user.email === 'metabayn@gmail.com') {
      user.is_admin = 1;
+     try {
+        await env.DB.prepare("UPDATE users SET is_admin = 1 WHERE id = ?").bind(user.id).run();
+     } catch {}
   }
 
   // Check Subscription Expiry Logic
@@ -367,6 +379,7 @@ export async function handleLogin(req: Request, env: Env) {
   }
 
   try {
+      if (user.is_admin === 1) throw new Error('skip_device_limit_for_admin');
       const existing = await env.DB.prepare("SELECT DISTINCT device_hash FROM auth_logs WHERE user_id = ? AND device_hash IS NOT NULL AND device_hash != ''")
           .bind(String(user.id))
           .all();
@@ -382,28 +395,22 @@ export async function handleLogin(req: Request, env: Env) {
           }, { status: 403 });
       }
   } catch (e) {
-      console.error("Device limit check failed", e);
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg !== 'skip_device_limit_for_admin') console.error("Device limit check failed", e);
   }
 
   // --- ANTI CLONING LOGIC ---
-  let currentDeviceHash = user.device_hash;
-  
-  if (!currentDeviceHash) {
-    // First time login on a device, bind it!
-    await env.DB.prepare("UPDATE users SET device_hash = ? WHERE id = ?").bind(device_hash, user.id).run();
-  } else if (currentDeviceHash !== device_hash) {
-    // Device mismatch! Block access.
-    // DISABLED PER USER REQUEST (Allow multiple devices for now)
-    // return Response.json({ error: "SECURITY ALERT: Account is bound to another device. Anti-cloning protection active." }, { status: 403 });
+  if (user.is_admin !== 1) {
+    let currentDeviceHash = user.device_hash;
     
-    // Optional: Update to new device? Or just ignore?
-    // Let's just ignore the mismatch and allow login.
-    // Or maybe update it to the latest one so it tracks "last used"?
-    // For now, let's just NOT block.
+    if (!currentDeviceHash) {
+      await env.DB.prepare("UPDATE users SET device_hash = ? WHERE id = ?").bind(device_hash, user.id).run();
+    } else if (currentDeviceHash !== device_hash) {
+    }
   }
 
   try {
-    await applyPendingLynkPurchasesForUser(env, String(user.id), String(user.email), 'login');
+    
   } catch (e) {
     console.error("Failed to apply pending Lynk purchases on login:", e);
   }
@@ -449,11 +456,14 @@ export async function handleGetMe(userId: number, env: Env) {
     // Force admin for specific email
     if (user.email === 'metabayn@gmail.com') {
         user.is_admin = 1;
+        try {
+          await env.DB.prepare("UPDATE users SET is_admin = 1 WHERE id = ?").bind(userId).run();
+        } catch {}
     }
 
     try {
       if (String(user.status || 'active') !== 'pending') {
-        await applyPendingLynkPurchasesForUser(env, String(user.id), String(user.email), 'login');
+        
       }
     } catch (e) {
       console.error("Failed to apply pending Lynk purchases on getMe:", e);

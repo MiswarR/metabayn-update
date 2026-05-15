@@ -1,7 +1,7 @@
 {
   "package": {
     "productName": "metabayn-studio",
-    "version": "5.2.2"
+    "version": "5.2.6"
   },
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -101,8 +101,7 @@
       "active": true,
       "targets": [
         "msi",
-        "nsis",
-        "updater"
+        "nsis"
       ],
       "identifier": "com.metabayn.studio",
       "icon": [

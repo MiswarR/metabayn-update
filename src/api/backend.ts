@@ -122,140 +122,6 @@ export async function apiGetUserProfile(token: string): Promise<any> {
     return data;
 }
 
-export async function apiGetExchangeRate(): Promise<number> {
-    try {
-      const resp = await fetch('https://open.er-api.com/v6/latest/USD');
-      if (resp.ok) {
-        const data: any = await resp.json();
-        const rate = data?.rates?.IDR;
-        if (rate && typeof rate === 'number' && Number.isFinite(rate) && rate > 0) return rate;
-      }
-    } catch {}
-    return 17000;
-}
-
-export async function apiCreatePaypal(
-  token: string,
-  amount: number,
-  type: 'token' | 'subscription' = 'token',
-  userId?: string,
-  tokensPack?: number,
-  duration?: number
-): Promise<any> {
-	const baseUrl = await getApiUrl();
-	const res = await fetch(`${baseUrl}/payment/paypal/create`, {
-	  method: "POST",
-	  headers: { 
-		  "Content-Type": "application/json",
-		  "Authorization": `Bearer ${token}` 
-	  },
-	  body: JSON.stringify({ amount, userId, type, tokensPack, duration })
-	});
-
-	const text = await res.text();
-	let data: any = null;
-	if (text) {
-		try {
-			data = JSON.parse(text);
-		} catch {
-			// Tangani respons non-JSON (misalnya "Not Found") dengan pesan yang lebih jelas
-			if (!res.ok) {
-				throw new Error(`Server error (${res.status}): ${text.substring(0, 120)}`);
-			}
-			throw new Error(`Invalid server response: ${text.substring(0, 120)}`);
-		}
-	}
-
-	if (!res.ok) throw new Error((data && data.error) || `Payment creation failed (${res.status})`);
-	return data;
-}
-
-export async function apiCreatePaypalPayment(
-  token: string,
-  amountOrPayload: number | { amount: number; userId: string; type?: 'token' | 'subscription'; tokensPack?: number; duration?: number },
-  type: 'token' | 'subscription' = 'token',
-  userId?: string,
-  tokensPack?: number,
-  duration?: number
-): Promise<any> {
-  if (typeof amountOrPayload === 'number') {
-    return apiCreatePaypal(token, amountOrPayload, type, userId, tokensPack, duration);
-  }
-  const payload = amountOrPayload;
-  return apiCreatePaypal(
-    token,
-    payload.amount,
-    payload.type === 'subscription' ? 'subscription' : 'token',
-    payload.userId,
-    payload.tokensPack,
-    payload.duration
-  );
-}
-
-export async function apiCheckPaypalStatus(token: string, transactionId: string | number): Promise<any> {
-	const baseUrl = await getApiUrl();
-	const res = await fetch(`${baseUrl}/payment/paypal/check`, {
-	  method: "POST",
-	  headers: { 
-		  "Content-Type": "application/json",
-		  "Authorization": `Bearer ${token}` 
-	  },
-	  body: JSON.stringify({ transactionId })
-	});
-
-	const text = await res.text();
-	let data: any = null;
-	if (text) {
-		try {
-			data = JSON.parse(text);
-		} catch {
-			if (!res.ok) {
-				throw new Error(`Server error (${res.status}): ${text.substring(0, 120)}`);
-			}
-			throw new Error(`Invalid server response: ${text.substring(0, 120)}`);
-		}
-	}
-
-	if (!res.ok) throw new Error((data && data.error) || `Status check failed (${res.status})`);
-	return data;
-}
-
-export async function apiCheckLynkIdStatus(
-	token: string,
-	since: number,
-	meta?: number | { amountIdr?: number; productType?: 'token' | 'subscription'; durationDays?: number; tokensExpected?: number }
-): Promise<any> {
-	const baseUrl = await getApiUrl();
-	const payload =
-		typeof meta === 'number'
-			? { since, amountIdr: meta }
-			: { since, ...(meta || {}) };
-	const res = await fetch(`${baseUrl}/payment/lynkid/check`, {
-	  method: "POST",
-	  headers: {
-		  "Content-Type": "application/json",
-		  "Authorization": `Bearer ${token}`
-	  },
-	  body: JSON.stringify(payload)
-	});
-
-	const text = await res.text();
-	let data: any = null;
-	if (text) {
-		try {
-			data = JSON.parse(text);
-		} catch {
-			if (!res.ok) {
-				throw new Error(`Server error (${res.status}): ${text.substring(0, 120)}`);
-			}
-			throw new Error(`Invalid server response: ${text.substring(0, 120)}`);
-		}
-	}
-
-	if (!res.ok) throw new Error((data && data.error) || `Lynk.id status check failed (${res.status})`);
-	return data;
-}
-
 const downloadTextAsFile = (content: string, filename: string, mime: string) => {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -432,20 +298,157 @@ export async function apiAdminCreateVoucher(
   if (!res.ok) throw new Error(data?.error || "Failed to create voucher");
   return data;
 }
-  
-export async function apiRedeemVoucher(token: string, code: string, userId: string, deviceHash: string): Promise<any> {
-    const baseUrl = await getApiUrl();
-    const res = await fetch(`${baseUrl}/voucher/redeem`, {
-      method: "POST",
-      headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}` 
-      },
-      body: JSON.stringify({ code, userId, deviceHash })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Redeem failed");
-    return data;
+
+export async function apiLicenseStatus(token: string, userId: string, deviceHash: string): Promise<any> {
+  const baseUrl = await getApiUrl();
+  const url = new URL(`${baseUrl}/license/status`);
+  url.searchParams.set('user_id', String(userId));
+  url.searchParams.set('device_hash', String(deviceHash));
+  const res = await fetch(url.toString(), {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error || "License status failed");
+  return data;
+}
+
+export async function apiLicenseActivate(token: string, code: string, userId: string, deviceHash: string): Promise<any> {
+  const baseUrl = await getApiUrl();
+  const res = await fetch(`${baseUrl}/license/activate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`
+    },
+    body: JSON.stringify({ code, userId, deviceHash })
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error || "License activation failed");
+  return data;
+}
+
+export async function apiToolLicenseStatus(token: string, userId: string, deviceHash: string, toolCode: string): Promise<any> {
+  const baseUrl = await getApiUrl();
+  const url = new URL(`${baseUrl}/tool/license/status`);
+  url.searchParams.set('user_id', String(userId));
+  url.searchParams.set('device_hash', String(deviceHash));
+  url.searchParams.set('tool', String(toolCode));
+  const res = await fetch(url.toString(), {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  const text = await res.text().catch(() => '');
+  let data: any = null;
+  try { data = text ? JSON.parse(text) : null; } catch {}
+  if (!res.ok) {
+    const baseMsg = String(data?.error || '').trim();
+    const suffix = text && !baseMsg ? ` (HTTP ${res.status})` : '';
+    throw new Error(baseMsg || `Tool license status failed${suffix}`);
+  }
+  return data;
+}
+
+export async function apiToolLicenseActivate(token: string, code: string, userId: string, deviceHash: string, toolCode: string): Promise<any> {
+  const baseUrl = await getApiUrl();
+  const res = await fetch(`${baseUrl}/tool/license/activate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`
+    },
+    body: JSON.stringify({ code, userId, deviceHash, tool: toolCode })
+  });
+  const text = await res.text().catch(() => '');
+  let data: any = null;
+  try { data = text ? JSON.parse(text) : null; } catch {}
+  if (!res.ok) {
+    const baseMsg = String(data?.error || '').trim();
+    const suffix = text && !baseMsg ? ` (HTTP ${res.status})` : '';
+    throw new Error(baseMsg || `Tool license activation failed${suffix}`);
+  }
+  return data;
+}
+
+export async function apiSupportLicenseClaim(
+  token: string,
+  payload: {
+    purchase_email: string;
+    product_code?: 'license' | 'prompt_grabber' | '';
+    purchase_time_hint?: string;
+    amount_hint?: string;
+    note?: string;
+  }
+): Promise<any> {
+  const baseUrl = await getApiUrl();
+  const res = await fetch(`${baseUrl}/support/license-claim`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`
+    },
+    body: JSON.stringify(payload || {})
+  });
+  const text = await res.text().catch(() => '');
+  let data: any = null;
+  try { data = text ? JSON.parse(text) : null; } catch {}
+  if (!res.ok) {
+    const baseMsg = String(data?.error || '').trim();
+    const suffix = text && !baseMsg ? ` (HTTP ${res.status})` : '';
+    throw new Error(baseMsg || `Support request failed${suffix}`);
+  }
+  return data;
+}
+
+export async function apiAdminListLicenseSupport(token: string, opts?: { status?: string; q?: string; limit?: number }): Promise<any> {
+  const baseUrl = await getApiUrl();
+  const url = new URL(`${baseUrl}/admin/support/license-claims`);
+  if (opts?.status) url.searchParams.set('status', String(opts.status));
+  if (opts?.q) url.searchParams.set('q', String(opts.q));
+  if (opts?.limit) url.searchParams.set('limit', String(opts.limit));
+  const res = await fetch(url.toString(), { headers: { "Authorization": `Bearer ${token}` } });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error || "Failed to fetch license support requests");
+  return data;
+}
+
+export async function apiAdminFindLynkPurchasesByEmail(token: string, email: string, limit?: number): Promise<any> {
+  const baseUrl = await getApiUrl();
+  const url = new URL(`${baseUrl}/admin/support/lynk-purchases`);
+  url.searchParams.set('email', String(email || ''));
+  if (limit) url.searchParams.set('limit', String(limit));
+  const res = await fetch(url.toString(), { headers: { "Authorization": `Bearer ${token}` } });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error || "Failed to search Lynk purchases");
+  return data;
+}
+
+export async function apiAdminApproveLicenseSupport(
+  token: string,
+  payload: { ticket_id: string; voucher_code: string; new_email: string; resend?: boolean }
+): Promise<any> {
+  const baseUrl = await getApiUrl();
+  const res = await fetch(`${baseUrl}/admin/support/license-claims/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+    body: JSON.stringify(payload || {})
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error || "Approve failed");
+  return data;
+}
+
+export async function apiAdminRejectLicenseSupport(
+  token: string,
+  payload: { ticket_id: string; admin_note?: string }
+): Promise<any> {
+  const baseUrl = await getApiUrl();
+  const res = await fetch(`${baseUrl}/admin/support/license-claims/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+    body: JSON.stringify(payload || {})
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error || "Reject failed");
+  return data;
 }
 
 // --- Auth Helpers ---

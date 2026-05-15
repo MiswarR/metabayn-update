@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
 import { open as shellOpen } from '@tauri-apps/api/shell';
-import appIconUrl from '@icons/icon.svg'; 
+import appIconUrl from '@icons/icon.ico'; 
 
 export default function Login({ onLogin }: { onLogin: (token: string) => void }) {
   const [email, setEmail] = useState('');

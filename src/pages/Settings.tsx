@@ -3,12 +3,20 @@ import { invoke } from '@tauri-apps/api/tauri'
 import { open as pick } from '@tauri-apps/api/dialog'
 import { encryptApiKey, decryptApiKey } from '../utils/crypto'
 import { logAudit } from '../utils/audit'
-import { apiGetUserProfile, getApiUrl, getTokenLocal } from '../api/backend'
+import { apiGetUserProfile, getApiUrl, getMachineHash, getTokenLocal } from '../api/backend'
 import { translations } from '../utils/translations'
 import { isVisionLikeModelId } from '../utils/modelVisionFilter'
 import { formatTokenBalance } from '../utils/gatewayBalance'
+import iconGenerateCsv from '@icons/generate-csv.ico'
+import iconDuplicateCheck from '@icons/duplicate-check.ico'
+import iconRemoveMetadata from '@icons/remove-metadata.ico'
+import iconPromptGrabber from '@icons/prompt-grabber.ico'
+import iconImageCluster from '@icons/image-cluster.ico'
+import iconResizeImageVideo from '@icons/resize-image-video.ico'
+import iconConvertImages from '@icons/convert-images.ico'
+import openRouterIcon from '../../src-tauri/icons/openrouter.png'
 
-export default function Settings({onBack, embedded, onSave, lang='en', onGenerateCSV, onOpenDupConfig, onRunAiCluster}:{onBack:()=>void, embedded?: boolean, onSave?:()=>void, lang?:'en'|'id', onGenerateCSV?:()=>void, onOpenDupConfig?:()=>void, onRunAiCluster?:()=>void}){
+export default function Settings({onBack, embedded, onSave, lang='en', onGenerateCSV, onOpenPromptGrabber, onOpenDupConfig, onRunAiCluster, onOpenResizeConfig, onOpenConvertConfig, promptGrabberLicensed}:{onBack:()=>void, embedded?: boolean, onSave?:()=>void, lang?:'en'|'id', onGenerateCSV?:()=>void, onOpenPromptGrabber?:()=>void, onOpenDupConfig?:()=>void, onRunAiCluster?:()=>void, onOpenResizeConfig?:()=>void, onOpenConvertConfig?:()=>void, promptGrabberLicensed?: boolean}){
   const t = (translations[lang] || translations['en'])?.settings || translations['en'].settings;
   const getTabLabel = (tab: string) => {
     const key = tab.toLowerCase()
@@ -51,6 +59,8 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
   const [banned,setBanned]=useState('')
   const [provider,setProvider]=useState('Gemini')
   const [loaded, setLoaded] = useState(false)
+  const [settingsHydrated, setSettingsHydrated] = useState(false)
+  const [deviceSecret, setDeviceSecret] = useState<string>('')
   const [selectionEnabled, setSelectionEnabled] = useState(false)
   // // const [checkAnatomyDefect, setCheckAnatomyDefect] = useState(false)
   const [checkHumanAnimalSimilarity, setCheckHumanAnimalSimilarity] = useState(false)
@@ -117,6 +127,9 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
   const [toast, setToast] = useState<{text: string, type: 'success'|'error'|'info'} | null>(null)
   const [activeTab, setActiveTab] = useState<'General'|'Provider'|'Generation'|'Selection'|'Output'|'Tools'>('General')
   const [selectionSubTab, setSelectionSubTab] = useState<'Human'|'Animal'|'Text'|'Other'>('Human')
+  const [toolInfoHoverId, setToolInfoHoverId] = useState<string | null>(null)
+  const [toolInfoPinnedId, setToolInfoPinnedId] = useState<string | null>(null)
+  const [toolPressedId, setToolPressedId] = useState<string | null>(null)
 
   const normalizeModelForProvider = (provider: string, model: string): string => {
     const p = String(provider || '')
@@ -383,6 +396,8 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
     const shouldFetch = provider === 'OpenAI' && !!key && !key.startsWith('sk-or-')
     if (!shouldFetch) return
     if (openAiModelsLoading) return
+    // @ts-ignore
+    if (typeof window !== 'undefined' && !window.__TAURI_IPC__) return
 
     const cacheKey = 'openai_models_cache_v1'
     const cacheTsKey = 'openai_models_cache_ts_v1'
@@ -403,19 +418,14 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
     }
 
     setOpenAiModelsLoading(true)
-    fetch('https://api.openai.com/v1/models', {
-      headers: { 'Authorization': `Bearer ${key}` }
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(await res.text())
-        return res.json()
-      })
-      .then((data) => {
-        const list = Array.isArray(data?.data) ? data.data : []
+    invoke<string[]>('list_openai_models', { apiKey: key })
+      .then((ids) => {
+        const list = Array.isArray(ids) ? ids : []
         const normalized = list
-          .map((m: any) => String(m?.id || '').trim())
+          .map((id: any) => String(id || '').trim())
           .filter(Boolean)
           .map((id: string) => ({ label: id, value: id }))
+
         if (normalized.length > 0) {
           setOpenAiLiveModels(normalized)
           try {
@@ -717,10 +727,14 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
     if (!available || available.length === 0) return
     const exists = available.some(m => m.value === model)
     if (exists) return
-    setModel(available[0].value)
+    if (!String(model || '').trim()) setModel(available[0].value)
   }, [provider, fetchedModels, openRouterLiveModels, openAiLiveModels])
 
   useEffect(()=>{ load(); },[])
+
+  useEffect(() => {
+    getMachineHash().then((h) => setDeviceSecret(String(h || '').trim())).catch(() => setDeviceSecret(''))
+  }, [])
 
   // Validate folders
   useEffect(() => {
@@ -736,17 +750,18 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       const savedKey = localStorage.getItem('metabayn_api_key_enc')
       const savedIv = localStorage.getItem('metabayn_api_key_iv')
       if (savedKey && savedIv) {
-        decryptApiKey(savedKey, savedIv).then(k => {
+        decryptApiKey(savedKey, savedIv, deviceSecret).then(k => {
             setApiKey(k)
             setApiKeyEncrypted(savedKey)
         }).catch(e => console.error("Failed to decrypt API key", e))
       }
-  }, [])
+  }, [deviceSecret])
 
   const [testingConnection, setTestingConnection] = useState(false)
 
   async function testConnection() {
-      if (!apiKey.trim()) {
+      const normalizedKey = apiKey.trim()
+      if (!normalizedKey) {
           showToast(t.apiKeyEmpty, 'error')
           return
       }
@@ -756,7 +771,7 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       }
       setTestingConnection(true)
       try {
-          const res = await invoke<string>('test_api_connection', { provider, apiKey: apiKey, endpoint: null })
+          const res = await invoke<string>('test_api_connection', { provider, apiKey: normalizedKey, endpoint: provider === 'OpenRouter' ? (openRouterEndpoint?.trim() || null) : null })
           showToast(res === 'Success' ? t.connectedSuccess : `${t.connected}${res}`, 'success')
       } catch (e:any) {
           const msg = String(e).replace('Error: ', '')
@@ -766,27 +781,34 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       }
   }
 
-  async function saveApiKey() {
+  async function saveApiKey(): Promise<boolean> {
+      const normalizedKey = apiKey.trim()
       // Validate format
-      if (apiKey.trim().length < 5) {
+      if (normalizedKey.length < 5) {
           showToast(t.apiKeyInvalid, 'error')
-          return
+          return false
       }
-      if (provider === 'OpenAI' && !apiKey.startsWith('sk-proj-') && !apiKey.startsWith('sk-')) {
+      if (provider === 'OpenAI' && !normalizedKey.startsWith('sk-proj-') && !normalizedKey.startsWith('sk-')) {
           showToast(t.openaiKeyInvalid, 'error')
-          return
+          return false
+      }
+      if (provider === 'OpenRouter' && !normalizedKey.startsWith('sk-or-')) {
+          showToast((t as any).apiKeyHintOpenrouter || 'OpenRouter API keys typically start with sk-or-', 'error')
+          return false
       }
 
       try {
-          const { iv, data } = await encryptApiKey(apiKey, "user-secret") // Using fixed secret for now or generate
+          const { iv, data } = await encryptApiKey(normalizedKey, deviceSecret)
           localStorage.setItem('metabayn_api_key_enc', data)
           localStorage.setItem('metabayn_api_key_iv', iv)
           setApiKeyEncrypted(data)
           logAudit('ApiKeyUsage', 'Save API Key', 'Success');
           showToast(t.apiKeySaved, 'success')
+          return true
       } catch (e:any) {
           logAudit('Error', 'Save API Key Failed', String(e));
           showToast(`${t.saveFailed}${String(e).replace('Error: ', '')}`, 'error')
+          return false
       }
   }
 
@@ -808,9 +830,14 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       const sRaw=await invoke<any>('get_settings')
       const s = sRaw || {};
       
-      let p = s.ai_provider || 'Gemini';
       const validProviders = ['Gemini', 'OpenAI', 'OpenRouter', 'Groq'];
-      if (!validProviders.includes(p)) p = 'Gemini';
+      const normalizeProvider = (raw: any): string => {
+        const v = String(raw || '').trim()
+        if (!v) return 'Gemini'
+        const found = validProviders.find(x => x.toLowerCase() === v.toLowerCase())
+        return found || 'Gemini'
+      }
+      const p = normalizeProvider(s.ai_provider)
       setProvider(p)
 
       let initialModel = s.default_model || 'gemini-2.0-flash-lite-preview-02-05';
@@ -830,9 +857,9 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
 
       setKmin(Number(s.keywords_min_count ?? 35)); setKmax(Number(s.keywords_max_count ?? 49)); setBanned(s.banned_words||'')
       
-      const defaultOpenRouterEndpoint = 'https://metabayn-backend.metabayn.workers.dev/v1/chat/completions'
+      const defaultOpenRouterEndpoint = 'https://openrouter.ai/api/v1/chat/completions'
       let orEndpoint = (s.openrouter_endpoint || defaultOpenRouterEndpoint) as string
-      if (orEndpoint.includes('metabayn-worker.metabayn.workers.dev')) {
+      if (/metabayn/i.test(orEndpoint)) {
         orEndpoint = defaultOpenRouterEndpoint
       }
       setOpenRouterEndpoint(orEndpoint)
@@ -883,16 +910,18 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       setRenameMode(s.rename_mode || 'title')
       setRenameCustomText(s.rename_custom_text || '')
       
+      setSettingsHydrated(true)
       setLoaded(true)
     } catch(e) {
       console.error(e)
+      setSettingsHydrated(false)
       setLoaded(true)
     }
   }
 
   // Auto-save effect
   useEffect(() => {
-    if (!loaded) return
+    if (!loaded || !settingsHydrated) return
     const timer = setTimeout(() => {
       saveSilent()
     }, 400)
@@ -912,6 +941,10 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
     const safeThreads = Math.max(1, Math.min(Number(threads || 1), 10))
     const s_desc_min = overrides.description_min_chars !== undefined ? Number(overrides.description_min_chars) : (descEnabled ? dmin : 0)
     const s_desc_max = overrides.description_max_chars !== undefined ? Number(overrides.description_max_chars) : (descEnabled ? dmax : 0)
+    const defaultOpenRouterEndpoint = 'https://openrouter.ai/api/v1/chat/completions'
+    let sanitizedOpenRouterEndpoint = String(overrides.openrouter_endpoint !== undefined ? overrides.openrouter_endpoint : openRouterEndpoint).trim()
+    if (!sanitizedOpenRouterEndpoint) sanitizedOpenRouterEndpoint = defaultOpenRouterEndpoint
+    if (/metabayn/i.test(sanitizedOpenRouterEndpoint)) sanitizedOpenRouterEndpoint = defaultOpenRouterEndpoint
     // Get current auth token to prevent overwriting it with empty string
     const currentToken = getTokenLocal() || '';
     
@@ -940,7 +973,7 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       quality_luma_max: qualityLumaMax,
       duplicate_max_hamming_distance: duplicateMaxDistance,
       selection_order: selectionOrder,
-      connection_mode: provider === 'OpenRouter' ? 'server' : 'direct',
+      connection_mode: 'direct',
 
       text_filter_gibberish: textFilterGibberish,
       text_filter_non_english: textFilterNonEnglish,
@@ -965,7 +998,7 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       animal_filter_face_only: animalFilterFaceOnly,
       animal_filter_nudity: animalFilterNudity,
 
-      openrouter_endpoint: openRouterEndpoint
+      openrouter_endpoint: sanitizedOpenRouterEndpoint
     } })
   }
 
@@ -1212,7 +1245,10 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
                                     <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
                                         <div>
                                             <div style={{fontSize: 10, fontWeight: 'bold', marginBottom: 1}}>AI Gateway</div>
-                                            <div style={{fontSize: 8, opacity: 0.7}}>Premium Access</div>
+                                            <div style={{display:'flex', alignItems:'center', gap:4, fontSize: 8, opacity: 0.8}}>
+                                              <img src={openRouterIcon} alt="OpenRouter" style={{width: 7, height: 7, opacity: 0.9, display: 'block'}} />
+                                              <span>OpenRouter</span>
+                                            </div>
                                         </div>
                                     </div>
                                 </button>
@@ -1277,8 +1313,7 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
               </div>
           </div>
 
-          {/* API Key Input (Standard Only) */}
-          {provider !== 'OpenRouter' && (
+          {/* API Key Input */}
           <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6}}>
               <label style={{fontSize:10, color:'#aaa', width:80, flexShrink:0}}>{t.apiKey}</label>
               <div style={{flex:1, display:'flex', gap:5, flexDirection:'column'}}>
@@ -1301,41 +1336,32 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
                             }
                         }
                         
-                        if (detectedProvider === 'OpenAI' && val && !val.startsWith('sk-proj-') && !val.startsWith('sk-')) {
+                        const effectiveProvider = detectedProvider || provider;
+                        if (effectiveProvider === 'OpenAI' && val && !val.startsWith('sk-proj-') && !val.startsWith('sk-')) {
                             setApiKeyError(t.apiKeyHintOpenai);
-                        } else if (detectedProvider === 'Gemini' && val && !val.startsWith('AIza')) {
+                        } else if (effectiveProvider === 'Gemini' && val && !val.startsWith('AIza')) {
                             setApiKeyError(t.apiKeyHintGemini);
+                        } else if (effectiveProvider === 'OpenRouter' && val && !val.startsWith('sk-or-')) {
+                            setApiKeyError((t as any).apiKeyHintOpenrouter || 'OpenRouter API keys typically start with sk-or-');
                         } else {
                             setApiKeyError('');
                         }
                     }} 
                     onFocus={()=>setIsApiKeyFocused(true)}
                     onBlur={()=>setIsApiKeyFocused(false)}
-                    placeholder={t.apiKeyPlaceholder}
+                    placeholder={provider === 'OpenRouter' ? 'sk-or-...' : t.apiKeyPlaceholder}
                     style={{width:'100%', borderColor: apiKeyError ? 'red' : '#444', borderStyle:'solid', borderWidth:1, padding:'4px 8px', borderRadius:6, background:'#111', color:'#eee', fontSize:10}}
                   />
                   {apiKeyError && <div style={{color:'#ff5252', fontSize: 9}}>{apiKeyError}</div>}
               </div>
           </div>
-          )}
           <div style={{display:'flex', justifyContent:'space-between', marginTop:10, borderTop:'1px solid #333', paddingTop:8}}>
               <div style={{color:'#777', fontSize: 9, display:'flex', alignItems:'center'}}>
-                  {provider === 'OpenRouter' ? '' : (apiKeyEncrypted ? t.saved : t.notSaved)}
+                  {apiKeyEncrypted ? t.saved : t.notSaved}
               </div>
               <div style={{display:'flex', gap:6}}>
                   <button 
-                    onClick={provider === 'OpenRouter' ? async () => {
-                        setTestingConnection(true);
-                        try {
-                           const res = await invoke<string>('test_api_connection', { provider, apiKey: 'mock-key', endpoint: openRouterEndpoint?.trim() || undefined });
-                           if (res === 'Success') showToast(t.connectedSuccess, 'success');
-                           else showToast(res, 'error');
-                        } catch(e: any) {
-                           showToast(String(e), 'error');
-                        } finally {
-                           setTestingConnection(false);
-                        }
-                    } : testConnection} 
+                    onClick={testConnection} 
                     disabled={testingConnection}
                     title={t.testConnectionTitle}
                     style={{background:'#3b74a8', border:'none', color:'#fff', borderRadius:6, padding:'4px 8px', cursor:'pointer', opacity: testingConnection ? 0.7 : 0.9, fontSize: 10}}
@@ -1343,7 +1369,11 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
                     {testingConnection ? t.testing : (provider === 'OpenRouter' ? t.testAiGateway : t.testApiKey)}
                   </button>
                   <button 
-                    onClick={provider === 'OpenRouter' ? applySettings : saveApiKey} 
+                    onClick={provider === 'OpenRouter' ? async () => {
+                      const ok = await saveApiKey();
+                      if (!ok) return;
+                      await applySettings();
+                    } : saveApiKey} 
                     title={t.saveSettingsTitle}
                     style={{background:'#4f8f66', border:'none', color:'#fff', borderRadius:6, padding:'4px 8px', cursor:'pointer', opacity:0.9, fontSize: 10}}
                   >
@@ -1925,123 +1955,239 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
         </div>
       )}
 
-      {activeTab==='Tools' && (
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
-        <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 14, minWidth: 0 }}>
-            <div style={{marginBottom:12, color:'#a1a1aa', fontSize:11, fontWeight:600}}>{t.tools?.csvGenerationHeading || 'CSV Generation'}</div>
-            <button 
-                onClick={onGenerateCSV} 
-                style={{
-                    width:'100%', 
-                    display:'flex', 
-                    gap:10, 
-                    padding:'10px 14px', 
-                    background:'#18181b', 
-                    borderRadius:8, 
-                    alignItems:'center', 
-                    border:'1px solid #3f3f46', 
-                    cursor:'pointer', 
-                    color:'#e4e4e7',
-                    textAlign:'left'
-                }}
-            >
-                <div style={{width:10, height:10, borderRadius:3, background:'#10b981', flexShrink:0}}></div>
-                <div style={{display:'flex', flexDirection:'column', gap:2}}>
-                    <span style={{fontSize:12, fontWeight:600}}>{t.tools?.generateCsvTitle || 'Generate CSV'}</span>
-                    <span style={{fontSize:10, color:'#71717a'}}>{t.tools?.generateCsvDesc || 'Export logs to CSV format'}</span>
-                </div>
-            </button>
-        </div>
+      {activeTab==='Tools' && (() => {
+        const tools = [
+          {
+            id: 'generate_csv',
+            name: t.tools?.generateCsvTitle || 'Generate CSV',
+            desc: t.tools?.generateCsvDesc || 'Export logs to CSV format',
+            icon: iconGenerateCsv,
+            onClick: () => { try { onGenerateCSV && onGenerateCSV() } catch {} }
+          },
+          {
+            id: 'prompt_grabber',
+            name: t.tools?.promptGrabberTitle || 'Prompt Grabber',
+            desc: t.tools?.promptGrabberDesc || 'Scan folder lokal (gambar/video) lalu generate prompt AI per file.',
+            icon: iconPromptGrabber,
+            onClick: () => { try { onOpenPromptGrabber && onOpenPromptGrabber() } catch {} }
+          },
+          {
+            id: 'duplicate_check',
+            name: t.tools?.duplicateCheckTitle || 'Duplicate Check',
+            desc: t.tools?.duplicateCheckDesc || 'Check for duplicate images',
+            icon: iconDuplicateCheck,
+            onClick: () => { try { onOpenDupConfig && onOpenDupConfig() } catch {} }
+          },
+          {
+            id: 'remove_metadata',
+            name: t.tools?.removeMetadataBatchTitle || 'Remove Metadata (Batch)',
+            desc: t.tools?.removeMetadataBatchDesc || 'Remove metadata (images & videos)',
+            icon: iconRemoveMetadata,
+            onClick: async () => {
+              try {
+                const dir = await pick({ directory: true, multiple: false, title: t.tools?.selectFolderImagesVideos || 'Select Folder (Images/Videos)' });
+                if (!dir) return;
+                showToast(t.tools?.removingMetadataToast || 'Removing metadata...', 'info');
+                const res = await invoke<string>('strip_metadata_batch', { inputFolder: String(dir), recurse: true });
+                if (res) showToast(t.tools?.metadataRemovedToast || 'Metadata removed successfully', 'success');
+              } catch (e: any) {
+                showToast(String(e).replace('Error: ', ''), 'error');
+              }
+            }
+          },
+          {
+            id: 'ai_cluster',
+            name: t.tools?.aiClusterTitle || 'Image Cluster',
+            desc: t.tools?.aiClusterDesc || 'Cluster images using AI',
+            icon: iconImageCluster,
+            onClick: () => { try { onRunAiCluster && onRunAiCluster() } catch {} }
+          },
+          {
+            id: 'resize_media',
+            name: t.tools?.resizeTitle || 'Resize Images/Videos',
+            desc: t.tools?.resizeDesc || 'Resize images and videos with custom settings',
+            icon: iconResizeImageVideo,
+            onClick: () => { try { onOpenResizeConfig && onOpenResizeConfig() } catch {} }
+          },
+          {
+            id: 'convert_media',
+            name: t.tools?.convertTitle || 'Convert Images',
+            desc: t.tools?.convertDesc || 'Convert images to other formats',
+            icon: iconConvertImages,
+            onClick: () => { try { onOpenConvertConfig && onOpenConvertConfig() } catch {} }
+          }
+        ];
 
-        <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 14, minWidth: 0 }}>
-            <div style={{marginBottom:12, color:'#a1a1aa', fontSize:11, fontWeight:600}}>{t.tools?.duplicateHeading || 'Duplicate Check'}</div>
-            <button 
-                onClick={onOpenDupConfig} 
-                style={{
-                    width:'100%', 
-                    display:'flex', 
-                    gap:10, 
-                    padding:'10px 14px', 
-                    background:'#18181b', 
-                    borderRadius:8, 
-                    alignItems:'center', 
-                    border:'1px solid #3f3f46', 
-                    cursor:'pointer', 
-                    color:'#e4e4e7',
-                    textAlign:'left'
-                }}
-            >
-                <div style={{width:10, height:10, borderRadius:3, background:'#38bdf8', flexShrink:0}}></div>
-                <div style={{display:'flex', flexDirection:'column', gap:2}}>
-                    <span style={{fontSize:12, fontWeight:600}}>{t.tools?.duplicateCheckTitle || 'Duplicate Check'}</span>
-                    <span style={{fontSize:10, color:'#71717a'}}>{t.tools?.duplicateCheckDesc || 'Check for duplicate images'}</span>
-                </div>
-            </button>
-        </div>
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, 55px)', gap: 10, justifyContent: 'start' }}>
+            {tools.map(tool => {
+              const showInfo = toolInfoPinnedId === tool.id || toolInfoHoverId === tool.id
+              const pressed = toolPressedId === tool.id
+              const isPromptGrabber = tool.id === 'prompt_grabber'
+              const isLockedPremium = isPromptGrabber && promptGrabberLicensed === false
+              return (
+                <div
+                  key={tool.id}
+                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, minWidth: 0 }}
+                >
+                  <div
+                    style={{ position: 'relative', width: '100%', minWidth: 0 }}
+                    onMouseLeave={() => setToolPressedId(null)}
+                  >
+                    <button
+                      type="button"
+                      onMouseDown={() => setToolPressedId(tool.id)}
+                      onMouseUp={() => setToolPressedId(null)}
+                      onBlur={() => setToolPressedId(null)}
+                      onClick={() => tool.onClick()}
+                      title={isLockedPremium ? `${tool.name} (Premium)` : tool.name}
+                      style={{
+                        width: '100%',
+                        aspectRatio: '1 / 1',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: 6,
+                        background: '#18181b',
+                        border: 'none',
+                        borderRadius: 10,
+                        cursor: 'pointer',
+                        color: '#e4e4e7',
+                        transition: 'transform 80ms ease, box-shadow 120ms ease, border-color 120ms ease',
+                        transform: pressed ? 'scale(0.96)' : 'scale(1)',
+                        boxShadow: pressed
+                          ? '0 0 0 2px rgba(255,255,255,0.06) inset, 0 0 0 1px rgba(255,255,255,0.05) inset'
+                          : '0 0 0 1px rgba(255,255,255,0.05) inset'
+                      }}
+                    >
+                      <img
+                        src={tool.icon}
+                        alt={tool.name}
+                        style={{
+                          width: 40,
+                          height: 40,
+                          objectFit: 'contain',
+                          opacity: isLockedPremium ? 0.55 : 1,
+                          filter: isLockedPremium ? 'grayscale(1) brightness(0.85)' : 'none'
+                        }}
+                      />
+                    </button>
 
-        <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 14, minWidth: 0 }}>
-            <div style={{marginBottom:12, color:'#a1a1aa', fontSize:11, fontWeight:600}}>{t.tools?.metadataRemovalHeading || 'Metadata Removal'}</div>
-            <button 
-                onClick={async ()=>{
-                    try {
-                        const dir = await pick({ directory: true, multiple: false, title: t.tools?.selectFolderImagesVideos || 'Select Folder (Images/Videos)' });
-                        if (!dir) return;
-                        showToast(t.tools?.removingMetadataToast || 'Removing metadata...', 'info');
-                        const res = await invoke<string>('strip_metadata_batch', { inputFolder: String(dir), recurse: true });
-                        if (res) showToast(t.tools?.metadataRemovedToast || 'Metadata removed successfully', 'success');
-                    } catch(e:any){
-                        showToast(String(e).replace('Error: ', ''), 'error');
-                    }
-                }} 
-                style={{
-                    width:'100%', 
-                    display:'flex', 
-                    gap:10, 
-                    padding:'10px 14px', 
-                    background:'#18181b', 
-                    borderRadius:8, 
-                    alignItems:'center', 
-                    border:'1px solid #3f3f46', 
-                    cursor:'pointer', 
-                    color:'#e4e4e7',
-                    textAlign:'left'
-                }}
-            >
-                <div style={{width:10, height:10, borderRadius:3, background:'#f97316', flexShrink:0}}></div>
-                <div style={{display:'flex', flexDirection:'column', gap:2}}>
-                    <span style={{fontSize:12, fontWeight:600}}>{t.tools?.removeMetadataBatchTitle || 'Remove Metadata (Batch)'}</span>
-                    <span style={{fontSize:10, color:'#71717a'}}>{t.tools?.removeMetadataBatchDesc || 'Remove metadata (images & videos)'}</span>
-                </div>
-            </button>
-        </div>
+                    {isLockedPremium && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          bottom: 3,
+                          right: 3,
+                          width: 14,
+                          height: 14,
+                          borderRadius: 999,
+                          background: 'rgba(245,158,11,0.18)',
+                          border: '1px solid rgba(245,158,11,0.35)',
+                          color: '#fbbf24',
+                          fontSize: 10,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          zIndex: 2,
+                          userSelect: 'none'
+                        }}
+                        title={lang === 'id' ? 'Premium (belum berlisensi)' : 'Premium (not licensed yet)'}
+                      >
+                        ♛
+                      </div>
+                    )}
 
-        <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 14, minWidth: 0 }}>
-            <div style={{marginBottom:12, color:'#a1a1aa', fontSize:11, fontWeight:600}}>{t.tools?.aiClusterHeading || 'AI Cluster'}</div>
-            <button 
-                onClick={onRunAiCluster} 
-                style={{
-                    width:'100%', 
-                    display:'flex', 
-                    gap:10, 
-                    padding:'10px 14px', 
-                    background:'#18181b', 
-                    borderRadius:8, 
-                    alignItems:'center', 
-                    border:'1px solid #3f3f46', 
-                    cursor:'pointer', 
-                    color:'#e4e4e7',
-                    textAlign:'left'
-                }}
-            >
-                <div style={{width:10, height:10, borderRadius:3, background:'#8b5cf6', flexShrink:0}}></div>
-                <div style={{display:'flex', flexDirection:'column', gap:2}}>
-                    <span style={{fontSize:12, fontWeight:600}}>{t.tools?.aiClusterTitle || 'AI Cluster'}</span>
-                    <span style={{fontSize:10, color:'#71717a'}}>{t.tools?.aiClusterDesc || 'Cluster images using AI'}</span>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onMouseEnter={() => setToolInfoHoverId(tool.id)}
+                      onMouseLeave={() => setToolInfoHoverId(cur => (cur === tool.id ? null : cur))}
+                      onPointerEnter={() => setToolInfoHoverId(tool.id)}
+                      onPointerLeave={() => setToolInfoHoverId(cur => (cur === tool.id ? null : cur))}
+                      onFocus={() => setToolInfoHoverId(tool.id)}
+                      onBlur={() => setToolInfoHoverId(cur => (cur === tool.id ? null : cur))}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setToolInfoPinnedId(cur => (cur === tool.id ? null : tool.id))
+                      }}
+                      style={{
+                        position: 'absolute',
+                      top: 2,
+                      right: 2,
+                      width: 11,
+                      height: 11,
+                        borderRadius: 999,
+                      border: 'none',
+                        background: '#0b0b0b',
+                        color: '#a1a1aa',
+                      fontSize: 8,
+                      lineHeight: '9px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        zIndex: 3,
+                      boxShadow: '0 0 0 1px rgba(255,255,255,0.05) inset',
+                        padding: 0
+                      }}
+                    >
+                      i
+                    </button>
+
+                    {showInfo && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        top: 'calc(100% + 8px)',
+                          zIndex: 9999,
+                        width: 'fit-content',
+                        maxWidth: 320,
+                        minWidth: 200,
+                        boxSizing: 'border-box',
+                          background: '#0b0b0b',
+                        border: 'none',
+                          borderRadius: 10,
+                          padding: 8,
+                        color: 'rgba(228,228,231,0.7)',
+                          fontSize: 9,
+                        fontWeight: 300,
+                        whiteSpace: 'normal',
+                        overflowWrap: 'break-word',
+                          pointerEvents: 'none',
+                          lineHeight: '1.2',
+                          boxShadow: '0 16px 30px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.05) inset'
+                        }}
+                      >
+                        {tool.desc}
+                      </div>
+                    )}
+                  </div>
+
+                <div
+                  title={tool.name}
+                  style={{
+                    width: '100%',
+                    fontSize: 9,
+                    lineHeight: '1.1',
+                    color: '#e4e4e7',
+                    textAlign: 'center',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    fontWeight: 300
+                  }}
+                >
+                    {tool.name}
+                  </div>
                 </div>
-            </button>
-        </div>
-      </div>
-      )}
+              )
+            })}
+          </div>
+        )
+      })()}
 
 
         </div>

@@ -9,7 +9,7 @@ type Lang = 'en' | 'id';
 // Contoh ID: UCgQY2sphgIAw7GrXYPQnYUw
 const YOUTUBE_CHANNEL_ID = 'UC1FhWKSh0NzrwOkMrnS_lxA'; 
 
-export default function HelpGuide({ onClose, lang, onLangChange }: { onClose: () => void, lang: 'en' | 'id', onLangChange: (l: 'en' | 'id') => void }) {
+export default function HelpGuide({ onClose, lang, onLangChange, onOpenLicenseSupport }: { onClose: () => void, lang: 'en' | 'id', onLangChange: (l: 'en' | 'id') => void, onOpenLicenseSupport?: () => void }) {
   const [activeTab, setActiveTab] = useState('settings');
 
   // Manual Playlist (Fallback jika Channel ID kosong atau error)
@@ -111,7 +111,8 @@ export default function HelpGuide({ onClose, lang, onLangChange }: { onClose: ()
         usage: "How to Use",
         filters: "Selection Filters",
         faq: "FAQ & Tips",
-        tutorials: "Video Tutorials"
+        tutorials: "Video Tutorials",
+        support: "Help Center"
       },
       tutorials: {
         title: "Video Tutorials",
@@ -149,7 +150,7 @@ export default function HelpGuide({ onClose, lang, onLangChange }: { onClose: ()
           { title: "6. Results", desc: "Processed images are saved to the Output folder with metadata embedded (IPTC/XMP). If CSV is enabled, check the CSV file in the same folder." },
           { title: "7. Manual CSV Generation", desc: "Generate CSVs from existing folders without re-processing. Click the 'CSV' icon in the footer, select your folder, and check the logs for the result." },
           { title: "8. Duplicate Detection", desc: "Find and remove duplicate files. Click the 'DUP' icon in the footer. 'Auto Delete' removes exact matches immediately. 'Threshold' controls similarity sensitivity (lower = stricter). Similar files are moved to '_DUPLICATE_REVIEW' for your inspection." },
-          { title: "9. AI Media Clustering", desc: "Group images and videos by visual similarity using AI (CLIP Model). Click the 'AI' icon (network node) in the footer. Select a folder, and the AI will analyze content and move similar files into grouped folders (Group_001, etc.). Useful for organizing large datasets." }
+          { title: "9. Image Cluster", desc: "Group images and videos by visual similarity using AI (CLIP Model). Click the 'Image Cluster' icon (network node) in the footer. Select a folder, and the AI will analyze content and move similar files into grouped folders (Group_001, etc.). Useful for organizing large datasets." }
         ]
       },
       filters: {
@@ -214,6 +215,11 @@ export default function HelpGuide({ onClose, lang, onLangChange }: { onClose: ()
            { title: "Images are being rejected incorrectly", desc: "Check your 'Image Selection' settings. Some filters might be too strict. Try disabling specific sub-filters." },
            { title: "Metadata is missing in some apps", desc: "We embed standard IPTC/XMP metadata. Some OS viewers (like Windows Explorer) might not show all fields, but stock agencies (Adobe, Shutterstock) will read them." }
         ]
+      },
+      support: {
+        title: "Help Center",
+        desc: "If you have purchase & license issues (wrong email on checkout, no email received), submit a license claim so admin can verify webhook data and fix the email binding.",
+        button: "Submit License Claim"
       }
     },
     id: {
@@ -223,7 +229,8 @@ export default function HelpGuide({ onClose, lang, onLangChange }: { onClose: ()
         usage: "Cara Penggunaan",
         filters: "Filter Seleksi",
         faq: "Tips & FAQ",
-        tutorials: "Video Tutorial"
+        tutorials: "Video Tutorial",
+        support: "Pusat Bantuan"
       },
       tutorials: {
         title: "Video Tutorial",
@@ -261,7 +268,7 @@ export default function HelpGuide({ onClose, lang, onLangChange }: { onClose: ()
           { title: "6. Hasil", desc: "Gambar yang diproses disimpan di Folder Output dengan metadata tertanam. Cek juga file CSV jika fitur tersebut diaktifkan." },
           { title: "7. CSV Manual", desc: "Anda juga bisa membuat CSV secara manual dari folder yang sudah ada tanpa memproses ulang gambar. Klik ikon 'CSV' di bagian bawah (footer), pilih folder, dan tunggu konfirmasi di log." },
           { title: "8. Deteksi Duplikat", desc: "Temukan dan hapus file duplikat. Klik ikon 'DUP' di footer. 'Auto Delete' menghapus file identik secara langsung. 'Threshold' mengatur sensitivitas kemiripan (makin kecil = makin ketat). File yang mirip akan dipindahkan ke folder '_DUPLICATE_REVIEW' untuk Anda periksa." },
-          { title: "9. AI Media Clustering", desc: "Kelompokkan gambar dan video berdasarkan kemiripan visual menggunakan AI (Model CLIP). Klik ikon 'AI' (simpul jaringan) di footer. Pilih folder, dan AI akan menganalisis konten serta memindahkan file yang mirip ke dalam folder grup (Group_001, dll). Sangat berguna untuk merapikan dataset besar." }
+          { title: "9. Image Cluster", desc: "Kelompokkan gambar dan video berdasarkan kemiripan visual menggunakan AI (Model CLIP). Klik ikon 'Image Cluster' (simpul jaringan) di footer. Pilih folder, dan AI akan menganalisis konten serta memindahkan file yang mirip ke dalam folder grup (Group_001, dll). Sangat berguna untuk merapikan dataset besar." }
         ]
       },
       filters: {
@@ -326,6 +333,11 @@ export default function HelpGuide({ onClose, lang, onLangChange }: { onClose: ()
            { title: "Gambar ditolak secara salah?", desc: "Periksa pengaturan 'Image Selection'. Beberapa filter mungkin terlalu ketat. Coba matikan sub-filter tertentu." },
            { title: "Metadata hilang di aplikasi lain?", desc: "Kami menyematkan metadata IPTC/XMP standar. Beberapa viewer OS (seperti Windows Explorer) mungkin tidak menampilkan semua field, tapi agensi stok (Shutterstock, Adobe) akan membacanya." }
         ]
+      },
+      support: {
+        title: "Pusat Bantuan",
+        desc: "Jika ada kendala pembelian & lisensi (email pembelian salah ketik, tidak menerima email kode lisensi), ajukan klaim lisensi agar admin bisa cek webhook dan memperbaiki email binding.",
+        button: "Ajukan Klaim Lisensi"
       }
     }
   };
@@ -337,6 +349,7 @@ export default function HelpGuide({ onClose, lang, onLangChange }: { onClose: ()
     { id: 'filters', label: current.tabs.filters },
     { id: 'faq', label: current.tabs.faq },
     { id: 'tutorials', label: current.tabs.tutorials },
+    { id: 'support', label: (current.tabs as any).support || (lang === 'id' ? 'Pusat Bantuan' : 'Help Center') },
   ];
 
   return (
@@ -525,6 +538,53 @@ export default function HelpGuide({ onClose, lang, onLangChange }: { onClose: ()
                     * Click video to open independent player window / Klik video untuk membuka jendela player terpisah.
                 </div>
              </div>
+          )}
+
+          {activeTab === 'support' && (
+            <div>
+              <div style={{
+                marginBottom: '15px', padding: '12px', background: '#2a2a2a',
+                borderRadius: '6px', borderLeft: '4px solid #f59e0b'
+              }}>
+                <strong style={{fontSize: '14px', color: '#fff'}}>{(current as any).support.title}</strong>
+                <p style={{margin: '4px 0 0', opacity: 0.8, fontSize: '12px', whiteSpace: 'pre-wrap'}}>{(current as any).support.desc}</p>
+              </div>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  onClick={() => { if (onOpenLicenseSupport) onOpenLicenseSupport(); }}
+                  disabled={!onOpenLicenseSupport}
+                  style={{
+                    background: '#fff',
+                    color: '#000',
+                    border: 'none',
+                    borderRadius: 10,
+                    padding: '10px 14px',
+                    cursor: onOpenLicenseSupport ? 'pointer' : 'not-allowed',
+                    fontWeight: 800,
+                    fontSize: 13,
+                    opacity: onOpenLicenseSupport ? 1 : 0.6
+                  }}
+                >
+                  {(current as any).support.button}
+                </button>
+                <button
+                  onClick={onClose}
+                  style={{
+                    background: 'transparent',
+                    color: '#e4e4e7',
+                    border: '1px solid #3f3f46',
+                    borderRadius: 10,
+                    padding: '10px 14px',
+                    cursor: 'pointer',
+                    fontWeight: 700,
+                    fontSize: 13
+                  }}
+                >
+                  {lang === 'id' ? 'Tutup' : 'Close'}
+                </button>
+              </div>
+            </div>
           )}
 
         </div>

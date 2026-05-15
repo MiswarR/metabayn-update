@@ -27,7 +27,8 @@ async function deriveKey(secret: string) {
 }
 
 export async function encryptApiKey(apiKey: string, secret: string = DEFAULT_SECRET) {
-  const key = await deriveKey(secret)
+  const effectiveSecret = secret && secret.trim() ? secret : DEFAULT_SECRET
+  const key = await deriveKey(effectiveSecret)
   const iv = crypto.getRandomValues(new Uint8Array(12))
   const enc = new TextEncoder()
   const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(apiKey))
@@ -35,9 +36,18 @@ export async function encryptApiKey(apiKey: string, secret: string = DEFAULT_SEC
 }
 
 export async function decryptApiKey(data: string, iv: string, secret: string = DEFAULT_SECRET) {
-  const key = await deriveKey(secret)
   const ivBytes = b64Decode(iv)
   const dataBytes = b64Decode(data)
-  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: ivBytes }, key, dataBytes)
-  return new TextDecoder().decode(plain)
+  const candidates = [secret, DEFAULT_SECRET].map(s => (s && s.trim() ? s : DEFAULT_SECRET))
+  let lastErr: any = null
+  for (const s of candidates) {
+    try {
+      const key = await deriveKey(s)
+      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: ivBytes }, key, dataBytes)
+      return new TextDecoder().decode(plain)
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr || new Error('Failed to decrypt API key')
 }

@@ -28,7 +28,61 @@
           el.innerText += "Promise Rejection: " + event.reason + "\n\n";
         }
       });
+
+      (function () {
+        function showBootError(text) {
+          try {
+            var el = document.getElementById('error-log');
+            if (!el) return;
+            el.style.display = 'block';
+            el.innerText += String(text || '') + "\n\n";
+          } catch {}
+        }
+
+        setTimeout(function () {
+          try {
+            if (window.__METABAYN_BUNDLE_LOADED__ === true) return;
+            var lines = [];
+            lines.push("Aplikasi berhenti di 'Loading application...' karena file JS utama tidak berhasil dimuat.");
+            lines.push("");
+            lines.push("Penyebab paling umum:");
+            lines.push("- Build belum dibuat / belum lengkap");
+            lines.push("- Folder dist/assets tidak ikut terbawa ke build installer");
+            lines.push("- File assets (index-*.js / index-*.css) hilang atau path tidak cocok");
+            lines.push("");
+            lines.push("Solusi cepat:");
+            lines.push("- Jalankan: npm run build");
+            lines.push("- Lalu: npm run tauri build");
+            lines.push("");
+            try { lines.push("URL: " + String(window.location && window.location.href || "")); } catch {}
+            showBootError(lines.join("\n"));
+          } catch (e) {
+            showBootError("Bootstrap check failed: " + String(e));
+          }
+        }, 6500);
+      })();
     </script>
     <script type="module" src="/src/main.tsx"></script>
+    <script type="module">
+      (async function () {
+        try {
+          if (location.protocol !== 'http:') return;
+          await import('/src/main.tsx');
+        } catch (e) {
+          try {
+            var el = document.getElementById('error-log');
+            if (!el) return;
+            el.style.display = 'block';
+            var msg = '';
+            try {
+              msg = (e && (e.stack || e.message)) ? String(e.stack || e.message) : String(e);
+            } catch {
+              msg = String(e);
+            }
+            el.innerText += "Detail error saat import /src/main.tsx:\n" + msg + "\n\n";
+          } catch {}
+        }
+      })();
+    </script>
   </body>
   </html>

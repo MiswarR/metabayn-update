@@ -1,8 +1,6 @@
 import { Env } from '../types';
-import { sendEmail, getLicenseVoucherTemplate, getLynkPurchasePendingActivationTemplate, getLynkPurchaseActivatedTemplate } from '../utils/email';
-import { addUserTokens } from '../utils/userToken';
+import { sendEmail, getLicenseVoucherTemplate } from '../utils/email';
 import { parsePurchase as parsePurchaseUtil, isValidEmail as isValidEmailUtil, matchProduct as matchProductUtil, normalizeEmail as normalizeEmailUtil } from '../utils/lynkParser.js';
-import { applyBalanceDeltaTenths } from '../utils/balanceLedger.js';
 
 type ParsedPurchase = {
   email: string;
@@ -16,7 +14,16 @@ type ParsedPurchase = {
   currency: string | null;
 };
 
-const PRODUCT_REF_SUBSTRINGS = ['851png1z505m','metabayn - smart metadata agent','smart metadata agent'];
+const PRODUCT_REF_SUBSTRINGS = [
+  '851png1z505m',
+  'mxj5l2ydrd9g',
+  'metabayn - smart metadata agent',
+  'smart metadata agent',
+  'lisensi key metabayn',
+  'lisensi key aplikasi metabayn',
+  'license key metabayn'
+];
+const PROMPT_GRABBER_NEEDLES = ['prompt grabber', 'promptgrabber', 'prompt_grabber', 'wp6d9o37o51d'];
 function normalizeEmail(email: unknown) { return normalizeEmailUtil(String(email ?? '')); }
 function isValidEmail(email: string) { return isValidEmailUtil(email); }
 
@@ -26,6 +33,98 @@ function readHeaderAny(headers: Headers, names: string[]) {
     if (v && String(v).trim()) return String(v).trim();
   }
   return null;
+}
+
+function normalizeTitle(value: any) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[\u2012\u2013\u2014\u2015–]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeCompact(value: any) {
+  return normalizeTitle(value).replace(/[^a-z0-9]/g, '');
+}
+
+function includesAny(hay: any, needles: string[]) {
+  const h = normalizeCompact(hay);
+  if (!h) return false;
+  for (const n of needles) {
+    const nn = normalizeCompact(n);
+    if (nn && h.includes(nn)) return true;
+  }
+  return false;
+}
+
+function collectItemHints(item: any): string[] {
+  const hints: any[] = [];
+  const add = (v: any) => { if (typeof v === 'string' && v.trim()) hints.push(v); };
+  add(item?.title);
+  add(item?.name);
+  add(item?.product_name);
+  add(item?.productName);
+  add(item?.product);
+  add(item?.product_ref);
+  add(item?.productRef);
+  add(item?.ref);
+  add(item?.sku);
+  add(item?.slug);
+  add(item?.url);
+  add(item?.link);
+  add(item?.href);
+  add(item?.product_url);
+  add(item?.productUrl);
+  add(item?.id);
+  add(item?.item_id);
+  add(item?.itemId);
+  return hints.map((x) => String(x));
+}
+
+function getToolPromptGrabberVoucherEmail(email: string, voucherCode: string) {
+  return `
+  <div style="font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 8px;">
+      <div style="text-align: center; margin-bottom: 20px;">
+           <h2 style="color: #333;">Pembelian Berhasil (Lynk.id)</h2>
+      </div>
+  
+      <p>Hi ${email},</p>
+      <p>Terima kasih. Kami sudah menerima pembayaran Anda untuk <strong>Tools Prompt Grabber</strong>.</p>
+  
+      <div style="background: #f0f9ff; border: 1px solid #bae6fd; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <ul style="list-style: none; padding: 0; margin: 0;">
+          <li style="margin-bottom: 8px;">Produk: <strong>Lisensi Tools (1 perangkat)</strong></li>
+          <li>Masa aktif: <strong>Permanen</strong></li>
+        </ul>
+      </div>
+  
+      <h3>Kode Lisensi Anda</h3>
+      <div style="background: #f5f5f5; padding: 12px 16px; border-radius: 4px; text-align: center; margin: 10px 0 20px 0;">
+        <span style="font-size: 20px; letter-spacing: 3px; font-weight: bold; color: #222;">
+          ${voucherCode}
+        </span>
+      </div>
+  
+      <p style="color: #d32f2f; font-size: 12px; margin-top: -8px;">
+        * Lisensi ini hanya bisa digunakan 1 kali (1 perangkat).
+      </p>
+  
+      <h3>Cara Aktivasi</h3>
+      <ol>
+        <li>Login ke aplikasi <strong>Metabayn</strong> menggunakan email ini.</li>
+        <li>Buka <strong>Tools</strong> → <strong>Prompt Grabber</strong>.</li>
+        <li>Klik <strong>Enter Code</strong> lalu masukkan kode lisensi di atas, atau klik <strong>Check Activation</strong>.</li>
+      </ol>
+  
+      <br>
+      <p style="margin: 0;">Metabayn Team</p>
+  
+      <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+      <p style="font-size: 12px; color: #888; text-align: center;">
+        Ini email otomatis, mohon tidak dibalas.
+      </p>
+  </div>
+  `;
 }
 
 function toJsonSafe(value: any) {
@@ -61,10 +160,20 @@ async function ensureVoucherTables(env: Env) {
         allowed_emails TEXT,
         type TEXT NOT NULL,
         duration_days INTEGER NOT NULL,
+        tool_code TEXT,
         created_at TEXT NOT NULL
       );
       `
     ).run();
+  } catch {}
+
+  try {
+    await env.DB.prepare("ALTER TABLE vouchers ADD COLUMN created_at TEXT;").run();
+    await env.DB.prepare("UPDATE vouchers SET created_at = COALESCE(created_at, datetime('now')) WHERE created_at IS NULL;").run();
+  } catch {}
+
+  try {
+    await env.DB.prepare("ALTER TABLE vouchers ADD COLUMN tool_code TEXT;").run();
   } catch {}
 
   try {
@@ -240,6 +349,67 @@ function findEmailRawInPayload(body: any) {
   return '';
 }
 
+function detectProductKind(body: any, parsed: ParsedPurchase): { kind: 'license' | 'tool_license' | 'unknown'; product_ref: string | null; tool_code: string | null } {
+  if (parsed?.productMatched) {
+    return { kind: 'license', product_ref: parsed?.productRef || 'license', tool_code: null };
+  }
+
+  const raw = (() => { try { return JSON.stringify(body || {}).toLowerCase(); } catch { return ''; } })();
+  if (raw.includes('wp6d9o37o51d')) {
+    return { kind: 'tool_license', product_ref: 'prompt_grabber', tool_code: 'prompt_grabber' };
+  }
+
+  const data = body?.data ?? body;
+  const messageData =
+    data?.message_data ??
+    data?.messageData ??
+    data?.payload?.message_data ??
+    data?.payload?.messageData ??
+    body?.message_data ??
+    body?.messageData ??
+    body?.payload?.message_data ??
+    body?.payload?.messageData ??
+    body;
+
+  const messageTitleHint = String(messageData?.title || messageData?.product?.title || '').trim();
+  if (includesAny(messageTitleHint, PROMPT_GRABBER_NEEDLES)) {
+    return { kind: 'tool_license', product_ref: 'prompt_grabber', tool_code: 'prompt_grabber' };
+  }
+
+  const items =
+    Array.isArray(messageData?.items) ? messageData.items :
+    Array.isArray(messageData?.products) ? messageData.products :
+    Array.isArray(data?.items) ? data.items :
+    Array.isArray(data?.products) ? data.products :
+    [];
+
+  for (const it of items) {
+    const title = it?.title ?? it?.name ?? '';
+    if (includesAny(title, PROMPT_GRABBER_NEEDLES)) {
+      return { kind: 'tool_license', product_ref: 'prompt_grabber', tool_code: 'prompt_grabber' };
+    }
+    const hints = collectItemHints(it);
+    if (messageTitleHint) hints.push(messageTitleHint);
+    if (hints.some((h) => includesAny(h, PROMPT_GRABBER_NEEDLES))) {
+      return { kind: 'tool_license', product_ref: 'prompt_grabber', tool_code: 'prompt_grabber' };
+    }
+  }
+
+  const extraHints = [
+    data?.product_url,
+    data?.productUrl,
+    data?.checkout_url,
+    data?.checkoutUrl
+  ];
+  for (const h of extraHints) {
+    if (includesAny(h, PROMPT_GRABBER_NEEDLES)) {
+      return { kind: 'tool_license', product_ref: 'prompt_grabber', tool_code: 'prompt_grabber' };
+    }
+  }
+
+  return { kind: 'unknown', product_ref: null, tool_code: null };
+}
+
 function matchProduct(body: any): { matched: boolean; ref: string | null } {
   const haystackParts: string[] = [];
   const push = (v: any) => {
@@ -354,24 +524,6 @@ async function ensureLynkPurchaseSchema(env: Env) {
   try {
     await env.DB.prepare(
       `
-      CREATE TABLE IF NOT EXISTS bonus_token_grants (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        source TEXT NOT NULL,
-        purchase_id TEXT UNIQUE,
-        amount_tenths INTEGER NOT NULL,
-        remaining_tenths INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL,
-        created_at INTEGER NOT NULL,
-        deleted_at INTEGER
-      );
-      `
-    ).run();
-  } catch {}
-
-  try {
-    await env.DB.prepare(
-      `
       CREATE TABLE IF NOT EXISTS lynk_webhook_logs (
         id TEXT PRIMARY KEY,
         provider TEXT NOT NULL,
@@ -393,7 +545,6 @@ async function ensureLynkPurchaseSchema(env: Env) {
   try {
     await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_lynk_purchases_email_status ON lynk_purchases(email, status, deleted_at);").run();
     await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_lynk_purchases_status_retry ON lynk_purchases(status, next_retry_at, deleted_at);").run();
-    await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_bonus_grants_user_exp ON bonus_token_grants(user_id, expires_at, deleted_at);").run();
     await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_lynk_webhook_logs_received ON lynk_webhook_logs(received_at);").run();
   } catch {}
 }
@@ -456,6 +607,8 @@ async function notifyAdmin(env: Env, subject: string, html: string) {
 
 export async function handleLynkPurchaseWebhook(req: Request, env: Env) {
   await ensureLynkPurchaseSchema(env);
+  const hasEmailProvider = !!String((env as any)?.RESEND_API_KEY || (env as any)?.RESEND_KEY || (env as any)?.RESEND_APIKEY || '').trim();
+  const isEmailTestMode = String((env as any)?.EMAIL_TEST_MODE || '') === '1' && !hasEmailProvider;
 
   const requestId = crypto.randomUUID();
   const ip = req.headers.get('CF-Connecting-IP') || req.headers.get('x-forwarded-for') || 'unknown';
@@ -469,7 +622,7 @@ export async function handleLynkPurchaseWebhook(req: Request, env: Env) {
         .bind(requestId, Date.now(), ip, toJsonSafe(Object.fromEntries(req.headers.entries())), 'rate_limited')
         .run();
     } catch {}
-    return Response.json({ success: false, error: 'rate_limited' }, { status: 429 });
+    return Response.json({ success: false, error: 'rate_limited', version: 'license_v1' }, { status: 429 });
   }
 
   const configuredSecret = resolveWebhookSecret(env);
@@ -483,7 +636,7 @@ export async function handleLynkPurchaseWebhook(req: Request, env: Env) {
         .bind(requestId, Date.now(), ip, toJsonSafe(Object.fromEntries(req.headers.entries())), 'invalid_webhook_secret')
         .run();
     } catch {}
-    return Response.json({ success: false, error: 'invalid_webhook_secret' }, { status: 401 });
+    return Response.json({ success: false, error: 'invalid_webhook_secret', version: 'license_v1' }, { status: 401 });
   }
 
   const rawBody = await req.text();
@@ -498,10 +651,11 @@ export async function handleLynkPurchaseWebhook(req: Request, env: Env) {
         .bind(requestId, Date.now(), ip, toJsonSafe(Object.fromEntries(req.headers.entries())), rawBody.slice(0, 20000), 'invalid_json')
         .run();
     } catch {}
-    return Response.json({ success: false, error: 'invalid_json' }, { status: 400 });
+    return Response.json({ success: false, error: 'invalid_json', version: 'license_v1' }, { status: 400 });
   }
 
   const parsed = parsePurchase(body);
+  const product = detectProductKind(body, parsed);
   const idKey =
     readHeaderAny(req.headers, ['idempotency-key', 'x-idempotency-key']) ||
     String(body?.event_id ?? body?.eventId ?? body?.data?.order_id ?? body?.data?.orderId ?? '').trim() ||
@@ -525,7 +679,7 @@ export async function handleLynkPurchaseWebhook(req: Request, env: Env) {
             .bind(requestId, computedKey, purchaseId, Date.now(), ip, toJsonSafe(Object.fromEntries(req.headers.entries())), rawBody.slice(0, 20000), 'invalid_signature')
             .run();
         } catch {}
-        return Response.json({ success: false, error: 'invalid_signature' }, { status: 401 });
+        return Response.json({ success: false, error: 'invalid_signature', version: 'license_v1' }, { status: 401 });
       }
     }
   } else {
@@ -585,10 +739,10 @@ export async function handleLynkPurchaseWebhook(req: Request, env: Env) {
         `<div>purchase_id: ${purchaseId}<br/>email_raw: ${emailForDb}<br/>error: invalid_email</div>`
       );
     } catch {}
-    return Response.json({ success: false, error: 'invalid_email' }, { status: 422 });
+    return Response.json({ success: false, error: 'invalid_email', version: 'license_v1' }, { status: 422 });
   }
 
-  if (!parsed.productMatched) {
+  if (product.kind === 'unknown') {
     try {
       await env.DB.prepare(
         "INSERT INTO lynk_webhook_logs (id, provider, idempotency_key, purchase_id, received_at, ip, headers, body, auth_ok, signature_status, status_code, error) VALUES (?, 'lynkid', ?, ?, ?, ?, ?, ?, 1, ?, 202, ?)"
@@ -596,14 +750,13 @@ export async function handleLynkPurchaseWebhook(req: Request, env: Env) {
         .bind(requestId, computedKey, purchaseId, Date.now(), ip, toJsonSafe(Object.fromEntries(req.headers.entries())), rawBody.slice(0, 20000), signatureStatus, 'product_not_matched')
         .run();
     } catch {}
-    return Response.json({ success: true, ignored: true, reason: 'product_not_matched' }, { status: 202 });
+    return Response.json({ success: true, ignored: true, reason: 'product_not_matched', version: 'license_v1' }, { status: 202 });
   }
 
   const now = Date.now();
   await ensureVoucherTables(env);
-  const licenseDurationDays = 30;
-  const licenseBonusTokens = 50000;
-  const voucherExpiresAtIso = new Date(now + 90 * 24 * 60 * 60 * 1000).toISOString();
+  const licenseDurationDays = 0;
+  const licenseBonusTokens = 0;
   try {
     await env.DB.prepare(
       `
@@ -623,7 +776,7 @@ export async function handleLynkPurchaseWebhook(req: Request, env: Env) {
       .bind(
         purchaseId,
         computedKey,
-        parsed.productRef,
+        product.product_ref || parsed.productRef || null,
         email,
         parsed.paymentStatus || null,
         parsed.paidAtMs || null,
@@ -643,7 +796,7 @@ export async function handleLynkPurchaseWebhook(req: Request, env: Env) {
         .run();
     } catch {}
     await notifyAdmin(env, 'Webhook Lynk.id gagal (DB insert)', `<div>purchase_id: ${purchaseId}<br/>error: ${msg}</div>`);
-    return Response.json({ success: false, error: 'db_error' }, { status: 500, headers: { 'Retry-After': '5' } });
+    return Response.json({ success: false, error: 'db_error', version: 'license_v1' }, { status: 500, headers: { 'Retry-After': '5' } });
   }
 
   try {
@@ -662,13 +815,15 @@ export async function handleLynkPurchaseWebhook(req: Request, env: Env) {
     } catch {}
 
     if (!voucherCode) {
+      const voucherType = product.kind;
+      const toolCode = product.tool_code;
       for (let i = 0; i < 6 && !voucherCode; i++) {
         const candidate = generateVoucherCode();
         try {
           await env.DB.prepare(
-            "INSERT INTO vouchers (code, amount, max_usage, current_usage, expires_at, allowed_emails, type, duration_days, created_at) VALUES (?, ?, 1, 0, ?, NULL, 'license', ?, ?)"
+            "INSERT INTO vouchers (code, amount, max_usage, current_usage, expires_at, allowed_emails, type, duration_days, tool_code, created_at) VALUES (?, 0, 1, 0, NULL, ?, ?, 0, ?, ?)"
           )
-            .bind(candidate, licenseBonusTokens, voucherExpiresAtIso, licenseDurationDays, new Date(now).toISOString())
+            .bind(candidate, email, voucherType, toolCode, new Date(now).toISOString())
             .run();
           voucherCode = candidate;
         } catch {}
@@ -689,14 +844,24 @@ export async function handleLynkPurchaseWebhook(req: Request, env: Env) {
         .bind(Date.now() + 60_000, Date.now(), purchaseId)
         .run();
       await notifyAdmin(env, 'Generate voucher Lynk.id gagal', `<div>purchase_id: ${purchaseId}<br/>email: ${email}<br/>error: voucher_generation_failed</div>`);
-      return Response.json({ success: false, error: 'voucher_generation_failed' }, { status: 500, headers: { 'Retry-After': '5' } });
+      return Response.json({ success: false, error: 'voucher_generation_failed', version: 'license_v1' }, { status: 500, headers: { 'Retry-After': '5' } });
     }
 
-    const subject = 'Kode Voucher Metabayn - Smart Metadata Agent';
-    const html = getLicenseVoucherTemplate(email, voucherCode, licenseDurationDays, licenseBonusTokens);
+    const subject = product.kind === 'tool_license'
+      ? 'Kode Lisensi Tools Prompt Grabber (1 Perangkat)'
+      : 'Kode Lisensi Metabayn (1 Perangkat)';
+    const html = product.kind === 'tool_license'
+      ? getToolPromptGrabberVoucherEmail(email, voucherCode)
+      : getLicenseVoucherTemplate(email, voucherCode, licenseDurationDays, licenseBonusTokens);
     await sendEmail(email, subject, html, env);
-    await env.DB.prepare("UPDATE lynk_purchases SET email_status = 'sent', email_last_error = NULL, status = 'voucher_sent', next_retry_at = NULL, updated_at = ? WHERE id = ?")
-      .bind(Date.now(), purchaseId)
+    await env.DB.prepare("UPDATE lynk_purchases SET email_status = ?, email_last_error = ?, status = 'voucher_sent', next_retry_at = ?, updated_at = ? WHERE id = ?")
+      .bind(
+        isEmailTestMode ? 'test' : 'sent',
+        isEmailTestMode ? 'email_test_mode' : null,
+        isEmailTestMode ? (Date.now() + 60_000) : null,
+        Date.now(),
+        purchaseId
+      )
       .run();
   } catch (e: any) {
     const msg = String(e?.message || e);
@@ -712,133 +877,16 @@ export async function handleLynkPurchaseWebhook(req: Request, env: Env) {
     } catch {}
   }
 
-  return Response.json({ success: true, purchase_id: purchaseId, idempotency_key: computedKey });
-}
-
-export async function applyPendingLynkPurchasesForUser(env: Env, userId: string, email: string, trigger: 'login' | 'register' | 'verify' | 'webhook') {
-  await ensureLynkPurchaseSchema(env);
-  const normEmail = normalizeEmail(email);
-  if (!normEmail || !isValidEmail(normEmail)) return { applied: 0 };
-
-  const now = Date.now();
-  const purchasesRes = await env.DB.prepare(
-    `
-    SELECT id, status
-    FROM lynk_purchases
-    WHERE lower(email) = lower(?)
-      AND deleted_at IS NULL
-      AND status = 'pending_activation'
-    ORDER BY purchase_ts ASC, created_at ASC
-    LIMIT 50
-    `
-  )
-    .bind(normEmail)
-    .all();
-
-  const purchases = Array.isArray(purchasesRes?.results) ? purchasesRes.results : [];
-  let applied = 0;
-
-  for (const p of purchases) {
-    const purchaseId = String(p?.id || '').trim();
-    if (!purchaseId) continue;
-
-    const activationStart = now;
-    const endAt = now + 30 * 24 * 60 * 60 * 1000;
-    const subId = `sub_${(await sha256Hex(`${purchaseId}:${userId}`)).slice(0, 32)}`;
-    const grantId = `grant_${(await sha256Hex(`${purchaseId}:${userId}`)).slice(0, 32)}`;
-
-    try {
-      const lockRes: any = await env.DB.prepare(
-        `
-        UPDATE lynk_purchases
-        SET activation_started_at = ?,
-            user_id = ?,
-            updated_at = ?
-        WHERE id = ?
-          AND deleted_at IS NULL
-          AND status = 'pending_activation'
-          AND activation_started_at IS NULL
-        `
-      )
-        .bind(activationStart, userId, now, purchaseId)
-        .run();
-      if (!(lockRes?.meta?.changes > 0)) continue;
-
-      const userRow: any = await env.DB.prepare("SELECT subscription_active, subscription_expiry FROM users WHERE id = ? LIMIT 1").bind(userId).first();
-      let base = new Date(activationStart);
-      const currentExpiry = userRow?.subscription_expiry ? new Date(String(userRow.subscription_expiry)) : null;
-      if (currentExpiry && currentExpiry.getTime() > Date.now()) base = currentExpiry;
-      base.setDate(base.getDate() + 30);
-      const newExpiryIso = base.toISOString();
-
-      await env.DB.prepare(
-        `
-        INSERT OR IGNORE INTO user_subscriptions (id, user_id, source, purchase_id, start_at, end_at, created_at, deleted_at)
-        VALUES (?, ?, 'lynk_purchase', ?, ?, ?, ?, NULL)
-        `
-      )
-        .bind(subId, userId, purchaseId, activationStart, endAt, now)
-        .run();
-
-      await env.DB.prepare("UPDATE users SET subscription_active = 1, subscription_expiry = ? WHERE id = ?")
-        .bind(newExpiryIso, userId)
-        .run();
-
-      const grantInsertRes: any = await env.DB.prepare(
-        `
-        INSERT OR IGNORE INTO bonus_token_grants (id, user_id, source, purchase_id, amount_tenths, remaining_tenths, expires_at, created_at, deleted_at)
-        VALUES (?, ?, 'lynk_purchase', ?, ?, ?, ?, ?, NULL)
-        `
-      )
-        .bind(grantId, userId, purchaseId, 50000 * 10, 50000 * 10, new Date(newExpiryIso).getTime(), now)
-        .run();
-
-      if (grantInsertRes?.meta?.changes > 0) {
-        await addUserTokens(userId, 50000, env, {
-          logLabel: 'Bonus token',
-          reason: 'Pembelian Metabayn',
-          idempotencyKey: `lynk_purchase_bonus:${purchaseId}`,
-          meta: { kind: 'bonus', source: 'lynk_purchase', purchase_id: purchaseId, expires_at: newExpiryIso, trigger }
-        });
-      }
-
-      await env.DB.prepare(
-        "UPDATE lynk_purchases SET status = 'activated', user_id = ?, activated_at = ?, activation_started_at = ?, updated_at = ? WHERE id = ?"
-      )
-        .bind(userId, now, activationStart, now, purchaseId)
-        .run();
-
-      applied++;
-
-      try {
-        const subject = 'Langganan Metabayn aktif';
-        const html = getLynkPurchaseActivatedTemplate(normEmail, newExpiryIso, 50000);
-        await sendEmail(normEmail, subject, html, env);
-      } catch {}
-    } catch (e: any) {
-      const msg = String(e?.message || e);
-      try {
-        const row: any = await env.DB.prepare("SELECT failure_count FROM lynk_purchases WHERE id = ?").bind(purchaseId).first();
-        const fc = Number(row?.failure_count ?? 0) + 1;
-        const waitMs = Math.min(60 * 60 * 1000, 2000 * (2 ** Math.min(10, fc)));
-        await env.DB.prepare(
-          "UPDATE lynk_purchases SET last_error = ?, failure_count = ?, next_retry_at = ?, activation_started_at = NULL, updated_at = ? WHERE id = ?"
-        )
-          .bind(msg.slice(0, 1000), fc, Date.now() + waitMs, Date.now(), purchaseId)
-          .run();
-      } catch {}
-      await notifyAdmin(env, 'Aktivasi Lynk.id gagal', `<div>purchase_id: ${purchaseId}<br/>user_id: ${userId}<br/>error: ${msg}</div>`);
-    }
-  }
-
-  return { applied };
+  return Response.json({ success: true, purchase_id: purchaseId, idempotency_key: computedKey, version: 'license_v1' });
 }
 
 export async function processLynkPurchaseRetries(env: Env, nowMs: number) {
   await ensureLynkPurchaseSchema(env);
+  const hasEmailProvider = !!String((env as any)?.RESEND_API_KEY || (env as any)?.RESEND_KEY || (env as any)?.RESEND_APIKEY || '').trim();
+  const isEmailTestMode = String((env as any)?.EMAIL_TEST_MODE || '') === '1' && !hasEmailProvider;
   const rows = await env.DB.prepare(
     `
-    SELECT id, email, email_status, email_last_error, raw_payload, status
+    SELECT id, email, email_status, email_last_error, raw_payload, status, product_ref, voucher_code
     FROM lynk_purchases
     WHERE deleted_at IS NULL
       AND next_retry_at IS NOT NULL
@@ -863,6 +911,10 @@ export async function processLynkPurchaseRetries(env: Env, nowMs: number) {
           const status = String(r?.status || '');
           if (status === 'voucher_pending' || status === 'voucher_sent') {
             await ensureVoucherTables(env);
+            const pr = normalizeTitle(r?.product_ref || '');
+            const isToolPromptGrabber = pr.includes('prompt grabber') || pr.includes('prompt_grabber') || pr.includes('promptgrabber') || pr.includes('wp6d9o37o51d') || pr.includes('prompt_grabber');
+            const voucherType: 'license' | 'tool_license' = isToolPromptGrabber ? 'tool_license' : 'license';
+            const toolCode = voucherType === 'tool_license' ? 'prompt_grabber' : null;
             let voucherCode = '';
             try {
               const row: any = await env.DB.prepare("SELECT voucher_code FROM lynk_purchases WHERE id = ? LIMIT 1").bind(purchaseId).first();
@@ -870,14 +922,13 @@ export async function processLynkPurchaseRetries(env: Env, nowMs: number) {
             } catch {}
             if (!voucherCode) {
               const now = Date.now();
-              const voucherExpiresAtIso = new Date(now + 90 * 24 * 60 * 60 * 1000).toISOString();
               for (let i = 0; i < 6 && !voucherCode; i++) {
                 const candidate = generateVoucherCode();
                 try {
                   await env.DB.prepare(
-                    "INSERT INTO vouchers (code, amount, max_usage, current_usage, expires_at, allowed_emails, type, duration_days, created_at) VALUES (?, ?, 1, 0, ?, NULL, 'license', 30, ?)"
+                    "INSERT INTO vouchers (code, amount, max_usage, current_usage, expires_at, allowed_emails, type, duration_days, tool_code, created_at) VALUES (?, 0, 1, 0, NULL, ?, ?, 0, ?, ?)"
                   )
-                    .bind(candidate, 50000, voucherExpiresAtIso, new Date(now).toISOString())
+                    .bind(candidate, email, voucherType, toolCode, new Date(now).toISOString())
                     .run();
                   voucherCode = candidate;
                 } catch {}
@@ -893,22 +944,23 @@ export async function processLynkPurchaseRetries(env: Env, nowMs: number) {
             if (!voucherCode) {
               throw new Error('voucher_generation_failed');
             }
-            const subject = 'Kode Voucher Metabayn - Smart Metadata Agent';
-            const html = getLicenseVoucherTemplate(email, voucherCode, 30, 50000);
+            const subject = voucherType === 'tool_license'
+              ? 'Kode Lisensi Tools Prompt Grabber (1 Perangkat)'
+              : 'Kode Lisensi Metabayn (1 Perangkat)';
+            const html = voucherType === 'tool_license'
+              ? getToolPromptGrabberVoucherEmail(email, voucherCode)
+              : getLicenseVoucherTemplate(email, voucherCode, 0, 0);
             await sendEmail(email, subject, html, env);
             await env.DB.prepare(
-              "UPDATE lynk_purchases SET email_status = 'sent', email_last_error = NULL, next_retry_at = NULL, status = 'voucher_sent', updated_at = ? WHERE id = ?"
+              "UPDATE lynk_purchases SET email_status = ?, email_last_error = ?, next_retry_at = ?, status = 'voucher_sent', updated_at = ? WHERE id = ?"
             )
-              .bind(Date.now(), purchaseId)
-              .run();
-          } else {
-            const subject = 'Pembelian Metabayn diterima';
-            const html = getLynkPurchasePendingActivationTemplate(email);
-            await sendEmail(email, subject, html, env);
-            await env.DB.prepare(
-              "UPDATE lynk_purchases SET email_status = 'sent', email_last_error = NULL, next_retry_at = NULL, updated_at = ? WHERE id = ?"
-            )
-              .bind(Date.now(), purchaseId)
+              .bind(
+                isEmailTestMode ? 'test' : 'sent',
+                isEmailTestMode ? 'email_test_mode' : null,
+                isEmailTestMode ? (Date.now() + 60_000) : null,
+                Date.now(),
+                purchaseId
+              )
               .run();
           }
           resendOk = true;
@@ -923,71 +975,6 @@ export async function processLynkPurchaseRetries(env: Env, nowMs: number) {
             .bind(msg.slice(0, 1000), fc, Date.now() + waitMs, Date.now(), purchaseId)
             .run();
         }
-      }
-
-      if (String(r?.status || '') === 'pending_activation') {
-        const userRow: any = await env.DB.prepare("SELECT id, status FROM users WHERE lower(email)=lower(?) LIMIT 1").bind(email).first();
-        if (userRow && String(userRow.status || 'active') !== 'pending') {
-          await applyPendingLynkPurchasesForUser(env, String(userRow.id), email, 'login');
-          await env.DB.prepare("UPDATE lynk_purchases SET next_retry_at = NULL, updated_at = ? WHERE id = ?").bind(Date.now(), purchaseId).run();
-        } else {
-          if (resendOk) {
-            await env.DB.prepare("UPDATE lynk_purchases SET next_retry_at = NULL, updated_at = ? WHERE id = ?").bind(Date.now(), purchaseId).run();
-          }
-        }
-      }
-    } catch {}
-  }
-}
-
-export async function expireBonusTokens(env: Env, nowMs: number) {
-  await ensureLynkPurchaseSchema(env);
-  try {
-    await env.DB.prepare(
-      `
-      CREATE TABLE IF NOT EXISTS bonus_expire_runs (
-        id TEXT PRIMARY KEY,
-        ran_at INTEGER NOT NULL
-      );
-      `
-    ).run();
-  } catch {}
-
-  const rows = await env.DB.prepare(
-    `
-    SELECT g.id, g.user_id, g.purchase_id, g.remaining_tenths
-    FROM bonus_token_grants g
-    WHERE g.deleted_at IS NULL
-      AND g.remaining_tenths > 0
-      AND g.expires_at <= ?
-    ORDER BY g.expires_at ASC
-    LIMIT 200
-    `
-  )
-    .bind(nowMs)
-    .all();
-  const list = Array.isArray(rows?.results) ? rows.results : [];
-  for (const r of list) {
-    const grantId = String(r?.id || '');
-    const userId = String(r?.user_id || '');
-    const remaining = BigInt(String(r?.remaining_tenths ?? 0));
-    if (!grantId || !userId || remaining <= 0n) continue;
-    const txKey = `bonus_expire:${grantId}`;
-    try {
-      const out = await applyBalanceDeltaTenths(env as any, {
-        userId,
-        deltaTenths: -remaining,
-        idempotencyKey: txKey,
-        logLabel: 'Bonus token expired',
-        reason: 'Langganan berakhir',
-        systemAccount: 'system_bonus_expired',
-        meta: { kind: 'bonus_expire', grant_id: grantId, purchase_id: String(r?.purchase_id || ''), amount_tenths: Number(remaining) }
-      });
-
-      await env.DB.prepare("UPDATE bonus_token_grants SET remaining_tenths = 0 WHERE id = ?").bind(grantId).run();
-
-      if (!out?.ok) {
-        await notifyAdmin(env, 'Expire bonus token gagal', `<div>grant_id: ${grantId}<br/>user_id: ${userId}<br/>error: ${String(out?.error || 'unknown')}</div>`);
       }
     } catch {}
   }

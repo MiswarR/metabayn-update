@@ -1,18 +1,31 @@
 import React, { useEffect, useState, useRef } from 'react'
-import appIconUrl from '@icons/icon.svg'
-import { invoke } from '@tauri-apps/api/tauri'
+import appIconUrl from '@icons/icon.ico'
+import { convertFileSrc, invoke } from '@tauri-apps/api/tauri'
 import { open as shellOpen } from '@tauri-apps/api/shell'
 import { open as dialogOpen } from '@tauri-apps/api/dialog'
 import { listen } from '@tauri-apps/api/event'
 import { getVersion as tauriGetVersion } from '@tauri-apps/api/app'
+
+const PROMPT_GRABBER_UI = {
+  modalMaxWidthPx: 1000,
+  modalHeightVh: 100,
+  bodyPaddingPx: 20,
+  baseFontPx: 11,
+  labelFontPx: 10,
+  controlFontPx: 10,
+  inputPaddingPx: 6,
+  gridCols: 5,
+  gridHeightPx: 340,
+  thumbHeightPx: 80,
+  gridGapPx: 12
+} as const
 import ProgressBar from '../components/ProgressBar'
 import LogPanel from '../components/LogPanel'
 import Settings from './Settings'
 import HelpGuide from '../components/HelpGuide'
-import TopUp from './TopUp'
-import { getApiUrl, clearTokenLocal, apiGetUserProfile } from '../api/backend'
+import { getApiUrl, clearTokenLocal, apiGetUserProfile, getMachineHash, apiLicenseStatus, apiToolLicenseActivate, apiToolLicenseStatus } from '../api/backend'
 import { decryptApiKey } from '../utils/crypto'
-import { formatTokenBalance, resolveGatewayBalanceAfter } from '../utils/gatewayBalance'
+import { resolveGatewayBalanceAfter } from '../utils/gatewayBalance'
 import { invokeWithTimeout } from '../utils/invokeWithTimeout'
 import { translations } from '../utils/translations'
 import { clearBatchState, loadBatchState, markBatchInterrupted, saveBatchState, type BatchFileStatus, type BatchStateV1 } from '../utils/batchLifecycle'
@@ -20,8 +33,8 @@ import { isVisionLikeModelId } from '../utils/modelVisionFilter'
 
 const isTauri = typeof (window as any).__TAURI_IPC__ === 'function'
 const MODAL_EVENT_NAME = 'metabayn:modal';
-const PENDING_PAYMENT_KEY = 'metabayn:pendingPayment:v1';
-const LAST_PAYMENT_POPUP_TS_KEY = 'metabayn:lastPaymentPopupTs';
+const LICENSE_OPEN_EVENT_NAME = 'metabayn:license:open';
+const LICENSE_CHANGED_EVENT_NAME = 'metabayn:license:changed';
 
 function emitModal(detail: { title: string; message: string; type: 'info' | 'success' | 'error' | 'warning'; afterClose?: () => void }) {
   window.dispatchEvent(new CustomEvent(MODAL_EVENT_NAME, { detail }));
@@ -37,6 +50,38 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     }
   })
   const t = (translations as any)[lang] || (translations as any)['en']
+  const toolT = (t as any)?.settings?.tools || (translations as any)['en']?.settings?.tools || {}
+  const openInAppWeb = React.useCallback(async (url: string, label: string, title: string, opts?: { mobile?: boolean }) => {
+    const u = String(url || '').trim()
+    if (!u) return
+    const mobile = !!opts?.mobile
+    if (!isTauri) {
+      try { window.open(u, '_blank', 'noopener,noreferrer') } catch {}
+      return
+    }
+    try {
+      const mod: any = await import('@tauri-apps/api/window')
+      const WebviewWindow = mod?.WebviewWindow
+      if (!WebviewWindow) throw new Error('WebviewWindow not available')
+      const existing = WebviewWindow.getByLabel ? WebviewWindow.getByLabel(label) : null
+      if (existing) {
+        try { existing.setFocus() } catch {}
+        return
+      }
+      new WebviewWindow(label, {
+        url: u,
+        title: title || 'Metabayn Store',
+        width: mobile ? 520 : 980,
+        height: mobile ? 720 : 720,
+        minWidth: mobile ? 420 : 720,
+        minHeight: 600,
+        resizable: true,
+        focus: true
+      })
+    } catch {
+      try { await shellOpen(u) } catch {}
+    }
+  }, [])
   const formatLogText = React.useCallback((template: string, vars?: Record<string, any>) => {
     const v = vars || {}
     return String(template || '').replace(/\{(\w+)\}/g, (_: string, key: string) => {
@@ -91,8 +136,18 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
   const [stopped,setStopped]=useState(false)
   const stoppedRef = React.useRef(false);
   const [showHelp, setShowHelp] = useState(false)
-  const [showTopUp, setShowTopUp] = useState(false)
-  const [showSubAlert, setShowSubAlert] = useState(false)
+  const [supportOpen, setSupportOpen] = useState(false)
+  const [supportBusy, setSupportBusy] = useState(false)
+  const [supportPurchaseEmail, setSupportPurchaseEmail] = useState<string>('')
+  const [supportProductCode, setSupportProductCode] = useState<'license' | 'prompt_grabber'>('license')
+  const [supportPurchaseTimeHint, setSupportPurchaseTimeHint] = useState<string>('')
+  const [supportAmountHint, setSupportAmountHint] = useState<string>('')
+  const [supportEvidenceLink, setSupportEvidenceLink] = useState<string>('')
+  const [supportNote, setSupportNote] = useState<string>('')
+  const [supportError, setSupportError] = useState<string>('')
+  const [supportSuccess, setSupportSuccess] = useState<string>('')
+  const [appLicenseChecked, setAppLicenseChecked] = useState<boolean>(false)
+  const [appLicenseActive, setAppLicenseActive] = useState<boolean>(false)
   const [userProfile, setUserProfile] = useState<any>(() => {
     try {
       const raw = localStorage.getItem('metabayn:userProfileCache:v1')
@@ -108,31 +163,123 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
   useEffect(() => {
     userProfileRef.current = userProfile
   }, [userProfile])
+  const openLicenseActivation = React.useCallback(() => {
+    try { window.dispatchEvent(new CustomEvent(LICENSE_OPEN_EVENT_NAME)); } catch {}
+  }, [])
+  const refreshAppLicenseStatus = React.useCallback(async () => {
+    if (!token) {
+      setAppLicenseChecked(false)
+      setAppLicenseActive(false)
+      return
+    }
+    const u = userProfileRef.current as any
+    const uid = String(u?.id ?? '').trim()
+    const emailLc = String(u?.email ?? '').trim().toLowerCase()
+    const isAdminLocal = !!(u && ((u.is_admin === 1) || (u.is_admin === true) || emailLc === 'metabayn@gmail.com'))
+    if (isAdminLocal) {
+      setAppLicenseChecked(true)
+      setAppLicenseActive(true)
+      return
+    }
+    if (!uid) {
+      setAppLicenseChecked(false)
+      setAppLicenseActive(false)
+      return
+    }
+    const deviceHash = await getMachineHash().catch(() => '')
+    if (!deviceHash) {
+      setAppLicenseChecked(true)
+      setAppLicenseActive(false)
+      return
+    }
+    const lic = await apiLicenseStatus(token, uid, deviceHash).catch(() => null)
+    const active = !!(lic && (lic as any).active)
+    setAppLicenseChecked(true)
+    setAppLicenseActive(active)
+  }, [token])
+  useEffect(() => {
+    void refreshAppLicenseStatus()
+  }, [refreshAppLicenseStatus, userProfile])
+  useEffect(() => {
+    const handler = () => {
+      void refreshAppLicenseStatus()
+    }
+    window.addEventListener(LICENSE_CHANGED_EVENT_NAME, handler as any)
+    return () => window.removeEventListener(LICENSE_CHANGED_EVENT_NAME, handler as any)
+  }, [refreshAppLicenseStatus])
   const lastProfileRefreshMsRef = useRef<number>(0)
   const [showDupModal, setShowDupModal] = useState(false)
   const [dupInputDir, setDupInputDir] = useState<string>('')
   const [dupAutoDelete, setDupAutoDelete] = useState<boolean>(true)
   const [dupThreshold, setDupThreshold] = useState<number>(3)
   const [dupRunning, setDupRunning] = useState<boolean>(false)
+  const [showResizeModal, setShowResizeModal] = useState(false)
+  const [resizeInputDir, setResizeInputDir] = useState<string>('')
+  const [resizeOutputDir, setResizeOutputDir] = useState<string>('')
+  const [resizeDeleteOriginal, setResizeDeleteOriginal] = useState<boolean>(false)
+  const [resizeWidth, setResizeWidth] = useState<string>('1920')
+  const [resizeHeight, setResizeHeight] = useState<string>('1080')
+  const [resizeKeepAspect, setResizeKeepAspect] = useState<boolean>(true)
+  const [resizeFormat, setResizeFormat] = useState<string>('jpeg')
+  const [resizeQuality, setResizeQuality] = useState<number>(85)
+  const [resizeRunning, setResizeRunning] = useState<boolean>(false)
+  const [showConvertModal, setShowConvertModal] = useState(false)
+  const [convertInputDir, setConvertInputDir] = useState<string>('')
+  const [convertOutputDir, setConvertOutputDir] = useState<string>('')
+  const [convertDeleteOriginal, setConvertDeleteOriginal] = useState<boolean>(false)
+  const [convertFormat, setConvertFormat] = useState<string>('jpeg')
+  const [convertFormatOptions, setConvertFormatOptions] = useState<string[]>([])
+  const [convertQuality, setConvertQuality] = useState<number>(85)
+  const [convertRunning, setConvertRunning] = useState<boolean>(false)
+  const pgPrefsInit = (() => {
+    try {
+      const raw = localStorage.getItem('metabayn:tool:promptgrabber:v1')
+      if (!raw) return {}
+      const parsed = JSON.parse(raw)
+      return parsed && typeof parsed === 'object' ? parsed : {}
+    } catch {
+      return {}
+    }
+  })()
+  const [showPromptGrabberModal, setShowPromptGrabberModal] = useState(false)
+  const [pgPremiumOpen, setPgPremiumOpen] = useState<boolean>(false)
+  const [pgPremiumBusy, setPgPremiumBusy] = useState<boolean>(false)
+  const [pgPremiumCode, setPgPremiumCode] = useState<string>('')
+  const [pgPremiumError, setPgPremiumError] = useState<string>('')
+  const [pgPremiumActive, setPgPremiumActive] = useState<boolean | null>(null)
+  const [pgInputDir, setPgInputDir] = useState<string>('')
+  const [pgScanning, setPgScanning] = useState<boolean>(false)
+  const [pgGenerating, setPgGenerating] = useState<boolean>(false)
+  const [pgItems, setPgItems] = useState<any[]>([])
+  const [pgSelected, setPgSelected] = useState<Record<string, boolean>>({})
+  const [pgMinimized, setPgMinimized] = useState<boolean>(false)
+  const [pgMiniStatus, setPgMiniStatus] = useState<'idle' | 'running' | 'done'>('idle')
+  const [pgIncludeFilenameHeader, setPgIncludeFilenameHeader] = useState<boolean>(() => {
+    const v = (pgPrefsInit as any)?.include_filename_header
+    return typeof v === 'boolean' ? v : false
+  })
+  const [pgPlatform, setPgPlatform] = useState<string>(() => {
+    const v = String((pgPrefsInit as any)?.platform || '').trim()
+    return v || 'Midjourney'
+  })
+  const [pgDetailLevel, setPgDetailLevel] = useState<string>(() => {
+    const v = String((pgPrefsInit as any)?.detail_level || '').trim()
+    return v || 'Detail'
+  })
+  const [pgLanguage, setPgLanguage] = useState<string>(() => {
+    const v = String((pgPrefsInit as any)?.language || '').trim()
+    return v || 'English'
+  })
+  const [pgExtraPrompt, setPgExtraPrompt] = useState<string>(() => {
+    return String((pgPrefsInit as any)?.extra_prompt || '')
+  })
+  const [pgOutputText, setPgOutputText] = useState<string>('')
+  const [pgLastResults, setPgLastResults] = useState<any[]>([])
+  const pgThumbLoadTokenRef = useRef<number>(0)
   const [criticalError, setCriticalError] = useState<string | null>(null)
   const criticalErrorRef = useRef<string | null>(null);
   const [profitMargin, setProfitMargin] = useState<number>(50);
-
-  const subscriptionExpiryTs = (() => {
-    const raw = (userProfile as any)?.subscription_expiry
-    if (!raw) return null
-    const ts = new Date(String(raw)).getTime()
-    return Number.isFinite(ts) ? ts : null
-  })()
-  const subscriptionActive = !!(userProfile as any)?.subscription_active && (subscriptionExpiryTs === null || subscriptionExpiryTs > Date.now())
-  const subscriptionExpiryLabel = (() => {
-    if (!subscriptionExpiryTs) return null
-    const d = new Date(subscriptionExpiryTs)
-    const dd = String(d.getDate()).padStart(2, '0')
-    const mm = String(d.getMonth() + 1).padStart(2, '0')
-    const yy = String(d.getFullYear())
-    return `${dd}/${mm}/${yy}`
-  })()
+  const convertFormatOptionsLoadedRef = useRef<boolean>(false);
   const [gatewayEnabled, setGatewayEnabled] = useState<boolean>(false);
   const autoResumeTriedRef = useRef(false);
   const isGeneratingRef = useRef(false)
@@ -230,17 +377,35 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       emitModal({ title, message, type });
   };
 
+  const notificationTimerRef = useRef<any>(null)
+  const toast = React.useCallback((title: string, message: string, type: 'success' | 'info' | 'error' = 'info') => {
+    setNotification({ title, message, type })
+    try {
+      if (notificationTimerRef.current) clearTimeout(notificationTimerRef.current)
+      notificationTimerRef.current = setTimeout(() => setNotification(null), 2200)
+    } catch {}
+  }, [])
+
   const resolveGatewayFromSettings = (s: any): boolean => {
-    const provider = String(s?.ai_provider || '').trim().toLowerCase()
-    const mode = String(s?.connection_mode || '').trim().toLowerCase()
-    if (mode === 'direct') return false
-    if (provider === 'openrouter') return true
-    return mode === 'gateway' || mode === 'server'
+    return false
   }
 
   // Notification State
   const [notification, setNotification] = useState<{title: string, message: string, type: 'success' | 'info' | 'error'} | null>(null)
   const prevProfileRef = useRef<any>(null)
+
+  useEffect(() => {
+    try {
+      const payload = {
+        platform: pgPlatform,
+        detail_level: pgDetailLevel,
+        language: pgLanguage,
+        extra_prompt: pgExtraPrompt,
+        include_filename_header: pgIncludeFilenameHeader
+      }
+      localStorage.setItem('metabayn:tool:promptgrabber:v1', JSON.stringify(payload))
+    } catch {}
+  }, [pgPlatform, pgDetailLevel, pgLanguage, pgExtraPrompt, pgIncludeFilenameHeader])
 
   // Sync state to ref
   useEffect(() => {
@@ -292,95 +457,10 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     }
   }, [token])
 
-  // Monitor Profile Changes for Notifications
   useEffect(() => {
     if (!userProfile) return;
-    const prev = prevProfileRef.current;
-    
-    // DISABLED: Logic moved to App.tsx to prevent double popups
-    if (false && prev) {
-        const diff = userProfile.tokens - prev.tokens;
-        const pending = (() => {
-          try {
-            const raw = localStorage.getItem(PENDING_PAYMENT_KEY);
-            if (!raw) return null;
-            try { return JSON.parse(raw as string) as any; } catch { return null; }
-          } catch { return null; }
-        })();
-        const pendingCreatedAt =
-          pending && typeof pending.createdAt === 'number' && Number.isFinite(pending.createdAt)
-            ? pending.createdAt
-            : 0;
-        const lastTs = (() => {
-          try { return Number(localStorage.getItem(LAST_PAYMENT_POPUP_TS_KEY) || 0); } catch { return 0; }
-        })();
-        const suppressRecentPaymentPopup = lastTs && (Date.now() - lastTs) < 20000;
-        
-        // 2. Check Subscription Extended/Activated
-        const prevExpiry = prev.subscription_expiry ? new Date(prev.subscription_expiry).getTime() : 0;
-        const newExpiry = userProfile.subscription_expiry ? new Date(userProfile.subscription_expiry).getTime() : 0;
-        
-        // If active AND (was inactive OR expiry extended)
-        if (userProfile.subscription_active && (!prev.subscription_active || newExpiry > prevExpiry)) {
-             console.log("[Dashboard] Subscription activation detected via profile sync");
-             
-             // Check if pending payment is "stale" (older than 3 minutes)
-             // If stale, we show the generic popup as a fallback because App.tsx might be stuck/failed.
-             const isPendingStale = pendingCreatedAt > 0 && (Date.now() - pendingCreatedAt > 180000);
-             
-             if (showTopUp && !isPendingStale) {
-                 console.log("[Dashboard] Suppressing duplicate subscription popup because TopUp is open");
-                 prevProfileRef.current = userProfile;
-                 return;
-             }
-             if ((pending && !isPendingStale) || suppressRecentPaymentPopup) {
-                 console.log("[Dashboard] Suppressing subscription popup because payment flow is handling it");
-                 prevProfileRef.current = userProfile;
-                 return;
-             }
-             const dateStr = new Date(userProfile.subscription_expiry).toLocaleDateString(lang === 'id' ? 'id-ID' : 'en-US', { 
-                 weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
-             });
-             
-             let bonusMsg = "";
-             if (diff > 0) {
-                 bonusMsg = lang === 'id' 
-                    ? `\nBonus Token: ${diff.toLocaleString()}`
-                    : `\nBonus Tokens: ${diff.toLocaleString()}`;
-             }
-
-             const msg = lang === 'id'
-                ? `Langganan Diaktifkan!\nBerlaku hingga: ${dateStr}${bonusMsg}`
-                : `Subscription Activated!\nValid until: ${dateStr}${bonusMsg}`;
-                
-             showModal(lang === 'id' ? "Sukses" : "Success", msg, "success");
-        } 
-        // 1. Check Token Increase (Only if not handled by subscription)
-        else if (diff > 100) { 
-             console.log("[Dashboard] Token increase detected:", diff);
-             
-             // Check if pending payment is "stale" (older than 3 minutes)
-             const isPendingStale = pendingCreatedAt > 0 && (Date.now() - pendingCreatedAt > 180000);
-
-             if (showTopUp && !isPendingStale) {
-                 console.log("[Dashboard] Suppressing duplicate token popup because TopUp is open");
-                 prevProfileRef.current = userProfile;
-                 return;
-             }
-             if ((pending && !isPendingStale) || suppressRecentPaymentPopup) {
-                 console.log("[Dashboard] Suppressing token popup because payment flow is handling it");
-                 prevProfileRef.current = userProfile;
-                 return;
-             }
-             const msg = lang === 'id' 
-                ? `Pembelian Token Berhasil!\nToken Ditambahkan: ${diff.toLocaleString()}\nTotal Saldo: ${userProfile.tokens.toLocaleString()}`
-                : `Token Purchase Successful!\nTokens Added: ${diff.toLocaleString()}\nTotal Balance: ${userProfile.tokens.toLocaleString()}`;
-             showModal(lang === 'id' ? "Sukses" : "Success", msg, "success");
-        }
-    }
-    
     prevProfileRef.current = userProfile;
-  }, [userProfile, lang, showTopUp]);
+  }, [userProfile]);
   
   useEffect(() => {
     console.log("Dashboard mounted. Token present:", !!token);
@@ -487,6 +567,192 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     });
     return () => { unlistenPromise.then(unlisten => unlisten()); };
   }, []);
+
+  // Listen for Resize Media Logs
+  useEffect(() => {
+    if (!isTauri) return;
+    const unlistenPromise = listen('resize_log', (event) => {
+      const payload = event.payload as any;
+      let logItem: any = {};
+      let color = '#ec4899'; // Pink for Resize
+
+      if (typeof payload === 'string') {
+          logItem = { text: `[Resize] ${payload}`, color: color };
+      } else if (typeof payload === 'object') {
+          if (payload.code === 'RESIZE_ENGINE_EXTERNAL') {
+            payload.text = formatLogText(toolT?.resizeEngineExternal || '', {})
+            if (payload.detail) {
+              payload.detail = formatLogText(toolT?.resizeEngineExternalDetail || '', { path: String(payload.detail) })
+            }
+          }
+          if (payload.code === 'RESIZE_ENGINE_INTERNAL') {
+            payload.text = formatLogText(toolT?.resizeEngineInternal || '', {})
+          }
+          if (payload.code === 'RESIZE_CONFIG') {
+            payload.text = formatLogText(toolT?.resizeConfig || '', {
+              input: String(payload.input_folder || ''),
+              output: String(payload.output_folder || ''),
+              width: Number(payload.width || 0),
+              height: Number(payload.height || 0),
+              keep_aspect: (payload.keep_aspect ? 'true' : 'false'),
+              format: String(payload.format || ''),
+              quality: Number(payload.quality || 0),
+              delete_original: (payload.delete_original ? 'true' : 'false')
+            })
+          }
+          if (payload.code === 'RESIZE_SCAN_OK') {
+            payload.text = formatLogText(toolT?.resizeScanOk || '', {
+              total: Number(payload.total || 0),
+              files_seen: Number(payload.files_seen || 0),
+              hidden_skipped: Number(payload.hidden_skipped || 0),
+              walk_errors: Number(payload.walk_errors || 0)
+            })
+          }
+          if (payload.code === 'RESIZE_SCAN_NONE') {
+            payload.text = formatLogText(toolT?.resizeScanNone || '', {
+              files_seen: Number(payload.files_seen || 0),
+              hidden_skipped: Number(payload.hidden_skipped || 0),
+              walk_errors: Number(payload.walk_errors || 0),
+              exts_seen: String(payload.exts_seen || '')
+            })
+          }
+          if (payload.code === 'RESIZE_FILE_PROCESSING') {
+            payload.text = formatLogText(toolT?.resizeProcessingFile || '', { name: String(payload.name || '') })
+          }
+          if (payload.code === 'RESIZE_FILE_SUCCESS') {
+            const suffix = payload.deleted_original ? (toolT?.resizeDeletedSuffix || '') : ''
+            payload.text = formatLogText(toolT?.resizeSuccessFile || '', { name: String(payload.name || ''), suffix })
+          }
+          if (payload.code === 'RESIZE_FILE_ERROR') {
+            payload.text = formatLogText(toolT?.resizeFailedFile || '', { name: String(payload.name || '') })
+          }
+          if ((payload.code === 'TOOL_TOTAL' || payload.code === 'TOOL_PROGRESS') && !String(payload.text || '').trim()) {
+            applyToolStats('tools', payload)
+            return
+          }
+          if (payload.status === 'success') color = '#4caf50';
+                else if (payload.status === 'error') color = '#f44336';
+                else if (payload.status === 'processing') color = '#aaa';
+                else if (payload.status === 'info') color = '#aaa';
+                
+                logItem = {
+                    text: `[Resize] ${payload.text}`,
+                    detail: payload.detail,
+                    color: color,
+                    animating: payload.status === 'processing',
+                    file: payload.file,
+                    status: payload.status
+                };
+            }
+
+            applyToolStats('tools', payload)
+            setLogs(prev => {
+                if ((payload as any).file) {
+             const idx = prev.findIndex(l => l.file === (payload as any).file && l.status === 'processing');
+             if (idx >= 0) {
+                 const newLogs = [...prev];
+                 newLogs[idx] = { ...newLogs[idx], ...logItem };
+                 return newLogs;
+             }
+          }
+          return [...prev, logItem];
+      });
+    });
+    return () => { unlistenPromise.then(unlisten => unlisten()); };
+  }, [toolT, lang, formatLogText, applyToolStats]);
+
+  // Listen for Convert Logs
+  useEffect(() => {
+    if (!isTauri) return;
+    const unlistenPromise = listen('convert_log', (event) => {
+      const payload = event.payload as any;
+      let logItem: any = {};
+      let color = '#f59e0b';
+
+      if (typeof payload === 'string') {
+        logItem = { text: `[Convert] ${payload}`, color: color };
+      } else if (typeof payload === 'object') {
+        if (payload.code === 'CONVERT_ENGINE_MISSING') {
+          payload.text = formatLogText(toolT?.convertEngineMissing || '', {})
+        }
+        if (payload.code === 'CONVERT_ENGINE_EXTERNAL') {
+          payload.text = formatLogText(toolT?.convertEngineExternal || '', {})
+          if (payload.detail) {
+            payload.detail = formatLogText(toolT?.convertEngineExternalDetail || '', { path: String(payload.detail) })
+          }
+        }
+        if (payload.code === 'CONVERT_CONFIG') {
+          payload.text = formatLogText(toolT?.convertConfig || '', {
+            input: String(payload.input_folder || ''),
+            output: String(payload.output_folder || ''),
+            format: String(payload.format || ''),
+            quality: Number(payload.quality || 0),
+            keep_metadata: (payload.keep_metadata ? 'true' : 'false'),
+            delete_original: (payload.delete_original ? 'true' : 'false')
+          })
+        }
+        if (payload.code === 'CONVERT_SCAN_OK') {
+          payload.text = formatLogText(toolT?.convertScanOk || '', {
+            total: Number(payload.total || 0),
+            files_seen: Number(payload.files_seen || 0),
+            hidden_skipped: Number(payload.hidden_skipped || 0),
+            walk_errors: Number(payload.walk_errors || 0)
+          })
+        }
+        if (payload.code === 'CONVERT_SCAN_NONE') {
+          payload.text = formatLogText(toolT?.convertScanNone || '', {
+            files_seen: Number(payload.files_seen || 0),
+            hidden_skipped: Number(payload.hidden_skipped || 0),
+            walk_errors: Number(payload.walk_errors || 0),
+            exts_seen: String(payload.exts_seen || '')
+          })
+        }
+        if (payload.code === 'CONVERT_FILE_PROCESSING') {
+          payload.text = formatLogText(toolT?.convertProcessingFile || '', { name: String(payload.name || '') })
+        }
+        if (payload.code === 'CONVERT_FILE_SUCCESS') {
+          const suffix = payload.deleted_original ? (toolT?.convertDeletedSuffix || '') : ''
+          payload.text = formatLogText(toolT?.convertSuccessFile || '', { name: String(payload.name || ''), suffix })
+        }
+        if (payload.code === 'CONVERT_FILE_ERROR') {
+          payload.text = formatLogText(toolT?.convertFailedFile || '', { name: String(payload.name || '') })
+        }
+
+        if ((payload.code === 'TOOL_TOTAL' || payload.code === 'TOOL_PROGRESS') && !String(payload.text || '').trim()) {
+          applyToolStats('tools', payload)
+          return
+        }
+
+        if (payload.status === 'success') color = '#4caf50';
+        else if (payload.status === 'error') color = '#f44336';
+        else if (payload.status === 'processing') color = '#aaa';
+        else if (payload.status === 'info') color = '#aaa';
+
+        logItem = {
+          text: `[Convert] ${payload.text}`,
+          detail: payload.detail,
+          color: color,
+          animating: payload.status === 'processing',
+          file: payload.file,
+          status: payload.status
+        };
+      }
+
+      applyToolStats('tools', payload)
+      setLogs(prev => {
+        if ((payload as any).file) {
+          const idx = prev.findIndex(l => l.file === (payload as any).file && l.status === 'processing');
+          if (idx >= 0) {
+            const newLogs = [...prev];
+            newLogs[idx] = { ...newLogs[idx], ...logItem };
+            return newLogs;
+          }
+        }
+        return [...prev, logItem];
+      });
+    });
+    return () => { unlistenPromise.then(unlisten => unlisten()); };
+  }, [toolT, lang, formatLogText, applyToolStats]);
 
   // Listen for AI Cluster Logs
   useEffect(() => {
@@ -604,6 +870,36 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     }
   }, [isActive])
 
+  useEffect(() => {
+    if (!isTauri) return
+    if (!showConvertModal) return
+    if (convertFormatOptionsLoadedRef.current) return
+    convertFormatOptionsLoadedRef.current = true
+
+    const fallback = [
+      'jpeg','jpg','png','webp','gif','tiff','tif','bmp','heic','heif','avif','jp2','j2k','jxl','svg','pdf','psd','ico','tga'
+    ]
+
+    ;(async () => {
+      try {
+        const list = await invoke<any>('list_convert_formats')
+        const arr = Array.isArray(list) ? list : []
+        const cleaned = arr
+          .map(v => String(v || '').trim().toLowerCase())
+          .filter(v => !!v)
+
+        const unique = Array.from(new Set(cleaned))
+        const preferred = ['jpeg','jpg','png','webp','gif','tiff','tif','bmp','heic','heif','avif','jp2','j2k','jxl','svg','pdf','psd','ico','tga']
+        const preferredSet = new Set(preferred)
+        const rest = unique.filter(x => !preferredSet.has(x)).sort((a, b) => a.localeCompare(b))
+        const merged = [...preferred.filter(x => unique.includes(x)), ...rest]
+        setConvertFormatOptions(merged.length ? merged : fallback)
+      } catch {
+        setConvertFormatOptions(fallback)
+      }
+    })()
+  }, [showConvertModal])
+
   // Background Keep-Alive (Prevent Throttling)
   const audioCtxRef = useRef<AudioContext | null>(null);
   const oscillatorRef = useRef<OscillatorNode | null>(null);
@@ -664,6 +960,83 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       window.addEventListener('focus', onFocus);
       return () => window.removeEventListener('focus', onFocus);
   },[token, isActive])
+
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      if (!isTauri) {
+        if (!cancelled) setPgPremiumActive(null)
+        return
+      }
+      if (!token) {
+        if (!cancelled) setPgPremiumActive(null)
+        return
+      }
+      try {
+        const u = userProfileRef.current as any
+        const email = String(u?.email || '').trim().toLowerCase()
+        const isAdmin = !!u?.is_admin || email === 'metabayn@gmail.com'
+        if (isAdmin) {
+          if (!cancelled) setPgPremiumActive(true)
+          return
+        }
+        const uid = String(u?.id || '').trim()
+        if (!uid) {
+          if (!cancelled) setPgPremiumActive(null)
+          return
+        }
+        const deviceHash = await getMachineHash()
+        const st = await apiToolLicenseStatus(token, uid, deviceHash, 'prompt_grabber').catch(() => null)
+        if (!cancelled) setPgPremiumActive(!!(st && (st as any).active))
+      } catch {
+        if (!cancelled) setPgPremiumActive(null)
+      }
+    }
+    void run()
+    return () => { cancelled = true }
+  }, [token, userProfile, isTauri])
+
+  useEffect(() => {
+    if (!supportOpen) return
+    const u = userProfileRef.current as any
+    const email = String(u?.email || userEmail || '').trim().toLowerCase()
+    if (!supportPurchaseEmail && email) setSupportPurchaseEmail(email)
+    if (!supportSuccess) setSupportSuccess('')
+    if (!supportError) setSupportError('')
+  }, [supportOpen])
+
+  async function submitLicenseSupport() {
+    if (!token) return
+    setSupportBusy(true)
+    setSupportError('')
+    setSupportSuccess('')
+    try {
+      const purchaseEmail = String(supportPurchaseEmail || '').trim()
+      if (!purchaseEmail) throw new Error(lang === 'id' ? 'Masukkan email pembelian (yang tertulis di invoice Lynk).' : 'Enter purchase email.')
+      const evidence = String(supportEvidenceLink || '').trim()
+      const baseNote = String(supportNote || '').trim()
+      const noteFinal = evidence
+        ? (baseNote ? `${baseNote}\nBukti: ${evidence}` : `Bukti: ${evidence}`)
+        : baseNote
+      const payload = {
+        purchase_email: purchaseEmail,
+        product_code: supportProductCode,
+        purchase_time_hint: String(supportPurchaseTimeHint || '').trim(),
+        amount_hint: String(supportAmountHint || '').trim(),
+        note: noteFinal
+      }
+      const { apiSupportLicenseClaim } = await import('../api/backend')
+      const res = await apiSupportLicenseClaim(token, payload)
+      const rid = String(res?.request_id || res?.requestId || '').trim()
+      setSupportSuccess(lang === 'id'
+        ? `Permintaan terkirim. ID: ${rid || '-'}`
+        : `Request submitted. ID: ${rid || '-'}`)
+    } catch (e: any) {
+      setSupportError(e?.message ? String(e.message) : String(e))
+    } finally {
+      setSupportBusy(false)
+    }
+  }
   
   // User email fetch removed (Server Mode removed)
 
@@ -738,17 +1111,23 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     const isGateway = resolveGatewayFromSettings(s);
     setGatewayEnabled(isGateway);
 
-    if (userProfile) {
-        if (!subscriptionActive) {
-            setShowSubAlert(true);
+    if (token && userProfile) {
+      const uid = String((userProfile as any)?.id ?? '').trim()
+      const emailLc = String((userProfile as any)?.email ?? '').trim().toLowerCase()
+      const isAdmin = !!((userProfile as any) && (((userProfile as any).is_admin === 1) || ((userProfile as any).is_admin === true) || emailLc === 'metabayn@gmail.com'))
+      if (!isAdmin) {
+        const deviceHash = await getMachineHash().catch(() => '')
+        if (uid && deviceHash) {
+          const lic = await apiLicenseStatus(token, uid, deviceHash).catch(() => null)
+          const active = !!(lic && lic.active)
+          setAppLicenseChecked(true)
+          setAppLicenseActive(active)
+          if (!active) {
+            openLicenseActivation()
             return;
+          }
         }
-        if (isGateway && (userProfile.tokens || 0) <= 0) {
-            const t = translations[lang] || translations['en'];
-            alert(t.settings.insufficientTokens || "Insufficient tokens. Please Top Up.");
-            setShowTopUp(true);
-            return;
-        }
+      }
     }
     setLogs(l=>[...l, {text: pl('folder', { path: s.input_folder||'(None)' }), color:'#aaa'}])
 
@@ -810,13 +1189,14 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     let directApiKey = '';
     if (!isGateway) {
       try {
+        const deviceSecret = String(await getMachineHash()).trim()
         const savedKey = localStorage.getItem('metabayn_api_key_enc');
         const savedIv = localStorage.getItem('metabayn_api_key_iv');
         if (!savedKey || !savedIv) {
           setLogs(l=>[...l, {text: pl('apiKeyMissing'), color:'#f44336'}]);
           return;
         }
-        directApiKey = (await decryptApiKey(savedKey, savedIv)).trim();
+        directApiKey = (await decryptApiKey(savedKey, savedIv, deviceSecret)).trim();
         if (!directApiKey) {
           setLogs(l=>[...l, {text: pl('apiKeyEmpty'), color:'#f44336'}]);
           return;
@@ -877,7 +1257,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     const autoStopFailThresholdRaw = Number((genCfg as any)?.auto_stop_fail_threshold)
     const autoStopFailThreshold = Number.isFinite(autoStopFailThresholdRaw) ? Math.max(1, Math.min(Math.round(autoStopFailThresholdRaw), 50)) : 5
     const reqTimeoutSecRaw = Number((genCfg as any)?.request_timeout_sec)
-    const requestTimeoutMs = (Number.isFinite(reqTimeoutSecRaw) ? Math.max(15, Math.min(Math.round(reqTimeoutSecRaw), 900)) : 180) * 1000
+    const requestTimeoutSec = Number.isFinite(reqTimeoutSecRaw) ? Math.max(15, Math.min(Math.round(reqTimeoutSecRaw), 900)) : 180
 
     if ((String(s.ai_provider || '') === 'OpenAI' || String(s.ai_provider || '') === 'Gemini') && !isVisionLikeModelId(effectiveModel)) {
       pushLog({ text: pl('modelNotVisionSupported', { model: effectiveModel }), color: '#f44336' })
@@ -1004,28 +1384,6 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
 
         if(stoppedRef.current || criticalErrorRef.current) return;
 
-        const isSubscriptionValidNow = () => {
-          const p = userProfileRef.current as any
-          if (!p || !p.subscription_active) return false
-          const raw = p.subscription_expiry
-          if (!raw) return true
-          const ts = new Date(String(raw)).getTime()
-          if (!Number.isFinite(ts)) return false
-          return ts > Date.now()
-        }
-
-        const stopIfSubscriptionInvalid = () => {
-          if (stoppedRef.current) return
-          pushLog({ text: pl('subscriptionExpiredStop'), color: '#f44336' })
-          stopProcessSystem(pl('subscriptionExpiredDetail'))
-          setShowSubAlert(true)
-        }
-
-        if (!isSubscriptionValidNow()) {
-          stopIfSubscriptionInvalid()
-          return
-        }
-
         if (token) {
           const nowMs = Date.now()
           if (nowMs - lastProfileRefreshMsRef.current > 30000) {
@@ -1039,20 +1397,6 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
           }
         }
 
-        if (isGateway && isTauri && token) {
-          try {
-            const bal = await invokeWithTimeout<number>(invoke, 'refresh_balance', { token }, 8000)
-            if (typeof bal === 'number' && Number.isFinite(bal)) {
-              setUserProfile((prev: any) => ({ ...(prev || {}), tokens: bal }))
-              if (bal <= 0) {
-                pushLog({ text: pl('tokensExhaustedStop'), color: '#f44336' })
-                stopProcessSystem(pl('tokensExhaustedDetail'))
-                return
-              }
-            }
-          } catch {}
-        }
-        
         let fileRemoved = false;
         const logId = `${file}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
@@ -1106,6 +1450,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
               banned_words: String(s.banned_words || ''),
               max_threads: Number(s.max_threads || 4),
               provider: String(s.ai_provider || ''),
+              request_timeout_sec: requestTimeoutSec,
               request_id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`
             };
             if (isGateway) {
@@ -1115,7 +1460,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
               reqPayload.connection_mode = 'direct';
               reqPayload.api_key = directApiKey;
             }
-            const res = await invokeWithTimeout<any[]>(invoke, 'generate_metadata_batch', { req: reqPayload }, requestTimeoutMs)
+            const res = await invoke<any[]>('generate_metadata_batch', { req: reqPayload })
             if (criticalErrorRef.current) {
               finalStatus = 'skipped'
               return
@@ -1205,13 +1550,6 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
                     // Construct detail with token stats for rejected/failed files
                     const rawErr = String((g as any).description || '')
                     let detailMsg = localizeBackendError(rawErr);
-                    if (!isRejection) {
-                      const errLower = rawErr.toLowerCase()
-                      if (errLower.includes('langganan tidak aktif') || errLower.includes('subscription inactive') || errLower.includes('subscription expired') || errLower.includes('langganan berakhir')) {
-                        stopIfSubscriptionInvalid()
-                        break
-                      }
-                    }
                     if (g.input_tokens !== undefined) {
                         detailMsg += `\n\n${pl('generationStatsTitle')}`;
                         const actualModel = pickActualModel(g);
@@ -1542,17 +1880,12 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
             // No throttling or sleeps on failure; continue at max speed
             const fileName = file.split(/[\\/]/).pop();
             const msg = String(e || '');
-            const lower = msg.toLowerCase()
-            if (lower.includes('langganan tidak aktif') || lower.includes('subscription inactive') || lower.includes('subscription expired') || lower.includes('langganan berakhir')) {
-              stopIfSubscriptionInvalid()
-            }
-            if (msg.includes(' timeout')) {
-              stopProcessSystem(pl('timeoutDetail'))
-            }
             const isCancelled = msg.includes('CANCELLED_BY_USER');
             finalStatus = finalStatus || (isCancelled ? 'skipped' : 'failed');
             if (!isCancelled) {
-              setLogs(l => l.map(x => x.id === logId ? { ...x, text: pl('systemError', { name: fileName }), detail: localizeBackendError(msg), color:'#f44336', animating: false } : x));
+              const isTimeout = msg.includes(' timeout') || /\btimeout\b/i.test(msg)
+              const detail = isTimeout ? pl('timeoutDetail') : localizeBackendError(msg)
+              setLogs(l => l.map(x => x.id === logId ? { ...x, text: pl('systemError', { name: fileName }), detail, color:'#f44336', animating: false } : x));
               setStats(st=>({...st, failed: st.failed+1}));
             } else {
               setLogs(l => l.map(x => x.id === logId ? { ...x, text: pl('cancelled', { name: fileName }), detail: '', color:'#ff9800', animating: false } : x));
@@ -1683,6 +2016,23 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
 
         // Fetch settings
         const s = await invoke<any>('get_settings');
+        const p = userProfileRef.current as any
+        const uid = String((p as any)?.id ?? '').trim()
+        const emailLc = String((p as any)?.email ?? '').trim().toLowerCase()
+        const isAdminLocal = !!(p && (((p as any).is_admin === 1) || ((p as any).is_admin === true) || emailLc === 'metabayn@gmail.com'))
+        if (token && uid && !isAdminLocal) {
+          const deviceHash = await getMachineHash().catch(() => '')
+          if (deviceHash) {
+            const lic = await apiLicenseStatus(token, uid, deviceHash).catch(() => null)
+            const active = !!(lic && lic.active)
+            setAppLicenseChecked(true)
+            setAppLicenseActive(active)
+            if (!active) {
+              openLicenseActivation()
+              return
+            }
+          }
+        }
 
         const normalizeModelForProvider = (provider: string, model: string): string => {
           const p = String(provider || '')
@@ -1719,12 +2069,14 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         let apiKey = "";
         
         try {
+            const deviceSecret = String(await getMachineHash()).trim()
             const savedKey = localStorage.getItem('metabayn_api_key_enc');
             const savedIv = localStorage.getItem('metabayn_api_key_iv');
             if (savedKey && savedIv) {
-                apiKey = (await decryptApiKey(savedKey, savedIv)).trim();
+                apiKey = (await decryptApiKey(savedKey, savedIv, deviceSecret)).trim();
             }
         } catch(e) { console.error("Failed to decrypt API Key", e); }
+        if (!apiKey) throw new Error('Missing API key')
 
         // Log: Start (Grey color, animating)
         const logId = Date.now();
@@ -1758,6 +2110,461 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
   async function openDupConfig(){
     setShowDupModal(true)
     // Removed log to avoid confusion when opening config
+  }
+  async function openResizeConfig(){
+    setShowResizeModal(true)
+  }
+  async function openConvertConfig(){
+    setShowConvertModal(true)
+  }
+  async function openPromptGrabberConfig(){
+    setPgMinimized(false)
+    if (!isTauri) {
+      setLogs(l=>[...l,{text: '[PromptGrabber] Feature only available in Tauri app', color:'#ff9800'}])
+      return
+    }
+    try {
+      const u = userProfileRef.current as any
+      const email = String(u?.email || '').trim().toLowerCase()
+      const isAdmin = !!u?.is_admin || email === 'metabayn@gmail.com'
+      if (isAdmin) {
+        setPgPremiumActive(true)
+        setShowPromptGrabberModal(true)
+        return
+      }
+    } catch {}
+    const ok = await (async () => {
+      try {
+        if (!token) throw new Error(lang === 'id' ? 'Silakan login terlebih dahulu' : 'Please login first')
+        const uid = String((userProfileRef.current as any)?.id || '').trim()
+        if (!uid) throw new Error(lang === 'id' ? 'User tidak valid' : 'Invalid user')
+        const deviceHash = await getMachineHash()
+        const st = await apiToolLicenseStatus(token, uid, deviceHash, 'prompt_grabber').catch(() => null)
+        if (st && (st as any).active) {
+          setPgPremiumActive(true)
+          return true
+        }
+        setPgPremiumActive(false)
+        setPgPremiumError('')
+        setPgPremiumCode('')
+        setPgPremiumOpen(true)
+        return false
+      } catch (e:any) {
+        const msg = String(e?.message || e || '').replace('Error: ', '').trim()
+        toast('Prompt Grabber', msg || (lang === 'id' ? 'Gagal cek lisensi' : 'License check failed'), 'error')
+        setLogs(l=>[...l,{text: `[PromptGrabber] Gagal cek lisensi: ${msg || String(e)}`, color:'#f44336'}])
+        return false
+      }
+    })()
+    if (!ok) return
+    setShowPromptGrabberModal(true)
+  }
+  async function pgPremiumRecheckAndOpen(){
+    if (pgPremiumBusy) return
+    setPgPremiumBusy(true)
+    setPgPremiumError('')
+    try {
+      if (!token) throw new Error(lang === 'id' ? 'Silakan login terlebih dahulu' : 'Please login first')
+      const uid = String((userProfileRef.current as any)?.id || '').trim()
+      if (!uid) throw new Error(lang === 'id' ? 'User tidak valid' : 'Invalid user')
+      const deviceHash = await getMachineHash()
+      const st = await apiToolLicenseStatus(token, uid, deviceHash, 'prompt_grabber')
+      if (st && (st as any).active) {
+        setPgPremiumActive(true)
+        setPgPremiumOpen(false)
+        setShowPromptGrabberModal(true)
+        toast('Prompt Grabber', lang === 'id' ? 'Prompt Grabber Premium aktif' : 'Prompt Grabber Premium active', 'success')
+        return
+      }
+      setPgPremiumActive(false)
+      setPgPremiumError(lang === 'id'
+        ? 'Lisensi Prompt Grabber belum aktif. Jika sudah beli, tunggu sebentar lalu klik Cek Aktivasi. Atau masukkan kode lisensi dari email.'
+        : 'Prompt Grabber license is not active yet. If you already bought it, wait a moment then click Check Activation. Or enter the license code from email.')
+    } catch (e:any) {
+      const msg = String(e?.message || e || '').replace('Error: ', '').trim()
+      setPgPremiumError(msg || (lang === 'id' ? 'Gagal cek lisensi' : 'License check failed'))
+      setLogs(l=>[...l,{text: `[PromptGrabber] Premium check failed: ${msg || String(e)}`, color:'#f44336'}])
+    } finally {
+      setPgPremiumBusy(false)
+    }
+  }
+  async function pgPremiumActivateCode(){
+    if (pgPremiumBusy) return
+    const code = String(pgPremiumCode || '').trim()
+    if (!code) {
+      setPgPremiumError(lang === 'id' ? 'Masukkan kode lisensi (dari email) lalu klik Aktifkan.' : 'Enter your license code (from email) then click Activate.')
+      return
+    }
+    setPgPremiumBusy(true)
+    setPgPremiumError('')
+    try {
+      if (!token) throw new Error(lang === 'id' ? 'Silakan login terlebih dahulu' : 'Please login first')
+      const uid = String((userProfileRef.current as any)?.id || '').trim()
+      if (!uid) throw new Error(lang === 'id' ? 'User tidak valid' : 'Invalid user')
+      const deviceHash = await getMachineHash()
+      await apiToolLicenseActivate(token, code, uid, deviceHash, 'prompt_grabber')
+      await pgPremiumRecheckAndOpen()
+    } catch (e:any) {
+      const msg = String(e?.message || e || '').replace('Error: ', '').trim()
+      setPgPremiumError(msg || (lang === 'id' ? 'Gagal aktivasi' : 'Activation failed'))
+      setLogs(l=>[...l,{text: `[PromptGrabber] Premium activation failed: ${msg || String(e)}`, color:'#f44336'}])
+    } finally {
+      setPgPremiumBusy(false)
+    }
+  }
+  async function pickPromptGrabberFolder(){
+    if (!isTauri) { setLogs(l=>[...l,{text: '[PromptGrabber] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    const inputDir = await dialogOpen({ directory: true, multiple: false, title: 'Select Folder (Prompt Grabber)' });
+    if (inputDir) {
+      const dir = String(inputDir)
+      setPgInputDir(dir)
+      toast('Prompt Grabber', lang === 'id' ? 'Folder dipilih' : 'Folder selected', 'info')
+      void runPromptGrabberScan(dir)
+    }
+  }
+  async function runPromptGrabberScan(dirOverride?: string){
+    if (!isTauri) { setLogs(l=>[...l,{text: '[PromptGrabber] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    const inputDir = String(dirOverride || pgInputDir || '').trim()
+    if (!inputDir) {
+      setLogs(l=>[...l,{text: '[PromptGrabber] No input folder selected', color:'#ff9800'}])
+      toast('Prompt Grabber', lang === 'id' ? 'Folder belum dipilih' : 'No folder selected', 'error')
+      return
+    }
+    try {
+      setPgScanning(true)
+      setPgOutputText('')
+      setPgLastResults([])
+      setPgItems([])
+      setPgSelected({})
+      pgThumbLoadTokenRef.current = Date.now()
+      const myToken = pgThumbLoadTokenRef.current
+      toast('Prompt Grabber', lang === 'id' ? 'Scan dimulai' : 'Scan started', 'info')
+      const items = await invoke<any[]>('prompt_grabber_scan_folder_fast', {
+        input_folder: inputDir,
+        inputFolder: inputDir,
+        recurse: false,
+        min_size: 0,
+        minSize: 0,
+        max_files: 0,
+        maxFiles: 0
+      })
+      const list = Array.isArray(items) ? items : []
+      setPgItems(list)
+      const sel: Record<string, boolean> = {}
+      for (const it of list) {
+        const p = String((it as any)?.file_path || '')
+        if (p) sel[p] = true
+      }
+      setPgSelected(sel)
+      setLogs(l=>[...l,{text: `[PromptGrabber] Scan selesai: ${list.length} file`, color:'#4caf50'}])
+      toast('Prompt Grabber', lang === 'id' ? `Scan selesai: ${list.length} file` : `Scan done: ${list.length} files`, 'success')
+
+      const paths = list.map((it: any) => String(it?.file_path || '')).filter(Boolean)
+      const chunkSize = 12
+      const runChunk = async (start: number) => {
+        if (!paths.length) return
+        if (pgThumbLoadTokenRef.current !== myToken) return
+        const chunk = paths.slice(start, start + chunkSize)
+        if (chunk.length === 0) return
+        try {
+          const res = await invoke<any[]>('prompt_grabber_get_thumbnails', { files: chunk })
+          if (pgThumbLoadTokenRef.current !== myToken) return
+          const map = new Map<string, string>()
+          for (const r of (Array.isArray(res) ? res : [])) {
+            const fp = String((r as any)?.file_path || '')
+            const td = String((r as any)?.thumb_data_url || '')
+            if (fp && td) map.set(fp, td)
+          }
+          if (map.size > 0) {
+            setPgItems(prev => (prev || []).map((it: any) => {
+              const fp = String(it?.file_path || '')
+              if (!fp) return it
+              if (String(it?.thumb_data_url || '').trim()) return it
+              const td = map.get(fp)
+              if (!td) return it
+              return { ...it, thumb_data_url: td }
+            }))
+          }
+        } catch {}
+        if (pgThumbLoadTokenRef.current !== myToken) return
+        if (start + chunkSize < paths.length) {
+          setTimeout(() => { void runChunk(start + chunkSize) }, 0)
+        }
+      }
+      void runChunk(0)
+    } catch (e:any) {
+      setLogs(l=>[...l,{text: `[PromptGrabber] Scan gagal: ${String(e)}`, color:'#f44336'}])
+      toast('Prompt Grabber', lang === 'id' ? 'Scan gagal' : 'Scan failed', 'error')
+    } finally {
+      setPgScanning(false)
+    }
+  }
+  function pgSelectAll(){
+    const sel: Record<string, boolean> = {}
+    for (const it of pgItems || []) {
+      const p = String((it as any)?.file_path || '')
+      if (p) sel[p] = true
+    }
+    setPgSelected(sel)
+    toast('Prompt Grabber', lang === 'id' ? 'Semua file dipilih' : 'All selected', 'info')
+  }
+  function pgClearSelection(){
+    setPgSelected({})
+    toast('Prompt Grabber', lang === 'id' ? 'Pilihan dikosongkan' : 'Selection cleared', 'info')
+  }
+  async function cancelPromptGrabber(){
+    if (!isTauri) return
+    try {
+      await invoke('cancel_prompt_grabber')
+      setLogs(l=>[...l,{text: '[PromptGrabber] Stop diminta. Menunggu proses yang berjalan...', color:'#ff9800'}])
+      toast('Prompt Grabber', lang === 'id' ? 'Stop diminta' : 'Stop requested', 'info')
+    } catch {}
+  }
+  async function copyPromptGrabberOutput(){
+    try {
+      const text = String(pgOutputText || '')
+      if (!text.trim()) return
+      await navigator.clipboard.writeText(text)
+      setLogs(l=>[...l,{text: '[PromptGrabber] Output berhasil disalin', color:'#4caf50'}])
+      toast('Prompt Grabber', lang === 'id' ? 'Output telah di-copy' : 'Output copied', 'success')
+    } catch (e:any) {
+      setLogs(l=>[...l,{text: `[PromptGrabber] Gagal copy: ${String(e)}`, color:'#f44336'}])
+      toast('Prompt Grabber', lang === 'id' ? 'Gagal copy' : 'Copy failed', 'error')
+    }
+  }
+  async function savePromptGrabberTxt(){
+    if (!isTauri) return
+    try {
+      const content = String(pgOutputText || '')
+      if (!content.trim()) return
+      if (!String(pgInputDir || '').trim()) throw new Error(lang === 'id' ? 'Folder input belum dipilih' : 'Input folder not selected')
+      const outPath = await invoke<string>('prompt_grabber_save_file', { input_folder: pgInputDir, file_name: 'prompt.txt', content })
+      setLogs(l=>[...l,{text: `[PromptGrabber] TXT tersimpan: ${String(outPath || '')}`, color:'#4caf50'}])
+      toast('Prompt Grabber', lang === 'id' ? 'File prompt.txt tersimpan di folder input' : 'prompt.txt saved in input folder', 'success')
+    } catch (e:any) {
+      const msg = String(e?.message || e || '').replace('Error: ', '').trim()
+      setLogs(l=>[...l,{text: `[PromptGrabber] Gagal simpan TXT: ${msg || String(e)}`, color:'#f44336'}])
+      toast('Prompt Grabber', lang === 'id' ? `Gagal simpan TXT: ${msg || 'Unknown error'}` : `Failed to save TXT: ${msg || 'Unknown error'}`, 'error')
+    }
+  }
+  async function savePromptGrabberCsv(){
+    if (!isTauri) return
+    try {
+      const list = Array.isArray(pgLastResults) ? pgLastResults : []
+      const rows = list
+        .map((r:any) => ({
+          file_name: String(r?.file_name || r?.file_path || '').trim(),
+          prompt: String(r?.prompt || '').trim()
+        }))
+        .filter(x => x.file_name && x.prompt)
+      if (rows.length === 0) return
+      if (!String(pgInputDir || '').trim()) throw new Error(lang === 'id' ? 'Folder input belum dipilih' : 'Input folder not selected')
+      const esc = (v: string): string => `"${String(v || '').replace(/"/g, '""')}"`
+      const csv = ['file_name,prompt', ...rows.map(r => `${esc(r.file_name)},${esc(r.prompt)}`)].join('\n')
+      const outPath = await invoke<string>('prompt_grabber_save_file', { input_folder: pgInputDir, file_name: 'prompt.csv', content: csv })
+      setLogs(l=>[...l,{text: `[PromptGrabber] CSV tersimpan: ${String(outPath || '')}`, color:'#4caf50'}])
+      toast('Prompt Grabber', lang === 'id' ? 'File prompt.csv tersimpan di folder input' : 'prompt.csv saved in input folder', 'success')
+    } catch (e:any) {
+      const msg = String(e?.message || e || '').replace('Error: ', '').trim()
+      setLogs(l=>[...l,{text: `[PromptGrabber] Gagal simpan CSV: ${msg || String(e)}`, color:'#f44336'}])
+      toast('Prompt Grabber', lang === 'id' ? `Gagal simpan CSV: ${msg || 'Unknown error'}` : `Failed to save CSV: ${msg || 'Unknown error'}`, 'error')
+    }
+  }
+  function clearPromptGrabberOutput(){
+    setPgOutputText('')
+    setPgLastResults([])
+    toast('Prompt Grabber', lang === 'id' ? 'Output dibersihkan' : 'Output cleared', 'info')
+  }
+  async function runPromptGrabberGenerate(){
+    if (!isTauri) { setLogs(l=>[...l,{text: '[PromptGrabber] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    const selectedFiles = Object.keys(pgSelected || {}).filter(k => pgSelected[k])
+    if (selectedFiles.length === 0) {
+      setLogs(l=>[...l,{text: '[PromptGrabber] Tidak ada file yang dipilih', color:'#ff9800'}])
+      toast('Prompt Grabber', lang === 'id' ? 'Tidak ada file yang dipilih' : 'No files selected', 'error')
+      return
+    }
+    try {
+      setPgGenerating(true)
+      setPgOutputText('')
+      setPgLastResults([])
+      setPgMiniStatus('running')
+      setPgMinimized(true)
+      setShowPromptGrabberModal(false)
+      toast('Prompt Grabber', lang === 'id' ? 'Generate dimulai. Lihat log di panel Logs.' : 'Generate started. See logs in Logs panel.', 'info')
+      const s = await invoke<any>('get_settings')
+      const provider = String(s.ai_provider || '').trim()
+      const rawModel = String(s.default_model || '').trim()
+      if (!provider) throw new Error('Provider belum dipilih di Settings')
+      if (!rawModel) throw new Error('Model belum dipilih di Settings')
+
+      const normalizeModelForProvider = (p: string, m: string): string => {
+        if (String(p) === 'OpenAI') {
+          const v = String(m || '').trim()
+          if (v.includes('/')) return v.split('/').pop() || v
+          return v
+        }
+        return String(m || '').trim()
+      }
+      const model = normalizeModelForProvider(provider, rawModel)
+
+      let apiKey = ''
+      try {
+        const deviceSecret = String(await getMachineHash()).trim()
+        const savedKey = localStorage.getItem('metabayn_api_key_enc')
+        const savedIv = localStorage.getItem('metabayn_api_key_iv')
+        if (savedKey && savedIv) apiKey = (await decryptApiKey(savedKey, savedIv, deviceSecret)).trim()
+      } catch {}
+      if (!apiKey) throw new Error('API key belum diset di Settings')
+
+      const loadGenModelCfg = (p: string, m: string): any => {
+        try {
+          const key = `metabayn:gen:modelcfg:v1:${String(p || '')}:${String(m || '').trim()}`
+          const raw = localStorage.getItem(key)
+          if (!raw) return {}
+          const parsed = JSON.parse(raw)
+          return parsed && typeof parsed === 'object' ? parsed : {}
+        } catch {
+          return {}
+        }
+      }
+      const genCfg = loadGenModelCfg(provider, model)
+      const reqTimeoutSecRaw = Number((genCfg as any)?.request_timeout_sec)
+      const requestTimeoutSec = Number.isFinite(reqTimeoutSecRaw) ? Math.max(15, Math.min(Math.round(reqTimeoutSecRaw), 900)) : 45
+
+      if ((provider === 'OpenAI' || provider === 'Gemini' || provider === 'OpenRouter') && !isVisionLikeModelId(model)) {
+        throw new Error(`Model tidak mendukung vision: ${model}`)
+      }
+
+      const reqPayload: any = {
+        files: selectedFiles,
+        provider,
+        model,
+        connection_mode: 'direct',
+        api_key: apiKey,
+        token: '',
+        retries: Math.max(0, Math.min(10, Number(s.retry_count ?? 2))),
+        request_timeout_sec: requestTimeoutSec,
+        max_threads: Math.max(1, Math.min(16, Number(s.max_threads ?? 4))),
+        platform: pgPlatform,
+        detail_level: pgDetailLevel,
+        language: pgLanguage,
+        extra_prompt: pgExtraPrompt
+      }
+      const results = await invoke<any[]>('prompt_grabber_generate', { req: reqPayload })
+      const list = Array.isArray(results) ? results : []
+      setPgLastResults(list)
+      const text = list
+        .map((r: any) => {
+          const name = String(r?.file_name || r?.file_path || '')
+          const prompt = String(r?.prompt || '').trim()
+          if (!prompt) return ''
+          if (pgIncludeFilenameHeader) return `${name}\n${prompt}`.trim()
+          return prompt
+        })
+        .filter(Boolean)
+        .join('\n\n')
+      setPgOutputText(text)
+      setLogs(l=>[...l,{text: `[PromptGrabber] Generate selesai: ${list.length} file`, color:'#4caf50'}])
+      setPgMiniStatus('done')
+      toast('Prompt Grabber', lang === 'id' ? `Selesai: ${list.length} file` : `Done: ${list.length} files`, 'success')
+    } catch (e:any) {
+      setLogs(l=>[...l,{text: `[PromptGrabber] Generate gagal: ${String(e)}`, color:'#f44336'}])
+      setPgMiniStatus('idle')
+      toast('Prompt Grabber', lang === 'id' ? 'Generate gagal' : 'Generate failed', 'error')
+    } finally {
+      setPgGenerating(false)
+    }
+  }
+  async function pickConvertInputFolder(){
+    if (!isTauri) { setLogs(l=>[...l,{text: '[Convert] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    const inputDir = await dialogOpen({ directory: true, multiple: false, title: toolT?.selectFolderConvert || 'Select Folder (Convert)' });
+    if (inputDir) setConvertInputDir(String(inputDir))
+  }
+  async function pickConvertOutputFolder(){
+    if (!isTauri) { setLogs(l=>[...l,{text: '[Convert] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    const outputDir = await dialogOpen({ directory: true, multiple: false, title: toolT?.convertOutputFolder || 'Output Folder' });
+    if (outputDir) setConvertOutputDir(String(outputDir))
+  }
+  async function runConvert(){
+    if (!isTauri) { setLogs(l=>[...l,{text: '[Convert] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    if (!convertInputDir) {
+      setLogs(l=>[...l,{text: '[Convert] No input folder selected', color:'#ff9800'}])
+      return
+    }
+    if (!convertOutputDir) {
+      setLogs(l=>[...l,{text: '[Convert] No output folder selected', color:'#ff9800'}])
+      return
+    }
+    try {
+      setConvertRunning(true)
+      setShowConvertModal(false)
+      const logId = Date.now();
+      setLogs(l => [...l, { id: logId, text: pl('convertStarting', { path: convertInputDir }), color: '#aaa', animating: true }]);
+      const res = await invoke<string>('convert_media_batch', {
+        req: {
+          input_folder: convertInputDir,
+          output_folder: convertOutputDir,
+          delete_original: convertDeleteOriginal,
+          format: convertFormat,
+          quality: convertQuality
+        }
+      });
+      setLogs(l => l.map(x => x.id === logId ? { ...x, animating: false } : x));
+      setLogs(l => [...l, { text: pl('convertCompleted', { result: res }), color: '#4caf50' }]);
+    } catch (e:any) {
+      setLogs(l => l.map(x => x.animating ? { ...x, animating: false } : x));
+      setLogs(l => [...l, { text: pl('convertFailed', { error: String(e) }), color: '#f44336' }]);
+    } finally {
+      setConvertRunning(false)
+    }
+  }
+  async function pickResizeInputFolder(){
+    if (!isTauri) { setLogs(l=>[...l,{text: '[Resize] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    const inputDir = await dialogOpen({ directory: true, multiple: false, title: toolT?.selectFolderResize || 'Select Folder (Images/Videos)' });
+    if (inputDir) setResizeInputDir(String(inputDir))
+  }
+  async function pickResizeOutputFolder(){
+    if (!isTauri) { setLogs(l=>[...l,{text: '[Resize] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    const outputDir = await dialogOpen({ directory: true, multiple: false, title: toolT?.resizeOutputFolder || 'Output Folder' });
+    if (outputDir) setResizeOutputDir(String(outputDir))
+  }
+  async function runResize(){
+    if (!isTauri) { setLogs(l=>[...l,{text: '[Resize] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    if (!resizeInputDir) {
+      setLogs(l=>[...l,{text: '[Resize] No input folder selected', color:'#ff9800'}])
+      return
+    }
+    if (!resizeOutputDir) {
+      setLogs(l=>[...l,{text: '[Resize] No output folder selected', color:'#ff9800'}])
+      return
+    }
+    try {
+      setResizeRunning(true)
+      setShowResizeModal(false)
+      const logId = Date.now();
+      setLogs(l => [...l, { id: logId, text: pl('resizeStarting', { path: resizeInputDir }), color: '#aaa', animating: true }]);
+      const parsedWidth = Math.max(1, Math.min(10000, Math.round(Number(String(resizeWidth || '').trim())) || 0))
+      const parsedHeight = Math.max(1, Math.min(10000, Math.round(Number(String(resizeHeight || '').trim())) || 0))
+      const res = await invoke<string>('resize_media_batch', { 
+        req: {
+          input_folder: resizeInputDir,
+          output_folder: resizeOutputDir,
+          delete_original: resizeDeleteOriginal,
+          width: parsedWidth,
+          height: parsedHeight,
+          keep_aspect: resizeKeepAspect,
+          format: resizeFormat,
+          quality: resizeQuality
+        }
+      });
+      setLogs(l => l.map(x => x.id === logId ? { ...x, animating: false } : x));
+      setLogs(l => [...l, { text: pl('resizeCompleted', { result: res }), color: '#4caf50' }]);
+    } catch (e:any) {
+      setLogs(l => l.map(x => x.animating ? { ...x, animating: false } : x));
+      setLogs(l => [...l, { text: pl('resizeFailed', { error: String(e) }), color: '#f44336' }]);
+    } finally {
+      setResizeRunning(false)
+    }
   }
 
   async function pickDupFolder(){
@@ -1879,47 +2686,47 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
                          <span style={{ fontSize: '11px', color: '#aaa', fontWeight: 500, userSelect: 'text' }}>
                              {userProfile?.email || userEmail}
                          </span>
-                         
-                         {/* Subscription Status Icon */}
-                         <div
-                           title={subscriptionActive ? "Subscription Active" : "Subscription Inactive"}
-                           style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-                         >
-                           <span style={{
-                             width: 8,
-                             height: 8,
-                             borderRadius: 999,
-                             background: subscriptionActive ? '#00ff5a' : '#7f1d1d',
-                             boxShadow: subscriptionActive ? '0 0 10px rgba(0,255,90,0.55)' : 'none',
-                             display: 'inline-block'
-                           }} />
-                           {subscriptionActive ? (
-                             <span style={{ fontSize: '11px', color: '#aaa', fontWeight: 500, userSelect: 'text' }}>
-                               {subscriptionExpiryLabel || '--/--/----'}
-                             </span>
-                           ) : (
+                         {(() => {
+                           const u = userProfile as any
+                           const emailLc = String(u?.email || userEmail || '').trim().toLowerCase()
+                           const isAdminLocal = !!(u && ((u.is_admin === 1) || (u.is_admin === true) || emailLc === 'metabayn@gmail.com'))
+                           if (!token || isAdminLocal) return null
+                           const label = !appLicenseChecked
+                             ? (lang === 'id' ? 'Cek lisensi...' : 'Checking...')
+                             : (appLicenseActive ? (lang === 'id' ? 'Berlisensi' : 'Licensed') : (lang === 'id' ? 'Belum lisensi' : 'Unlicensed'))
+                           const bg = !appLicenseChecked
+                             ? '#27272a'
+                             : (appLicenseActive ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)')
+                           const border = !appLicenseChecked
+                             ? '#3f3f46'
+                             : (appLicenseActive ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)')
+                           const color = !appLicenseChecked
+                             ? '#a1a1aa'
+                             : (appLicenseActive ? '#86efac' : '#fca5a5')
+                           return (
                              <button
-                               onClick={() => {
-                                 try { localStorage.setItem('metabayn:topupFocus:v1', 'subscription'); } catch {}
-                                 setShowTopUp(true);
-                               }}
+                               onClick={() => { if (appLicenseChecked && !appLicenseActive) openLicenseActivation() }}
+                               disabled={!appLicenseChecked || appLicenseActive}
                                style={{
-                                 border: '1px solid rgba(220, 38, 38, 0.5)',
-                                 background: 'rgba(220, 38, 38, 0.18)',
-                                 color: '#fecaca',
-                                 padding: '3px 10px',
-                                 borderRadius: 999,
-                                 fontSize: 11,
+                                 background: bg,
+                                 border: `1px solid ${border}`,
+                                 color,
+                                 fontSize: 10,
                                  fontWeight: 700,
-                                 cursor: 'pointer'
+                                 padding: '2px 8px',
+                                 borderRadius: 999,
+                                 cursor: (!appLicenseChecked || appLicenseActive) ? 'default' : 'pointer'
                                }}
+                               title={
+                                 appLicenseActive
+                                   ? (lang === 'id' ? 'Lisensi aktif' : 'License active')
+                                   : (lang === 'id' ? 'Klik untuk aktivasi lisensi' : 'Click to activate license')
+                               }
                              >
-                               {translations[lang].settings.subscribe || "Subscribe"}
+                               {label}
                              </button>
-                           )}
-                         </div>
-
-
+                           )
+                         })()}
                      </div>
                  )}
                </div>
@@ -1930,49 +2737,6 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
              
             {token && (
                <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                {/* Live Token Balance (Moved) */}
-                {userProfile && (
-                    <div style={{
-                        display: 'flex', alignItems: 'center', gap: 6,
-                        background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: 8,
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        cursor: 'default'
-                    }} title={t?.dashboard?.tokenBalanceTitle || "Token Balance"}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
-                            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
-                            <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
-                        </svg>
-                        <span style={{ fontSize: '11px', color: '#e4e4e7', fontWeight: 600 }}>
-                            {formatTokenBalance(userProfile?.tokens)}
-                        </span>
-                    </div>
-                )}
-                {/* Subscription Icon */}
-                <button 
-                    onClick={() => {
-                        setShowTopUp(true);
-                    }}
-                    style={{
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
-                        borderRadius: 8,
-                        cursor: 'pointer',
-                        padding: '4px 10px',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        gap: 6,
-                        transition: 'all 0.2s ease'
-                    }}
-                    title={userProfile?.subscription_active ? (t?.dashboard?.subscriptionActiveTitle || "Subscription Active") : (t?.dashboard?.subscriptionRequiredTitle || "Subscription Required")}
-                >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill={userProfile?.subscription_active ? "#ffd700" : "#fff"} xmlns="http://www.w3.org/2000/svg">
-                        <path d="M21 18V19C21 20.1 20.1 21 19 21H5C3.89 21 3 20.1 3 19V5C3 3.9 3.89 3 5 3H19C20.1 3 21 3.9 21 5V6H12C10.89 6 10 6.9 10 8V16C10 17.1 10.89 18 12 18H21ZM12 16H22V8H12V16ZM16 13.5C15.17 13.5 14.5 12.83 14.5 12C14.5 11.17 15.17 10.5 16 10.5C16.83 10.5 17.5 11.17 17.5 12C17.5 12.83 16.83 13.5 16 13.5Z"/>
-                    </svg>
-                    <span style={{fontSize: 11, fontWeight: 600, color: userProfile?.subscription_active ? '#ffd700' : '#fff'}}>
-                        {t?.dashboard?.topUp || "Top Up"}
-                    </span>
-                </button>
-
                  {isAdmin && (
                    <button
                      onClick={() => onOpenAdmin && onOpenAdmin()}
@@ -1993,6 +2757,27 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
                  )}
                  
                  <button 
+                   onClick={() => { void openInAppWeb('https://lynk.id/metabayn', 'metabayn-store', 'Metabayn Store', { mobile: true }) }}
+                   className="icon-min"
+                   style={{
+                     background: 'transparent', color: '#10b981',
+                     padding: '4px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2
+                   }}
+                   title={lang === 'id' ? 'Toko Metabayn' : 'Metabayn Store'}
+                >
+                  <div style={{
+                      width: 18, height: 18, background: '#10b981', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff'
+                  }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M6 6h15l-1.5 9h-13L6 6Z" stroke="white" strokeWidth="2" strokeLinejoin="round"/>
+                      <path d="M6 6l-2-3H1" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+                      <path d="M9 20a1 1 0 1 0 0.001 0Z" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+                      <path d="M18 20a1 1 0 1 0 0.001 0Z" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+                    </svg>
+                  </div>
+                </button>
+                
+                <button 
                     onClick={() => setShowHelp(true)}
                     className="icon-min"
                     style={{
@@ -2066,8 +2851,12 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
                 embedded={true} 
                 lang={lang} 
                 onGenerateCSV={generateCSV}
+                onOpenPromptGrabber={openPromptGrabberConfig}
                 onOpenDupConfig={openDupConfig}
                 onRunAiCluster={runAiCluster}
+                onOpenResizeConfig={openResizeConfig}
+                onOpenConvertConfig={openConvertConfig}
+                promptGrabberLicensed={pgPremiumActive === null ? undefined : pgPremiumActive}
              />
           </div>
 
@@ -2136,6 +2925,253 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
           </div>
       </div>
     </div>
+    {pgPremiumOpen && (
+      <div className="modal open" style={{zIndex: 10000}}>
+        <div className="modal-content" style={{width: 'min(560px, 92vw)', maxHeight: '84vh', height: 'auto', display:'flex', flexDirection:'column'}}>
+          <div className="modal-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div>{lang === 'id' ? 'Prompt Grabber Premium' : 'Prompt Grabber Premium'}</div>
+            <button className="icon-btn" onClick={()=>setPgPremiumOpen(false)} disabled={pgPremiumBusy}>✕</button>
+          </div>
+          <div className="modal-body" style={{padding: 14, display:'flex', flexDirection:'column', gap:12}}>
+            <div style={{fontSize: 12, color:'#cbd5e1', lineHeight: 1.45}}>
+              {lang === 'id'
+                ? 'Tool Prompt Grabber adalah fitur premium. Untuk mengaktifkannya, beli lisensi di link produk. Setelah pembelian sukses, tool akan aktif otomatis untuk akun email yang sama. Jika belum aktif, Anda bisa masukkan kode lisensi dari email.'
+                : 'Prompt Grabber is a premium feature. Buy a license from the product link. After a successful purchase, it will auto-activate for the same account email. If it is not active yet, you can enter the license code from email.'}
+            </div>
+            <div style={{display:'flex', gap:10, flexWrap:'wrap'}}>
+              <button
+                onClick={() => { void openInAppWeb('http://lynk.id/metabayn/wp6d9o37o51d', 'metabayn-buy-prompt-grabber', 'Prompt Grabber Premium', { mobile: true }) }}
+                disabled={pgPremiumBusy}
+                style={{ padding:'8px 12px', background:'#0ea5e9', color:'#fff', border:'1px solid #0ea5e9', borderRadius: 8, cursor:'pointer', fontSize: 12, fontWeight: 700 }}
+              >
+                {lang === 'id' ? 'Beli Lisensi' : 'Buy License'}
+              </button>
+              <button
+                onClick={()=>{ void pgPremiumRecheckAndOpen() }}
+                disabled={pgPremiumBusy}
+                style={{ padding:'8px 12px', background:'#18181b', color:'#fff', border:'1px solid #27272a', borderRadius: 8, cursor:'pointer', fontSize: 12 }}
+              >
+                {pgPremiumBusy ? (lang === 'id' ? 'Memeriksa...' : 'Checking...') : (lang === 'id' ? 'Cek Aktivasi' : 'Check Activation')}
+              </button>
+            </div>
+            <div style={{display:'flex', flexDirection:'column', gap:6}}>
+              <div style={{fontSize: 11, color:'#a1a1aa'}}>{lang === 'id' ? 'Kode lisensi (opsional)' : 'License code (optional)'}</div>
+              <input
+                value={pgPremiumCode}
+                onChange={(e)=>setPgPremiumCode(String(e.target.value || ''))}
+                disabled={pgPremiumBusy}
+                placeholder={lang === 'id' ? 'Masukkan kode dari email...' : 'Enter code from email...'}
+                style={{ padding:'10px 10px', background:'#0b0b0b', border:'1px solid #27272a', color:'#fff', borderRadius: 8, fontSize: 12 }}
+              />
+              <button
+                onClick={()=>{ void pgPremiumActivateCode() }}
+                disabled={pgPremiumBusy}
+                style={{ alignSelf:'flex-start', padding:'8px 12px', background:'#22c55e', color:'#000', border:'1px solid #22c55e', borderRadius: 8, cursor:'pointer', fontSize: 12, fontWeight: 800 }}
+              >
+                {lang === 'id' ? 'Aktifkan' : 'Activate'}
+              </button>
+            </div>
+            {pgPremiumError ? (
+              <div style={{background:'#2a0f12', border:'1px solid #7f1d1d', color:'#fecaca', padding:'10px 10px', borderRadius: 8, fontSize: 11, lineHeight: 1.4}}>
+                {pgPremiumError}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    )}
+    {showPromptGrabberModal && (
+      <div className="modal open" style={{zIndex: 9999}}>
+        <div
+          className="modal-content"
+          style={{
+            width: `min(${PROMPT_GRABBER_UI.modalMaxWidthPx}px, 96vw)`,
+            maxHeight: `${PROMPT_GRABBER_UI.modalHeightVh}vh`,
+            height: `${PROMPT_GRABBER_UI.modalHeightVh}vh`,
+            display: 'flex',
+            flexDirection: 'column'
+          }}
+        >
+          <div className="modal-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div>Prompt Grabber</div>
+            <button className="icon-btn" onClick={()=>setShowPromptGrabberModal(false)} disabled={pgScanning || pgGenerating}>✕</button>
+          </div>
+          <div className="modal-body" style={{padding: PROMPT_GRABBER_UI.bodyPaddingPx, flex: 1, minHeight: 0, overflowY: 'auto', fontSize: PROMPT_GRABBER_UI.baseFontPx}}>
+            <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:12, flexWrap:'wrap'}}>
+              <div style={{minWidth:110, color:'#ccc', fontSize: PROMPT_GRABBER_UI.labelFontPx}}>{lang === 'id' ? 'Folder input' : 'Input folder'}</div>
+              <div style={{flex:1, minWidth:0}} title={pgInputDir || (lang === 'id' ? 'Belum dipilih' : 'Not selected')}>
+                <div style={{padding: PROMPT_GRABBER_UI.inputPaddingPx, background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', fontSize: PROMPT_GRABBER_UI.controlFontPx}}>
+                  {pgInputDir || (lang === 'id' ? 'Belum dipilih' : 'Not selected')}
+                </div>
+              </div>
+              <button onClick={pickPromptGrabberFolder} className="btn-browse" disabled={pgScanning || pgGenerating} style={{fontSize: PROMPT_GRABBER_UI.controlFontPx}}>{t?.dashboard?.dupModal?.browse || 'Browse'}</button>
+              <button
+                onClick={() => { void runPromptGrabberScan() }}
+                disabled={pgScanning || pgGenerating || !pgInputDir}
+                style={{ padding: '8px 12px', background: (pgScanning || !pgInputDir) ? '#1f2937' : '#0ea5e9', color: '#fff', border: '1px solid #0ea5e9', borderRadius: 6, cursor: (pgScanning || !pgInputDir) ? 'not-allowed' : 'pointer', fontSize: PROMPT_GRABBER_UI.controlFontPx }}
+              >
+                {pgScanning ? (lang === 'id' ? 'Scanning...' : 'Scanning...') : (lang === 'id' ? 'Scan' : 'Scan')}
+              </button>
+            </div>
+
+            <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:10}}>
+              <div style={{color:'#a1a1aa', fontSize: PROMPT_GRABBER_UI.labelFontPx}}>
+                {(() => {
+                  const total = Array.isArray(pgItems) ? pgItems.length : 0
+                  const selected = Object.keys(pgSelected || {}).filter(k => (pgSelected as any)[k]).length
+                  return (lang === 'id' ? `Dipilih ${selected}/${total}` : `Selected ${selected}/${total}`)
+                })()}
+              </div>
+              <button onClick={pgSelectAll} disabled={pgScanning || pgGenerating || (pgItems || []).length === 0} style={{ padding: '6px 10px', background: '#222', color: '#fff', border: '1px solid #333', borderRadius: 6, cursor: 'pointer', fontSize: PROMPT_GRABBER_UI.controlFontPx }}>
+                {lang === 'id' ? 'Pilih semua' : 'Select all'}
+              </button>
+              <button onClick={pgClearSelection} disabled={pgScanning || pgGenerating} style={{ padding: '6px 10px', background: '#222', color: '#fff', border: '1px solid #333', borderRadius: 6, cursor: 'pointer', fontSize: PROMPT_GRABBER_UI.controlFontPx }}>
+                {lang === 'id' ? 'Kosongkan' : 'Clear'}
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: `repeat(${PROMPT_GRABBER_UI.gridCols}, minmax(0, 1fr))`,
+                gap: PROMPT_GRABBER_UI.gridGapPx,
+                height: PROMPT_GRABBER_UI.gridHeightPx,
+                overflowY: 'auto',
+                padding: 10,
+                border: '1px solid #222',
+                borderRadius: 10,
+                background: '#0b0b0b',
+                marginBottom: 12
+              }}
+            >
+              {(pgItems || []).map((it: any) => {
+                const p = String(it?.file_path || '')
+                const name = String(it?.file_name || '')
+                const kind = String(it?.kind || '')
+                const thumb = String(it?.thumb_data_url || '')
+                const selected = !!(pgSelected as any)?.[p]
+                const fallbackSrc = (isTauri && p && kind === 'image') ? convertFileSrc(p) : ''
+                return (
+                  <button
+                    key={p || name}
+                    type="button"
+                    onClick={() => setPgSelected(prev => ({ ...(prev || {}), [p]: !((prev || {}) as any)[p] }))}
+                    disabled={pgScanning || pgGenerating || !p}
+                    title={name}
+                    style={{
+                      display:'flex',
+                      flexDirection:'column',
+                      gap:6,
+                      padding: 6,
+                      borderRadius: 8,
+                      border: selected ? '2px solid #0ea5e9' : '1px solid #222',
+                      background: selected ? 'rgba(14,165,233,0.12)' : '#111',
+                      cursor: 'pointer',
+                      textAlign: 'left'
+                    }}
+                  >
+                    <div style={{width:'100%', height: PROMPT_GRABBER_UI.thumbHeightPx, borderRadius: 10, overflow:'hidden', background:'#000', position:'relative'}}>
+                      {(thumb || fallbackSrc) ? (
+                        <img
+                          src={thumb || fallbackSrc}
+                          alt={name}
+                          loading="lazy"
+                          onError={(e) => {
+                            try {
+                              ;(e.currentTarget as any).style.visibility = 'hidden'
+                            } catch {}
+                          }}
+                          style={{width:'100%', height:'100%', objectFit:'cover', display:'block'}}
+                        />
+                      ) : (
+                        <div style={{width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center', color:'#666', fontSize: PROMPT_GRABBER_UI.controlFontPx}}>
+                          {kind || 'file'}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{fontSize: 9, color:'#e4e4e7', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{name}</div>
+                  </button>
+                )
+              })}
+              {(pgItems || []).length === 0 && (
+                <div style={{color:'#666', fontSize: PROMPT_GRABBER_UI.controlFontPx, padding: 8}}>
+                  {lang === 'id' ? 'Belum ada file. Klik Scan.' : 'No files yet. Click Scan.'}
+                </div>
+              )}
+            </div>
+
+            <div style={{display:'grid', gridTemplateColumns:'120px 1fr 120px 1fr', gap:'8px 12px', alignItems:'center', marginBottom:10}}>
+              <div style={{color:'#ccc', fontSize: PROMPT_GRABBER_UI.labelFontPx}}>{lang === 'id' ? 'Platform' : 'Platform'}</div>
+              <select value={pgPlatform} onChange={(e)=>setPgPlatform(String(e.target.value || 'Midjourney'))} disabled={pgScanning || pgGenerating} style={{width:'100%', padding: PROMPT_GRABBER_UI.inputPaddingPx, background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6, fontSize: PROMPT_GRABBER_UI.controlFontPx}}>
+                <option value="Midjourney">Midjourney</option>
+                <option value="Stable Diffusion">Stable Diffusion</option>
+                <option value="DALL·E">DALL·E</option>
+                <option value="Kling/Runway">Kling/Runway</option>
+                <option value="Universal">Universal</option>
+              </select>
+
+              <div style={{color:'#ccc', fontSize: PROMPT_GRABBER_UI.labelFontPx}}>{lang === 'id' ? 'Detail' : 'Detail'}</div>
+              <select value={pgDetailLevel} onChange={(e)=>setPgDetailLevel(String(e.target.value || 'Detail'))} disabled={pgScanning || pgGenerating} style={{width:'100%', padding: PROMPT_GRABBER_UI.inputPaddingPx, background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6, fontSize: PROMPT_GRABBER_UI.controlFontPx}}>
+                <option value="Singkat">{lang === 'id' ? 'Singkat' : 'Short'}</option>
+                <option value="Detail">{lang === 'id' ? 'Detail' : 'Detailed'}</option>
+                <option value="Sangat Detail">{lang === 'id' ? 'Sangat Detail' : 'Very detailed'}</option>
+              </select>
+
+              <div style={{color:'#ccc', fontSize: PROMPT_GRABBER_UI.labelFontPx}}>{lang === 'id' ? 'Bahasa' : 'Language'}</div>
+              <select value={pgLanguage} onChange={(e)=>setPgLanguage(String(e.target.value || 'English'))} disabled={pgScanning || pgGenerating} style={{gridColumn:'2 / span 3', width:'100%', padding: PROMPT_GRABBER_UI.inputPaddingPx, background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6, fontSize: PROMPT_GRABBER_UI.controlFontPx}}>
+                <option value="English">English</option>
+                <option value="Bilingual (EN+ID)">Bilingual (EN+ID)</option>
+              </select>
+            </div>
+
+            <div style={{display:'grid', gridTemplateColumns:'120px 1fr', gap:12, alignItems:'start', marginBottom:10}}>
+              <div style={{color:'#ccc', fontSize: PROMPT_GRABBER_UI.labelFontPx, paddingTop:6}}>{lang === 'id' ? 'Instruksi tambahan' : 'Extra instructions'}</div>
+              <textarea value={pgExtraPrompt} onChange={(e)=>setPgExtraPrompt(String(e.target.value || ''))} disabled={pgScanning || pgGenerating} rows={3} style={{width:'100%', padding: PROMPT_GRABBER_UI.inputPaddingPx, background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6, resize:'vertical', fontSize: PROMPT_GRABBER_UI.controlFontPx}} />
+            </div>
+
+            <div style={{display:'grid', gridTemplateColumns:'120px 1fr', gap:12, alignItems:'center', marginBottom:10}}>
+              <div style={{color:'#ccc', fontSize: PROMPT_GRABBER_UI.labelFontPx}}>{lang === 'id' ? 'Opsi output' : 'Output options'}</div>
+              <label style={{display:'flex', alignItems:'center', gap:8, color:'#ccc', fontSize: PROMPT_GRABBER_UI.controlFontPx}}>
+                <input type="checkbox" checked={pgIncludeFilenameHeader} onChange={(e)=>setPgIncludeFilenameHeader(e.target.checked)} disabled={pgScanning || pgGenerating} />
+                <span>{lang === 'id' ? 'Tampilkan nama file di atas setiap prompt' : 'Show filename header for each prompt'}</span>
+              </label>
+            </div>
+
+            <div style={{display:'grid', gridTemplateColumns:'120px 1fr', gap:12, alignItems:'start'}}>
+              <div style={{color:'#ccc', fontSize: PROMPT_GRABBER_UI.labelFontPx, paddingTop:6}}>{lang === 'id' ? 'Output' : 'Output'}</div>
+              <textarea value={pgOutputText} readOnly rows={6} style={{width:'100%', padding: PROMPT_GRABBER_UI.inputPaddingPx, background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6, resize:'vertical', fontSize: PROMPT_GRABBER_UI.controlFontPx}} />
+            </div>
+          </div>
+          <div style={{display:'flex', justifyContent:'space-between', gap:8, padding:'12px 16px', borderTop:'1px solid #333'}}>
+            <div style={{display:'flex', gap:8}}>
+              <button onClick={copyPromptGrabberOutput} disabled={pgGenerating || pgScanning || !String(pgOutputText || '').trim()} style={{ padding: '8px 12px', background: '#333', color: '#fff', border: '1px solid #444', borderRadius: 6, cursor: 'pointer', fontSize: PROMPT_GRABBER_UI.controlFontPx }}>
+                {lang === 'id' ? 'Copy output' : 'Copy output'}
+              </button>
+              <button onClick={savePromptGrabberTxt} disabled={pgGenerating || pgScanning || !String(pgOutputText || '').trim() || !String(pgInputDir || '').trim()} style={{ padding: '8px 10px', background: '#333', color: '#fff', border: '1px solid #444', borderRadius: 6, cursor: 'pointer', fontSize: PROMPT_GRABBER_UI.controlFontPx }}>
+                .TXT
+              </button>
+              <button onClick={savePromptGrabberCsv} disabled={pgGenerating || pgScanning || (Array.isArray(pgLastResults) ? pgLastResults.length : 0) === 0 || !String(pgInputDir || '').trim()} style={{ padding: '8px 10px', background: '#333', color: '#fff', border: '1px solid #444', borderRadius: 6, cursor: 'pointer', fontSize: PROMPT_GRABBER_UI.controlFontPx }}>
+                .CSV
+              </button>
+              <button onClick={clearPromptGrabberOutput} disabled={pgGenerating || pgScanning || !String(pgOutputText || '').trim()} style={{ padding: '8px 12px', background: '#333', color: '#fff', border: '1px solid #444', borderRadius: 6, cursor: 'pointer', fontSize: PROMPT_GRABBER_UI.controlFontPx }}>
+                {lang === 'id' ? 'Bersihkan' : 'Clear'}
+              </button>
+            </div>
+            <div style={{display:'flex', gap:8}}>
+              <button onClick={()=>setShowPromptGrabberModal(false)} disabled={pgScanning || pgGenerating} style={{ padding: '8px 12px', background: '#333', color: '#fff', border: '1px solid #444', borderRadius: 6, cursor: 'pointer', fontSize: PROMPT_GRABBER_UI.controlFontPx }}>
+                {lang === 'id' ? 'Tutup' : 'Close'}
+              </button>
+              <button onClick={cancelPromptGrabber} disabled={!pgGenerating} style={{ padding: '8px 12px', background: '#6b7280', color: '#fff', border: '1px solid #6b7280', borderRadius: 6, cursor: pgGenerating ? 'pointer' : 'not-allowed', fontSize: PROMPT_GRABBER_UI.controlFontPx }}>
+                {lang === 'id' ? 'Stop' : 'Stop'}
+              </button>
+              <button onClick={runPromptGrabberGenerate} disabled={pgGenerating || pgScanning || Object.keys(pgSelected || {}).filter(k => (pgSelected as any)[k]).length === 0} style={{ padding: '8px 12px', background: pgGenerating ? '#1f2937' : '#22c55e', color: '#fff', border: '1px solid #22c55e', borderRadius: 6, cursor: pgGenerating ? 'not-allowed' : 'pointer', fontSize: PROMPT_GRABBER_UI.controlFontPx }}>
+                {pgGenerating ? (lang === 'id' ? 'Generating...' : 'Generating...') : (lang === 'id' ? 'Generate' : 'Generate')}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
     {showDupModal && (
       <div className="modal open" style={{zIndex: 9999}}>
         <div className="modal-content">
@@ -2171,75 +3207,189 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       </div>
     )}
 
-    {/* Subscription Alert Modal */}
-    {showSubAlert && (
-        <div style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0,0,0,0.7)', zIndex: 9999,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            backdropFilter: 'blur(4px)'
-        }} onClick={() => setShowSubAlert(false)}>
-            <div style={{
-                background: '#18181b', border: '1px solid #27272a', borderRadius: 12,
-                padding: 24, width: 400, maxWidth: '90%',
-                display: 'flex', flexDirection: 'column', gap: 16,
-                boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
-            }} onClick={e => e.stopPropagation()}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ 
-                        width: 40, height: 40, borderRadius: '50%', background: 'rgba(239, 68, 68, 0.1)', 
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444' 
-                    }}>
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-                        </svg>
-                    </div>
-                    <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: '#fff' }}>
-                        {translations[lang].settings.subscriptionRequired || "Subscription Required"}
-                    </h3>
+    {showConvertModal && (
+      <div className="modal open" style={{zIndex: 9999}}>
+        <div className="modal-content">
+          <div className="modal-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div>{toolT?.convertHeading || 'Convert Media'}</div>
+            <button className="icon-btn" onClick={()=>setShowConvertModal(false)}>✕</button>
+          </div>
+          <div className="modal-body" style={{padding:16}}>
+            <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:12}}>
+              <div style={{minWidth:140, color:'#ccc'}}>{toolT?.convertInputFolder || 'Input Folder'}</div>
+              <div style={{flex:1, minWidth:0}} title={convertInputDir || 'No folder selected'}>
+                <div style={{padding:'8px', background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>
+                  {convertInputDir || 'No folder selected'}
                 </div>
-                
-                <p style={{ margin: 0, color: '#a1a1aa', lineHeight: 1.5, whiteSpace: 'pre-line' }}>
-                    {translations[lang].settings.subPopupMsg?.replace(/<br\/>/g, '\n') || "Your subscription is inactive. Please subscribe to unlock all features and generate metadata."}
-                </p>
-
-                <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-                    <button onClick={() => setShowSubAlert(false)} style={{
-                        flex: 1, padding: '10px', borderRadius: 6, border: '1px solid #27272a',
-                        background: 'transparent', color: '#a1a1aa', cursor: 'pointer', fontWeight: 500
-                    }}>
-                        {translations[lang].settings.close || "Close"}
-                    </button>
-                    <button onClick={() => { setShowSubAlert(false); setShowTopUp(true); }} style={{
-                        flex: 1, padding: '10px', borderRadius: 6, border: 'none',
-                        background: '#3b82f6', color: '#fff', cursor: 'pointer', fontWeight: 600
-                    }}>
-                        {translations[lang].settings.subscribe || "Subscribe"}
-                    </button>
-                </div>
+              </div>
+              <button onClick={pickConvertInputFolder} className="btn-browse" disabled={convertRunning}>{t?.dashboard?.dupModal?.browse || 'Browse'}</button>
             </div>
+
+            <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:12}}>
+              <div style={{minWidth:140, color:'#ccc'}}>{toolT?.convertOutputFolder || 'Output Folder'}</div>
+              <div style={{flex:1, minWidth:0}} title={convertOutputDir || 'No folder selected'}>
+                <div style={{padding:'8px', background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>
+                  {convertOutputDir || 'No folder selected'}
+                </div>
+              </div>
+              <button onClick={pickConvertOutputFolder} className="btn-browse" disabled={convertRunning}>{t?.dashboard?.dupModal?.browse || 'Browse'}</button>
+            </div>
+
+            <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:12}}>
+              <div style={{minWidth:140, color:'#ccc'}}></div>
+              <div style={{display:'flex', gap:8, alignItems:'center'}}>
+                <input type="checkbox" checked={convertDeleteOriginal} onChange={(e)=>setConvertDeleteOriginal(e.target.checked)} disabled={convertRunning} />
+                <span style={{color:'#ccc', fontSize:12}}>{toolT?.convertDeleteOriginal || (lang === 'id' ? 'Hapus file asli setelah berhasil' : 'Delete original files after success')}</span>
+              </div>
+            </div>
+
+            <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:12}}>
+              <div style={{minWidth:140, color:'#ccc'}}>{toolT?.convertFormat || 'Output Format'}</div>
+              {(() => {
+                const fallback = ['jpeg','jpg','png','webp','gif','tiff','tif','bmp','heic','heif','avif','jp2','j2k','jxl','svg','pdf','psd','ico','tga']
+                const opts = (convertFormatOptions && convertFormatOptions.length) ? convertFormatOptions : fallback
+                const val = String(convertFormat || '').trim().toLowerCase()
+                const finalOpts = val && !opts.includes(val) ? [val, ...opts] : opts
+                return (
+                  <select
+                    value={val || (finalOpts[0] || 'jpeg')}
+                    onChange={(e)=>setConvertFormat(String(e.target.value || '').trim())}
+                    disabled={convertRunning}
+                    style={{width:220, padding:'8px', background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6}}
+                  >
+                    {finalOpts.map((fmt) => (
+                      <option key={fmt} value={fmt}>{fmt}</option>
+                    ))}
+                  </select>
+                )
+              })()}
+            </div>
+
+            <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:12}}>
+              <div style={{minWidth:140, color:'#ccc'}}>{toolT?.convertQuality || 'Quality'}</div>
+              <input type="number" min={1} max={100} value={convertQuality} onChange={(e)=>setConvertQuality(Math.max(1, Math.min(100, Number(e.target.value || 0))))} disabled={convertRunning} style={{width:80, padding:'8px', background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6}} />
+              <span style={{color:'#71717a', fontSize:12}}>%</span>
+            </div>
+          </div>
+          <div style={{display:'flex', justifyContent:'flex-end', gap:8, padding:'12px 16px', borderTop:'1px solid #333'}}>
+            <button onClick={()=>setShowConvertModal(false)} style={{ padding: '10px 14px', background: '#333', color: '#fff', border: '1px solid #444', borderRadius: 6, cursor: 'pointer' }}>{t?.dashboard?.dupModal?.close || 'Close'}</button>
+            <button onClick={runConvert} disabled={convertRunning || !convertInputDir || !convertOutputDir || !String(convertFormat || '').trim()} style={{ padding: '10px 14px', background: convertRunning ? '#1f2937' : '#f59e0b', color: '#fff', border: '1px solid #f59e0b', borderRadius: 6, cursor: convertRunning ? 'not-allowed' : 'pointer' }}>{convertRunning ? (toolT?.convertRunning || 'Converting...') : (toolT?.convertStart || 'Start Convert')}</button>
+          </div>
         </div>
+      </div>
     )}
 
-    {/* TopUp Modal */}
-    {showTopUp && (
-        <TopUp 
-            onBack={() => {
-                setShowTopUp(false);
-                if (token) {
-                    apiGetUserProfile(token).then(p => setUserProfile(p)).catch(console.error);
-                }
-            }}
-            onPaymentSuccess={() => {
-                if (token) {
-                    apiGetUserProfile(token).then(p => setUserProfile(p)).catch(console.error);
-                }
-            }} 
-            lang={lang} 
-            token={token || ''}
-            userEmail={userProfile?.email || userEmail}
-            userId={userProfile?.id}
-        />
+    {showResizeModal && (
+      <div className="modal open" style={{zIndex: 9999}}>
+        <div className="modal-content">
+          <div className="modal-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div>{toolT?.resizeHeading || 'Resize Media'}</div>
+            <button className="icon-btn" onClick={()=>setShowResizeModal(false)}>✕</button>
+          </div>
+          <div className="modal-body" style={{padding:16}}>
+            <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:12}}>
+              <div style={{minWidth:140, color:'#ccc'}}>{toolT?.resizeInputFolder || 'Input Folder'}</div>
+              <div style={{flex:1, minWidth:0}} title={resizeInputDir || 'No folder selected'}>
+                <div style={{padding:'8px', background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>
+                  {resizeInputDir || 'No folder selected'}
+                </div>
+              </div>
+              <button onClick={pickResizeInputFolder} className="btn-browse" disabled={resizeRunning}>{t?.dashboard?.dupModal?.browse || 'Browse'}</button>
+            </div>
+
+            <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:12}}>
+              <div style={{minWidth:140, color:'#ccc'}}>{toolT?.resizeOutputFolder || 'Output Folder'}</div>
+              <div style={{flex:1, minWidth:0}} title={resizeOutputDir || 'No folder selected'}>
+                <div style={{padding:'8px', background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>
+                  {resizeOutputDir || 'No folder selected'}
+                </div>
+              </div>
+              <button onClick={pickResizeOutputFolder} className="btn-browse" disabled={resizeRunning}>{t?.dashboard?.dupModal?.browse || 'Browse'}</button>
+            </div>
+
+            <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:12}}>
+              <div style={{minWidth:140, color:'#ccc'}}></div>
+              <div style={{display:'flex', gap:8, alignItems:'center'}}>
+                <input type="checkbox" checked={resizeDeleteOriginal} onChange={(e)=>setResizeDeleteOriginal(e.target.checked)} disabled={resizeRunning} />
+                <span style={{color:'#ccc', fontSize:12}}>
+                  {toolT?.resizeDeleteOriginal || (lang === 'id' ? 'Hapus file asli setelah berhasil' : 'Delete original files after success')}
+                </span>
+              </div>
+            </div>
+
+            <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:12}}>
+              <div style={{minWidth:140, color:'#ccc'}}>{toolT?.resizeWidth || 'Width'}</div>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={resizeWidth}
+                onFocus={(e)=>e.currentTarget.select()}
+                onChange={(e)=>{
+                  const raw = String(e.target.value || '')
+                  const next = raw.replace(/[^\d]/g, '')
+                  setResizeWidth(next)
+                }}
+                onBlur={()=>{
+                  const n = Math.max(1, Math.min(10000, Math.round(Number(String(resizeWidth || '').trim())) || 0))
+                  setResizeWidth(String(n))
+                }}
+                disabled={resizeRunning}
+                style={{width:100, padding:'8px', background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6}}
+              />
+              <span style={{color:'#71717a', fontSize:12}}>px</span>
+            </div>
+
+            <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:12}}>
+              <div style={{minWidth:140, color:'#ccc'}}>{toolT?.resizeHeight || 'Height'}</div>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={resizeHeight}
+                onFocus={(e)=>e.currentTarget.select()}
+                onChange={(e)=>{
+                  const raw = String(e.target.value || '')
+                  const next = raw.replace(/[^\d]/g, '')
+                  setResizeHeight(next)
+                }}
+                onBlur={()=>{
+                  const n = Math.max(1, Math.min(10000, Math.round(Number(String(resizeHeight || '').trim())) || 0))
+                  setResizeHeight(String(n))
+                }}
+                disabled={resizeRunning}
+                style={{width:100, padding:'8px', background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6}}
+              />
+              <span style={{color:'#71717a', fontSize:12}}>px</span>
+            </div>
+
+            <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:12}}>
+              <div style={{minWidth:140, color:'#ccc'}}>{toolT?.resizeKeepAspect || 'Keep Aspect Ratio'}</div>
+              <input type="checkbox" checked={resizeKeepAspect} onChange={(e)=>setResizeKeepAspect(e.target.checked)} disabled={resizeRunning} />
+            </div>
+
+            <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:12}}>
+              <div style={{minWidth:140, color:'#ccc'}}>{toolT?.resizeFormat || 'Output Format'}</div>
+              <select value={resizeFormat} onChange={(e)=>setResizeFormat(e.target.value)} disabled={resizeRunning} style={{width:120, padding:'8px', background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6}}>
+                <option value="jpeg">JPEG</option>
+                <option value="png">PNG</option>
+                <option value="webp">WebP</option>
+                <option value="gif">GIF</option>
+              </select>
+            </div>
+
+            <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:12}}>
+              <div style={{minWidth:140, color:'#ccc'}}>{toolT?.resizeQuality || 'Quality'}</div>
+              <input type="number" min={1} max={100} value={resizeQuality} onChange={(e)=>setResizeQuality(Math.max(1, Math.min(100, Number(e.target.value || 0))))} disabled={resizeRunning} style={{width:80, padding:'8px', background:'#0b0b0b', border:'1px solid #222', color:'#fff', borderRadius:6}} />
+              <span style={{color:'#71717a', fontSize:12}}>%</span>
+            </div>
+          </div>
+          <div style={{display:'flex', justifyContent:'flex-end', gap:8, padding:'12px 16px', borderTop:'1px solid #333'}}>
+            <button onClick={()=>setShowResizeModal(false)} style={{ padding: '10px 14px', background: '#333', color: '#fff', border: '1px solid #444', borderRadius: 6, cursor: 'pointer' }}>{t?.dashboard?.dupModal?.close || 'Close'}</button>
+            <button onClick={runResize} disabled={resizeRunning || !resizeInputDir || !resizeOutputDir} style={{ padding: '10px 14px', background: resizeRunning ? '#1f2937' : '#ec4899', color: '#fff', border: '1px solid #ec4899', borderRadius: 6, cursor: resizeRunning ? 'not-allowed' : 'pointer' }}>{resizeRunning ? (toolT?.resizeRunning || 'Resizing...') : (toolT?.resizeStart || 'Start Resize')}</button>
+          </div>
+        </div>
+      </div>
     )}
 
     {showMonitoring && (
@@ -2349,7 +3499,295 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
               setLang(l)
               try { localStorage.setItem('app_lang', l) } catch {}
             }}
+            onOpenLicenseSupport={() => {
+              setShowHelp(false)
+              setSupportSuccess('')
+              setSupportError('')
+              setSupportOpen(true)
+            }}
         />
+    )}
+
+    {supportOpen && (
+      <div
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          backdropFilter: 'blur(4px)',
+          zIndex: 10002,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 20
+        }}
+        onClick={() => { if (!supportBusy) setSupportOpen(false) }}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            backgroundColor: '#18181b',
+            border: '1px solid #27272a',
+            borderRadius: 16,
+            padding: 22,
+            maxWidth: 520,
+            width: '100%',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.5)'
+          }}
+        >
+          <div style={{ color: '#fff', fontSize: 18, fontWeight: 800, marginBottom: 6 }}>
+            {lang === 'id' ? 'Pusat Bantuan: Klaim Lisensi' : 'Help Center: License Claim'}
+          </div>
+          <div style={{ color: '#a1a1aa', fontSize: 13, lineHeight: 1.5, marginBottom: 12, whiteSpace: 'pre-wrap' }}>
+            {lang === 'id'
+              ? 'Gunakan ini jika email pembelian salah ketik atau tidak menerima email kode.\nIsi email pembelian yang tertulis di invoice Lynk, lalu admin akan cek webhook dan mengikat lisensi ke email akun Anda.'
+              : 'Use this if purchase email is mistyped or you did not receive the license email.\nFill the purchase email shown on Lynk invoice, then admin will verify webhook data and rebind the license to your account email.'}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div>
+              <div style={{ color: '#e4e4e7', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                {lang === 'id' ? 'Email pembelian (di invoice Lynk)' : 'Purchase email (from Lynk invoice)'}
+              </div>
+              <input
+                value={supportPurchaseEmail}
+                onChange={(e) => setSupportPurchaseEmail(e.target.value)}
+                disabled={supportBusy}
+                style={{
+                  width: '100%',
+                  background: '#0f0f12',
+                  border: supportError ? '1px solid #ef4444' : '1px solid #27272a',
+                  color: '#fff',
+                  padding: '10px 12px',
+                  borderRadius: 10,
+                  fontSize: 14,
+                  outline: 'none',
+                  boxSizing: 'border-box'
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div>
+                <div style={{ color: '#e4e4e7', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                  {lang === 'id' ? 'Produk' : 'Product'}
+                </div>
+                <select
+                  value={supportProductCode}
+                  onChange={(e) => setSupportProductCode(e.target.value === 'prompt_grabber' ? 'prompt_grabber' : 'license')}
+                  disabled={supportBusy}
+                  style={{
+                    width: '100%',
+                    background: '#0f0f12',
+                    border: '1px solid #27272a',
+                    color: '#fff',
+                    padding: '10px 12px',
+                    borderRadius: 10,
+                    fontSize: 14,
+                    outline: 'none',
+                    boxSizing: 'border-box'
+                  }}
+                >
+                  <option value="license">{lang === 'id' ? 'Lisensi Aplikasi' : 'App License'}</option>
+                  <option value="prompt_grabber">{lang === 'id' ? 'Tools Prompt Grabber' : 'Prompt Grabber Tool'}</option>
+                </select>
+              </div>
+              <div>
+                <div style={{ color: '#e4e4e7', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                  {lang === 'id' ? 'Nominal (opsional)' : 'Amount (optional)'}
+                </div>
+                <input
+                  value={supportAmountHint}
+                  onChange={(e) => setSupportAmountHint(e.target.value)}
+                  disabled={supportBusy}
+                  placeholder={lang === 'id' ? 'Contoh: 149000 / Rp 149.000' : 'Example: 149000 / Rp 149.000'}
+                  style={{
+                    width: '100%',
+                    background: '#0f0f12',
+                    border: '1px solid #27272a',
+                    color: '#fff',
+                    padding: '10px 12px',
+                    borderRadius: 10,
+                    fontSize: 14,
+                    outline: 'none',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <div style={{ color: '#e4e4e7', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                {lang === 'id' ? 'Perkiraan waktu pembelian (opsional)' : 'Approx purchase time (optional)'}
+              </div>
+              <input
+                value={supportPurchaseTimeHint}
+                onChange={(e) => setSupportPurchaseTimeHint(e.target.value)}
+                disabled={supportBusy}
+                placeholder={lang === 'id' ? 'Contoh: 14 Mei 2026 10:30 WIB' : 'Example: May 14 2026 10:30 WIB'}
+                style={{
+                  width: '100%',
+                  background: '#0f0f12',
+                  border: '1px solid #27272a',
+                  color: '#fff',
+                  padding: '10px 12px',
+                  borderRadius: 10,
+                  fontSize: 14,
+                  outline: 'none',
+                  boxSizing: 'border-box'
+                }}
+              />
+            </div>
+
+            <div>
+              <div style={{ color: '#e4e4e7', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                {lang === 'id' ? 'Catatan (opsional)' : 'Notes (optional)'}
+              </div>
+              <textarea
+                value={supportNote}
+                onChange={(e) => setSupportNote(e.target.value)}
+                disabled={supportBusy}
+                rows={4}
+                placeholder={lang === 'id'
+                  ? 'Tuliskan detail tambahan. Jika perlu, siapkan screenshot invoice untuk admin.'
+                  : 'Add extra details. If needed, prepare invoice screenshot for admin.'}
+                style={{
+                  width: '100%',
+                  background: '#0f0f12',
+                  border: '1px solid #27272a',
+                  color: '#fff',
+                  padding: '10px 12px',
+                  borderRadius: 10,
+                  fontSize: 13,
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                  resize: 'vertical'
+                }}
+              />
+            </div>
+
+            <div>
+              <div style={{ color: '#e4e4e7', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                {lang === 'id' ? 'Link bukti (opsional)' : 'Evidence link (optional)'}
+              </div>
+              <input
+                value={supportEvidenceLink}
+                onChange={(e) => setSupportEvidenceLink(e.target.value)}
+                disabled={supportBusy}
+                placeholder={lang === 'id' ? 'Contoh: link Google Drive / Dropbox' : 'Example: Google Drive / Dropbox link'}
+                style={{
+                  width: '100%',
+                  background: '#0f0f12',
+                  border: '1px solid #27272a',
+                  color: '#fff',
+                  padding: '10px 12px',
+                  borderRadius: 10,
+                  fontSize: 13,
+                  outline: 'none',
+                  boxSizing: 'border-box'
+                }}
+              />
+            </div>
+          </div>
+
+          {supportError ? (
+            <div style={{ color: '#f87171', fontSize: 12, marginTop: 10, whiteSpace: 'pre-wrap' }}>
+              {supportError}
+            </div>
+          ) : null}
+          {supportSuccess ? (
+            <div style={{ color: '#34d399', fontSize: 12, marginTop: 10, whiteSpace: 'pre-wrap' }}>
+              {supportSuccess}
+            </div>
+          ) : null}
+
+          <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+            <button
+              className="btn-click-anim"
+              onClick={() => { if (!supportBusy) setSupportOpen(false) }}
+              disabled={supportBusy}
+              style={{
+                flex: 1,
+                padding: '12px',
+                backgroundColor: 'transparent',
+                color: '#fff',
+                border: '1px solid #3f3f46',
+                borderRadius: 10,
+                fontSize: 14,
+                fontWeight: 700,
+                cursor: supportBusy ? 'not-allowed' : 'pointer',
+                opacity: supportBusy ? 0.6 : 1
+              }}
+            >
+              {lang === 'id' ? 'Tutup' : 'Close'}
+            </button>
+            <button
+              className="btn-click-anim"
+              onClick={() => { void submitLicenseSupport() }}
+              disabled={supportBusy}
+              style={{
+                flex: 1,
+                padding: '12px',
+                backgroundColor: '#fff',
+                color: '#000',
+                border: 'none',
+                borderRadius: 10,
+                fontSize: 14,
+                fontWeight: 800,
+                cursor: supportBusy ? 'not-allowed' : 'pointer',
+                opacity: supportBusy ? 0.7 : 1
+              }}
+            >
+              {supportBusy ? (lang === 'id' ? 'Mengirim...' : 'Submitting...') : (lang === 'id' ? 'Kirim' : 'Submit')}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {pgMinimized && (
+      <div style={{
+        position: 'fixed',
+        right: 16,
+        bottom: 16,
+        zIndex: 10002,
+        background: '#18181b',
+        border: '1px solid #27272a',
+        borderRadius: 12,
+        padding: '10px 12px',
+        minWidth: 260,
+        maxWidth: 360,
+        boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10
+      }}>
+        <div style={{flex: 1, minWidth: 0}}>
+          <div style={{fontSize: 12, fontWeight: 700, color: '#fff'}}>Prompt Grabber</div>
+          <div style={{fontSize: 11, color: '#a1a1aa', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>
+            {pgMiniStatus === 'running'
+              ? (lang === 'id' ? 'Sedang generate... lihat Logs' : 'Generating... see Logs')
+              : pgMiniStatus === 'done'
+                ? (lang === 'id' ? 'Selesai. Klik Open untuk lihat output' : 'Done. Click Open to view output')
+                : (lang === 'id' ? 'Siap' : 'Ready')}
+          </div>
+        </div>
+        <button
+          onClick={() => { setShowPromptGrabberModal(true); setPgMinimized(false) }}
+          style={{ padding: '8px 10px', background: '#333', color: '#fff', border: '1px solid #444', borderRadius: 8, cursor: 'pointer', fontSize: 12 }}
+        >
+          Open
+        </button>
+        <button
+          onClick={() => { if (pgGenerating) { void cancelPromptGrabber() } else { setPgMinimized(false); setPgMiniStatus('idle') } }}
+          style={{ padding: '8px 10px', background: pgGenerating ? '#6b7280' : '#333', color: '#fff', border: '1px solid #444', borderRadius: 8, cursor: 'pointer', fontSize: 12 }}
+        >
+          {pgGenerating ? (lang === 'id' ? 'Stop' : 'Stop') : (lang === 'id' ? 'Tutup' : 'Close')}
+        </button>
+      </div>
     )}
 
     {/* NOTIFICATION POPUP */}

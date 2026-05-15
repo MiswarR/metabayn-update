@@ -127,6 +127,71 @@ export async function handleListUsers(request: Request, env: Env): Promise<Respo
             if (k) bonusByUserId.set(k, Number.isFinite(v) ? v : 0);
         }
 
+        let licenseCountByUserId = new Map<string, number>();
+        try {
+            await env.DB.prepare(
+                `
+                CREATE TABLE IF NOT EXISTS device_licenses (
+                  id TEXT PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  device_hash TEXT NOT NULL,
+                  voucher_code TEXT NOT NULL,
+                  activated_at INTEGER NOT NULL,
+                  revoked_at INTEGER,
+                  last_seen_at INTEGER
+                );
+                `
+            ).run();
+            const licRes = await env.DB.prepare(
+                `
+                SELECT user_id, COUNT(*) AS c
+                FROM device_licenses
+                WHERE revoked_at IS NULL
+                GROUP BY user_id
+                `
+            ).all();
+            const licRows = Array.isArray(licRes) ? licRes : (licRes.results || []);
+            licenseCountByUserId = new Map<string, number>();
+            for (const r of licRows) {
+                const k = String((r as any)?.user_id ?? '');
+                const c = Number((r as any)?.c ?? 0);
+                if (k) licenseCountByUserId.set(k, Number.isFinite(c) ? c : 0);
+            }
+        } catch {}
+
+        try {
+            await env.DB.prepare(
+                `
+                CREATE TABLE IF NOT EXISTS device_tool_licenses (
+                  id TEXT PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  device_hash TEXT NOT NULL,
+                  tool_code TEXT NOT NULL,
+                  voucher_code TEXT NOT NULL,
+                  activated_at INTEGER NOT NULL,
+                  revoked_at INTEGER,
+                  last_seen_at INTEGER
+                );
+                `
+            ).run();
+            const toolLicRes = await env.DB.prepare(
+                `
+                SELECT user_id, COUNT(*) AS c
+                FROM device_tool_licenses
+                WHERE revoked_at IS NULL
+                GROUP BY user_id
+                `
+            ).all();
+            const toolLicRows = Array.isArray(toolLicRes) ? toolLicRes : (toolLicRes.results || []);
+            for (const r of toolLicRows) {
+                const k = String((r as any)?.user_id ?? '');
+                const c = Number((r as any)?.c ?? 0);
+                if (!k) continue;
+                const prev = licenseCountByUserId.get(k) || 0;
+                licenseCountByUserId.set(k, prev + (Number.isFinite(c) ? c : 0));
+            }
+        } catch {}
+
         const formattedUsers = results.map(user => {
             const tokensNum = Number((user as any)?.tokens ?? 0) || 0;
             const tokensTenths = Math.round(tokensNum * 10);
@@ -376,6 +441,71 @@ export async function handleAdminUsersOverview(_request: Request, env: Env): Pro
             if (k) bonusByUserId.set(k, Number.isFinite(v) ? v : 0);
         }
 
+        let licenseCountByUserId = new Map<string, number>();
+        try {
+            await env.DB.prepare(
+                `
+                CREATE TABLE IF NOT EXISTS device_licenses (
+                  id TEXT PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  device_hash TEXT NOT NULL,
+                  voucher_code TEXT NOT NULL,
+                  activated_at INTEGER NOT NULL,
+                  revoked_at INTEGER,
+                  last_seen_at INTEGER
+                );
+                `
+            ).run();
+            const licRes = await env.DB.prepare(
+                `
+                SELECT user_id, COUNT(*) AS c
+                FROM device_licenses
+                WHERE revoked_at IS NULL
+                GROUP BY user_id
+                `
+            ).all();
+            const licRows = Array.isArray(licRes) ? licRes : (licRes.results || []);
+            licenseCountByUserId = new Map<string, number>();
+            for (const r of licRows) {
+                const k = String((r as any)?.user_id ?? '');
+                const c = Number((r as any)?.c ?? 0);
+                if (k) licenseCountByUserId.set(k, Number.isFinite(c) ? c : 0);
+            }
+        } catch {}
+
+        try {
+            await env.DB.prepare(
+                `
+                CREATE TABLE IF NOT EXISTS device_tool_licenses (
+                  id TEXT PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  device_hash TEXT NOT NULL,
+                  tool_code TEXT NOT NULL,
+                  voucher_code TEXT NOT NULL,
+                  activated_at INTEGER NOT NULL,
+                  revoked_at INTEGER,
+                  last_seen_at INTEGER
+                );
+                `
+            ).run();
+            const toolLicRes = await env.DB.prepare(
+                `
+                SELECT user_id, COUNT(*) AS c
+                FROM device_tool_licenses
+                WHERE revoked_at IS NULL
+                GROUP BY user_id
+                `
+            ).all();
+            const toolLicRows = Array.isArray(toolLicRes) ? toolLicRes : (toolLicRes.results || []);
+            for (const r of toolLicRows) {
+                const k = String((r as any)?.user_id ?? '');
+                const c = Number((r as any)?.c ?? 0);
+                if (!k) continue;
+                const prev = licenseCountByUserId.get(k) || 0;
+                licenseCountByUserId.set(k, prev + (Number.isFinite(c) ? c : 0));
+            }
+        } catch {}
+
         const now = Math.floor(Date.now() / 1000);
         const t24h = now - 86400;
         const t7d = now - 7 * 86400;
@@ -454,6 +584,7 @@ export async function handleAdminUsersOverview(_request: Request, env: Env): Pro
                 is_admin: u.is_admin,
                 subscription_active: u.subscription_active,
                 subscription_expiry: u.subscription_expiry,
+                license_active_count: licenseCountByUserId.get(String(u.id)) || 0,
                 created_at: createdAtIso,
                 last_request_at: lastTsIso,
                 app_usage: {

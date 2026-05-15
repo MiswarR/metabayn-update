@@ -14,6 +14,7 @@ use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::io::Cursor;
 use image::io::Reader as ImageReader;
+use walkdir::WalkDir;
 
 // use tauri::Manager;
 
@@ -61,6 +62,7 @@ static IMAGE_B64_CACHE: OnceLock<Mutex<ImageCache>> = OnceLock::new();
 static CANCEL_GENERATE_BATCH: AtomicBool = AtomicBool::new(false);
 static ACTIVE_GENERATE_BATCH: AtomicUsize = AtomicUsize::new(0);
 static STOP_CSV_TOOLS_SCHEDULING: AtomicBool = AtomicBool::new(false);
+static CANCEL_PROMPT_GRABBER: AtomicBool = AtomicBool::new(false);
 
 pub fn request_cancel_generate_batch() {
     CANCEL_GENERATE_BATCH.store(true, Ordering::SeqCst);
@@ -78,12 +80,24 @@ pub fn clear_stop_csv_tools_scheduling() {
     STOP_CSV_TOOLS_SCHEDULING.store(false, Ordering::SeqCst);
 }
 
+pub fn request_cancel_prompt_grabber() {
+    CANCEL_PROMPT_GRABBER.store(true, Ordering::SeqCst);
+}
+
+pub fn clear_cancel_prompt_grabber() {
+    CANCEL_PROMPT_GRABBER.store(false, Ordering::SeqCst);
+}
+
 pub fn active_generate_batch_count() -> usize {
     ACTIVE_GENERATE_BATCH.load(Ordering::SeqCst)
 }
 
 fn cancel_requested() -> bool {
     CANCEL_GENERATE_BATCH.load(Ordering::SeqCst)
+}
+
+fn prompt_cancel_requested() -> bool {
+    CANCEL_PROMPT_GRABBER.load(Ordering::SeqCst)
 }
 
 fn csv_tools_stop_requested() -> bool {
@@ -293,6 +307,7 @@ pub async fn generate_csv_from_folder(
         connection_mode: effective_connection_mode,
         api_key: api_key.clone(),
         provider: settings.ai_provider.clone(),
+        request_timeout_sec: None,
     };
 
     // use tokio::sync::Semaphore;
@@ -797,20 +812,16 @@ fn get_primary_prompt(req: &crate::api::BatchReq, context: Option<&str>) -> Stri
     };
 
     let mut p = format!(
-        "Generate metadata for stock media.
+        "Create SEO-optimized microstock metadata from the image.
 Rules:
-- Title: {} to {} words.
+- Title: {} to {} words. Clear, buyer-intent, not keyword-stuffed. Start with main subject, then action/context/style if relevant. Use natural English.
 - {} 
-- Keywords: {} to {} tags. Single words only, comma separated.
+- Keywords: {} to {} tags. Single English words only, comma separated. No duplicates.
+  Pick the most searched terms microstock buyers use: subject, action, setting, style, concept, industry, usage (e.g. background, banner, template, copyspace), and close synonyms. Order from most important to least.
+- Avoid irrelevant/trending terms and any brand/trademark names.
 - Banned characters: `~@#$%^&*()_+=-/\\][{{}}|';\":?/><` (Only . and , allowed).
-- Output Format: JSON with keys 'title', 'description', 'keywords', 'category'.
-- Category: Choose EXACTLY TWO relevant categories from this list, separated by a comma.
-          You MUST provide TWO categories. If only one is perfectly relevant, choose the second most relevant one.
-          NEVER provide just one category.
-          MUST match EXACT spelling character-by-character.
-          List: [Abstract, Animals/Wildlife, Arts, Backgrounds/Textures, Beauty/Fashion, Buildings/Landmarks, Business/Finance, Celebrities, Education, Food and drink, Healthcare/Medical, Holidays, Industrial, Interiors, Miscellaneous, Nature, Objects, Parks/Outdoor, People, Religion, Science, Signs/Symbols, Sports/Recreation, Technology, Transportation, Vintage]
-          Example: \"Nature, Transportation\"
-        ",
+- Output: JSON keys 'title','description','keywords','category'.
+- Category: EXACTLY TWO from this list (comma separated, exact spelling): [Abstract, Animals/Wildlife, Arts, Backgrounds/Textures, Beauty/Fashion, Buildings/Landmarks, Business/Finance, Celebrities, Education, Food and drink, Healthcare/Medical, Holidays, Industrial, Interiors, Miscellaneous, Nature, Objects, Parks/Outdoor, People, Religion, Science, Signs/Symbols, Sports/Recreation, Technology, Transportation, Vintage].",
         tmin, tmax,
         desc_rule,
         kw_min, kw_max
@@ -905,11 +916,69 @@ fn build_selection_checks(settings: &crate::settings::AppSettings) -> Vec<String
 fn get_primary_prompt_with_selection(req: &crate::api::BatchReq, settings: &crate::settings::AppSettings, context: Option<&str>) -> String {
     let mut p = get_primary_prompt(req, context);
     let checks = build_selection_checks(settings);
-    p.push_str(&format!(
-        "\nStock compliance selection (in the SAME response):\nEnabled checks:\n{:#?}\n\nIf ANY check fails, selection.status MUST be 'rejected'.\nIf no checks are enabled, selection.status MUST be 'accepted'.\nOutput Format: JSON with keys 'title', 'description', 'keywords', 'category', 'selection'.\nselection must be: {{\"status\":\"accepted\"|\"rejected\",\"reason\":\"...\",\"failed_checks\":[\"code1\",...]}}.\nIMPORTANT: Use ONLY the short code prefix (part before colon) for selection.failed_checks.",
+    let checks_text = if checks.is_empty() {
+        "none".to_string()
+    } else {
         checks
+            .iter()
+            .map(|c| format!("- {}", c))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    p.push_str(&format!(
+        "\nSelection (same response):\n{}\nIf ANY check fails => selection.status='rejected'. If none => 'accepted'.\nAdd key 'selection'={{\"status\":\"accepted\"|\"rejected\",\"reason\":\"...\",\"failed_checks\":[\"code\",...]}}. Use only short code before ':' in failed_checks.",
+        checks_text
     ));
     p
+}
+
+fn promptgrab_system_prompt(platform: &str, detail_level: &str, language: &str, extra_prompt: &str) -> String {
+    let p = platform.trim();
+    let d = detail_level.trim();
+    let l = language.trim();
+    let extra = extra_prompt.trim();
+
+    let guide = match p {
+        "Midjourney" => "Format Midjourney:\n- Deskripsikan subjek, medium seni, gaya, pencahayaan, warna, komposisi, suasana\n- Tambahkan parameter di akhir: --ar 16:9 --v 6 --style raw\n- Gunakan bobot :: jika perlu\n- Contoh: \"Enchanted forest at twilight, bioluminescent flora, volumetric mist, cinematic wide shot --ar 16:9 --v 6\"",
+        "Stable Diffusion" => "Format Stable Diffusion:\nPositive prompt: deskripsi detail dengan tag dipisah koma, sertakan: (masterpiece:1.4), (best quality:1.4), highly detailed, 8k\nNegative prompt (tulis setelah \"NEGATIVE:\"): (worst quality:1.4), (low quality:1.4), blurry, deformed, ugly, watermark, text",
+        "DALL·E" => "Format DALL·E 3:\nTulis dalam kalimat deskriptif lengkap. Sebutkan: gaya visual (photorealistic/illustration/painting), subjek utama, setting/latar, pencahayaan, palet warna, suasana/mood. Contoh: \"A photorealistic aerial photograph of a misty mountain valley at golden hour...\"",
+        "Kling/Runway" => "Format prompt video (Kling AI / Runway):\nDeskripsikan: scene/setting, gerakan kamera (pan/zoom/dolly), aksi subjek, pencahayaan, palet warna, suasana, durasi mood. Contoh: \"Slow cinematic dolly shot through a misty forest, shafts of golden light, leaves falling gently, 4K cinematic, shallow depth of field\"",
+        _ => "Format universal (compatible dengan semua platform):\nDeskripsikan: subjek utama, gaya visual, setting, pencahayaan, komposisi, warna dominan, mood/atmosfer, level detail. Sertakan kata kunci teknis yang relevan.",
+    };
+
+    let detail_guide = match d {
+        "Singkat" => "Panjang prompt: singkat dan padat, maksimal 40-50 kata, 1-2 baris.",
+        "Sangat Detail" => "Panjang prompt: sangat lengkap dan mendetail, 150-250 kata, sertakan semua elemen visual, teknik artistik, referensi gaya.",
+        _ => "Panjang prompt: detail dan komprehensif, 60-120 kata, 3-4 baris.",
+    };
+
+    let lang_guide = if l == "Bilingual (EN+ID)" {
+        "Tulis prompt dalam Bahasa Inggris. Di bawahnya tambahkan baris \"TERJEMAHAN:\" dan tulis terjemahan ringkas dalam Bahasa Indonesia."
+    } else {
+        "Tulis prompt dalam Bahasa Inggris saja."
+    };
+
+    let extra_block = if extra.is_empty() {
+        "".to_string()
+    } else {
+        format!("\nSPESIFIKASI TAMBAHAN (wajib diikuti):\n{}", extra)
+    };
+
+    format!(
+        "Kamu adalah pakar pembuatan AI image/video generation prompt.\nTugasmu: analisa gambar yang diberikan (atau metadata jika gambar tidak tersedia) dan buat prompt yang akurat, kreatif, dan siap digunakan.\n\n{}\n\n{}\n\n{}\n{}\n\nATURAN PENTING:\n- Langsung tulis prompt, JANGAN ada teks pembuka seperti \"Berikut promptnya:\", \"Sure!\", \"Here is:\", dll.\n- Jika hanya ada metadata (tanpa gambar), buat prompt kreatif berdasarkan clue dari nama file, alt text, ukuran, dan konteks URL.\n- Jangan sebut ketidakmampuan melihat gambar dalam output prompt.",
+        guide,
+        detail_guide,
+        lang_guide,
+        extra_block
+    )
+}
+
+fn promptgrab_max_tokens(detail_level: &str) -> u32 {
+    match detail_level.trim() {
+        "Singkat" => 200,
+        "Sangat Detail" => 700,
+        _ => 400,
+    }
 }
 
 fn is_quota_or_rate_limit_error(lower: &str) -> bool {
@@ -979,24 +1048,42 @@ async fn call_ai_base(
             
             // Determine URL based on model or provider (OpenAI vs Gemini) or API Key format
             let is_key_google = api_key.starts_with("AIza");
+            let provider_lower = req.provider.to_lowercase();
+            let is_openrouter = provider_lower.contains("openrouter") || api_key.starts_with("sk-or-");
             
             let is_gemini = current_model.to_lowercase().contains("gemini") 
                 || req.provider.to_lowercase().contains("gemini")
                 || is_key_google;
             
-            let url = if is_gemini {
+            let url = if is_openrouter {
+                let ep = settings.openrouter_endpoint.trim();
+                if ep.is_empty() {
+                    "https://openrouter.ai/api/v1/chat/completions"
+                } else {
+                    ep
+                }
+            } else if is_gemini {
                 "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
             } else {
                 "https://api.openai.com/v1/chat/completions"
             };
             
-            let resp = client.post(url)
-               .header("Authorization", format!("Bearer {}", api_key))
-               .json(&serde_json::json!({
-                   "model": current_model,
-                   "messages": messages,
-                   "temperature": 0.2
-               })).send().await;
+            let mut req_builder = client
+                .post(url)
+                .header("Authorization", format!("Bearer {}", api_key));
+            if is_openrouter {
+                req_builder = req_builder
+                    .header("HTTP-Referer", "https://metabayn.com")
+                    .header("X-Title", "Metabayn Studio");
+            }
+            let resp = req_builder
+                .json(&serde_json::json!({
+                    "model": current_model,
+                    "messages": messages,
+                    "temperature": 0.2
+                }))
+                .send()
+                .await;
 
              match resp {
                 Ok(r) => {
@@ -1204,13 +1291,15 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
   let selection_order = settings.selection_order.as_str();
   let vision_model = &req.model;
   let provider = req.provider.clone();
+  let request_timeout_sec = req.request_timeout_sec.unwrap_or(180).clamp(15, 900);
 
   if !is_vision_model_for_provider(&provider, vision_model) {
       return Err(anyhow!(format!("Model tidak mendukung vision: provider={} model={}. Silakan pilih model vision di Settings.", provider, vision_model)));
   }
 
   let mut out = Vec::new();
-  let mut used_titles: HashSet<String> = HashSet::new();
+  let mut used_title_keys: HashMap<String, usize> = HashMap::new();
+  let mut used_title_norms: HashSet<String> = HashSet::new();
 
   let mut files = req.files.clone();
   files.sort_by_key(|a| split_natural(a));
@@ -1248,7 +1337,7 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
         // CASE B: Single pass (Metadata + Selection)
         let prompt = get_primary_prompt_with_selection(req, &settings, None);
         if cancel_requested() { return Err(anyhow!("CANCELLED_BY_USER")); }
-        match call_ai_base(vision_model, &prompt, img_data.clone(), req, 120).await {
+        match call_ai_base(vision_model, &prompt, img_data.clone(), req, request_timeout_sec).await {
             Ok((txt, usage, prov, cost, balance_after, tokens_deducted)) => {
                 add_usage(&mut acc_vis_usage, &mut acc_vis_cost, usage, cost);
                 if let Some(b) = balance_after { file_balance_after = Some(b); }
@@ -1315,7 +1404,7 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
             get_primary_prompt(req, None)
         };
         if cancel_requested() { return Err(anyhow!("CANCELLED_BY_USER")); }
-        match call_ai_base(vision_model, &prompt, img_data.clone(), req, 120).await {
+        match call_ai_base(vision_model, &prompt, img_data.clone(), req, request_timeout_sec).await {
             Ok((txt, usage, prov, cost, balance_after, tokens_deducted)) => {
                 add_usage(&mut acc_vis_usage, &mut acc_vis_cost, usage, cost);
                 if let Some(b) = balance_after { file_balance_after = Some(b); }
@@ -1381,11 +1470,11 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
           enforce_generation_contract(&mut g, req);
           // Validation
            if valid(&g, req) { 
-                ensure_unique_title(&mut g, &mut used_titles, req);
+                ensure_unique_title(&mut g, &mut used_title_keys, &mut used_title_norms, req);
                 out.push(g);
            } else {
                g.failed_checks = Some(vec!["Length/Count Validation Failed".to_string()]);
-               ensure_unique_title(&mut g, &mut used_titles, req);
+               ensure_unique_title(&mut g, &mut used_title_keys, &mut used_title_norms, req);
                out.push(g);
            }
       } else {
@@ -2040,6 +2129,7 @@ mod tests {
             max_threads: 1,
             connection_mode: "".into(),
             api_key: None,
+            request_timeout_sec: None,
             provider: "OpenRouter".into(),
         };
 
@@ -2101,6 +2191,7 @@ mod tests {
             max_threads: 1,
             connection_mode: "".into(),
             api_key: None,
+            request_timeout_sec: None,
             provider: "OpenAI".into(),
         };
 
@@ -2153,6 +2244,7 @@ mod tests {
             max_threads: 1,
             connection_mode: "".into(),
             api_key: None,
+            request_timeout_sec: None,
             provider: "Gemini".into(),
         };
 
@@ -2214,23 +2306,714 @@ fn normalize_title_str(s: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn ensure_unique_title(g: &mut Generated, used: &mut HashSet<String>, _req: &crate::api::BatchReq) {
-    let base = normalize_title_str(&g.title);
-    if used.contains(&base) {
-        let mut i = 1;
-        loop {
-             let new_title = format!("{} {}", g.title, i);
-             let new_base = normalize_title_str(&new_title);
-             if !used.contains(&new_base) {
-                 g.title = new_title;
-                 used.insert(new_base);
-                 break;
-             }
-             i += 1;
-        }
-    } else {
-        used.insert(base);
+fn title_stopwords() -> &'static std::collections::HashSet<String> {
+    static SW: OnceLock<std::collections::HashSet<String>> = OnceLock::new();
+    SW.get_or_init(build_stopwords)
+}
+
+fn normalize_title_key(s: &str) -> String {
+    let norm = normalize_title_str(s);
+    let stopwords = title_stopwords();
+    let mut tokens: Vec<String> = Vec::new();
+    for t in norm.split_whitespace() {
+        let lower = t.to_string();
+        if lower.len() < 2 { continue; }
+        if lower.chars().all(|c| c.is_ascii_digit()) { continue; }
+        if lower.starts_with('v') && lower.len() > 1 && lower[1..].chars().all(|c| c.is_ascii_digit()) { continue; }
+        if stopwords.contains(&lower) { continue; }
+        tokens.push(lower);
     }
+    if tokens.is_empty() { norm } else { tokens.join(" ") }
+}
+
+fn clamp_title_words(title: &str, tmin: u32, tmax: u32) -> String {
+    let mut words = title.split_whitespace().map(|s| s.to_string()).collect::<Vec<_>>();
+    if words.is_empty() { return String::new(); }
+    if (words.len() as u32) > tmax && tmax > 0 {
+        words.truncate(tmax as usize);
+    }
+    if (words.len() as u32) < tmin && tmin > 0 {
+        return words.join(" ");
+    }
+    words.join(" ")
+}
+
+fn clean_title_chars(s: &str) -> String {
+    let mut out = String::new();
+    for ch in s.chars() {
+        if ch.is_ascii_alphanumeric() || ch.is_whitespace() {
+            out.push(ch);
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn extract_meaningful_tokens_from_keywords(g: &Generated, req: &crate::api::BatchReq, limit: usize) -> Vec<String> {
+    let banned_list: Vec<String> = req.banned_words.split(',').map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect();
+    let stopwords = title_stopwords();
+    let mut out: Vec<String> = Vec::new();
+    for kw in &g.keywords {
+        let token = kw.trim().to_lowercase();
+        if is_meaningful_token(&token, stopwords, &banned_list) {
+            out.push(token);
+        }
+        if out.len() >= limit { break; }
+    }
+    out
+}
+
+fn reorder_title(title: &str) -> Option<String> {
+    let lower = title.to_lowercase();
+    if let Some(pos) = lower.find(" with ") {
+        let a = title[..pos].trim();
+        let b = title[pos + 6..].trim();
+        if !a.is_empty() && !b.is_empty() {
+            return Some(format!("{} with {}", b, a));
+        }
+    }
+    if let Some(pos) = lower.find(" on ") {
+        let a = title[..pos].trim();
+        let b = title[pos + 4..].trim();
+        if !a.is_empty() && !b.is_empty() {
+            return Some(format!("{} with {}", a, b));
+        }
+    }
+    if let Some(pos) = lower.find(" in ") {
+        let a = title[..pos].trim();
+        let b = title[pos + 4..].trim();
+        if !a.is_empty() && !b.is_empty() {
+            return Some(format!("{} in {}", b, a));
+        }
+    }
+    None
+}
+
+fn rotate_words(title: &str, n: usize) -> Option<String> {
+    let words = title.split_whitespace().collect::<Vec<_>>();
+    if words.len() < 4 { return None; }
+    let k = n % words.len();
+    if k == 0 { return None; }
+    let mut out = Vec::new();
+    out.extend(words[k..].iter().copied());
+    out.extend(words[..k].iter().copied());
+    Some(out.join(" "))
+}
+
+fn build_title_variant(g: &Generated, req: &crate::api::BatchReq, attempt: usize, tmin: u32, tmax: u32) -> String {
+    let base = clean_title_chars(&g.title);
+    let kws = extract_meaningful_tokens_from_keywords(g, req, 6);
+    let k1 = kws.get(0).cloned().unwrap_or_default();
+    let k2 = kws.get(1).cloned().unwrap_or_default();
+    let k3 = kws.get(2).cloned().unwrap_or_default();
+    let k4 = kws.get(3).cloned().unwrap_or_default();
+
+    let candidate = match attempt % 7 {
+        0 => reorder_title(&base).unwrap_or(base.clone()),
+        1 => if !k1.is_empty() && !k2.is_empty() { format!("{} {} {}", k1, k2, base) } else { base.clone() },
+        2 => if !k1.is_empty() && !k2.is_empty() { format!("{} {} {}", base, k1, k2) } else { base.clone() },
+        3 => if !k1.is_empty() && !k2.is_empty() && !k3.is_empty() { format!("{} {} {} {}", k1, k2, k3, base) } else { base.clone() },
+        4 => if !k1.is_empty() && !k2.is_empty() && !k3.is_empty() { format!("{} {} {} {}", base, k1, k2, k3) } else { base.clone() },
+        5 => rotate_words(&base, 2).unwrap_or(base.clone()),
+        _ => if !k1.is_empty() && !k2.is_empty() && !k3.is_empty() && !k4.is_empty() { format!("{} {} {} {}", k1, k2, k3, k4) } else { base.clone() },
+    };
+
+    clamp_title_words(&candidate, tmin, tmax)
+}
+
+fn ensure_unique_title(
+    g: &mut Generated,
+    used_key_counts: &mut HashMap<String, usize>,
+    used_title_norms: &mut HashSet<String>,
+    req: &crate::api::BatchReq
+) {
+    let (tmin, tmax_raw, _, _, _, _) = effective_generation_bounds(req);
+    let tmax = if tmax_raw == 0 { 32 } else { tmax_raw };
+
+    g.title = clamp_title_words(&clean_title_chars(&g.title), tmin, tmax);
+    let mut norm = normalize_title_str(&g.title);
+    if norm.is_empty() {
+        g.title = "Untitled".to_string();
+        norm = normalize_title_str(&g.title);
+    }
+
+    let key = normalize_title_key(&g.title);
+    let c = used_key_counts.entry(key).or_insert(0);
+    *c = c.saturating_add(1);
+
+    if *c <= 1 && !used_title_norms.contains(&norm) {
+        used_title_norms.insert(norm);
+        return;
+    }
+
+    let mut attempts = 0usize;
+    while attempts < 14 {
+        let candidate = build_title_variant(g, req, (*c as usize).saturating_add(attempts), tmin, tmax);
+        let cand_norm = normalize_title_str(&candidate);
+        if !cand_norm.is_empty() && !used_title_norms.contains(&cand_norm) {
+            g.title = candidate;
+            used_title_norms.insert(cand_norm);
+            return;
+        }
+        attempts += 1;
+    }
+
+    let rotated = rotate_words(&g.title, 1).unwrap_or_else(|| g.title.clone());
+    let cand_norm = normalize_title_str(&rotated);
+    if !cand_norm.is_empty() && !used_title_norms.contains(&cand_norm) {
+        g.title = rotated;
+        used_title_norms.insert(cand_norm);
+        return;
+    }
+
+    used_title_norms.insert(norm);
+}
+
+fn pg_is_video_path(path: &str) -> bool {
+    let l = path.to_lowercase();
+    l.ends_with(".mp4") || l.ends_with(".mov") || l.ends_with(".avi") || l.ends_with(".mkv") || l.ends_with(".webm")
+}
+
+fn pg_is_supported_media_path(path: &str) -> bool {
+    let l = path.to_lowercase();
+    l.ends_with(".jpg")
+        || l.ends_with(".jpeg")
+        || l.ends_with(".jfif")
+        || l.ends_with(".png")
+        || l.ends_with(".webp")
+        || l.ends_with(".gif")
+        || l.ends_with(".tif")
+        || l.ends_with(".tiff")
+        || l.ends_with(".bmp")
+        || l.ends_with(".ico")
+        || l.ends_with(".mp4")
+        || l.ends_with(".m4v")
+        || l.ends_with(".mov")
+        || l.ends_with(".mkv")
+        || l.ends_with(".avi")
+        || l.ends_with(".webm")
+        || l.ends_with(".wmv")
+        || l.ends_with(".flv")
+        || l.ends_with(".mpeg")
+        || l.ends_with(".mpg")
+        || l.ends_with(".3gp")
+        || l.ends_with(".ts")
+}
+
+fn pg_is_hidden_name(name: &str) -> bool {
+    let n = name.trim();
+    if n.is_empty() { return true; }
+    if n.starts_with('.') || n.starts_with('~') { return true; }
+    let lower = n.to_lowercase();
+    if lower == "thumbs.db"
+        || lower == "desktop.ini"
+        || lower == "$recycle.bin"
+        || lower == "system volume information"
+        || lower == "__macosx"
+        || lower == "node_modules"
+    {
+        return true;
+    }
+    lower.ends_with(".tmp") || lower.ends_with(".bak") || lower.ends_with(".log") || lower.ends_with(".dat") || lower.ends_with(".ini")
+}
+
+fn pg_image_dimensions(path: &str) -> Option<(u32, u32)> {
+    let p = Path::new(path);
+    let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+    if !matches!(ext.as_str(), "jpg" | "jpeg" | "jfif" | "png" | "webp" | "gif" | "tif" | "tiff" | "bmp" | "ico") {
+        return None;
+    }
+    ImageReader::open(p).ok()?.with_guessed_format().ok()?.into_dimensions().ok()
+}
+
+async fn pg_make_thumb_data_url(path: &str) -> Option<String> {
+    let is_video = pg_is_video_path(path);
+    let bytes = if is_video {
+        crate::video::extract_frame(path).ok()?
+    } else {
+        std::fs::read(path).ok()?
+    };
+
+    let img = ImageReader::new(Cursor::new(bytes)).with_guessed_format().ok()?.decode().ok()?;
+    let (w, h) = img.dimensions();
+    let max_side = 360u32;
+    let (nw, nh) = if w > max_side || h > max_side {
+        if w > h { (max_side, (max_side as f32 * h as f32 / w as f32) as u32) }
+        else { ((max_side as f32 * w as f32 / h as f32) as u32, max_side) }
+    } else { (w, h) };
+
+    let resized = img.resize(nw.max(1), nh.max(1), FilterType::Triangle);
+    let mut out = Cursor::new(Vec::new());
+    resized.write_to(&mut out, image::ImageOutputFormat::Jpeg(65)).ok()?;
+    let b64 = BASE64_STANDARD.encode(out.into_inner());
+    Some(format!("data:image/jpeg;base64,{}", b64))
+}
+
+fn pg_build_meta_text(file_path: &str, kind: &str, width: u32, height: u32) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let filename = Path::new(file_path).file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+    if !filename.is_empty() {
+        parts.push(format!("Filename: {}", filename));
+    }
+    if width > 0 && height > 0 {
+        parts.push(format!("Ukuran: {}×{}px", width, height));
+    }
+    if !kind.is_empty() {
+        parts.push(format!("Tipe elemen: {}", kind));
+    }
+    if parts.is_empty() {
+        "Tidak ada metadata gambar tersedia.".to_string()
+    } else {
+        format!("Informasi gambar:\n{}", parts.into_iter().map(|p| format!("- {}", p)).collect::<Vec<_>>().join("\n"))
+    }
+}
+
+fn pg_messages_with_image(system_prompt: &str, meta_text: &str, b64: &str, mime: &str, max_tokens: u32) -> serde_json::Value {
+    serde_json::json!([
+        { "role": "system", "content": system_prompt },
+        {
+            "role": "user",
+            "content": [
+                { "type": "image_url", "image_url": { "url": format!("data:{};base64,{}", mime, b64), "detail": if max_tokens > 400 { "high" } else { "low" } } },
+                { "type": "text", "text": format!("Analisa gambar ini dan buat prompt AI.\n{}", meta_text) }
+            ]
+        }
+    ])
+}
+
+fn pg_messages_text_only(system_prompt: &str, meta_text: &str) -> serde_json::Value {
+    serde_json::json!([
+        { "role": "system", "content": system_prompt },
+        { "role": "user", "content": meta_text }
+    ])
+}
+
+async fn pg_call_ai_openai_compatible(
+    client: &reqwest::Client,
+    url: &str,
+    headers: Vec<(&str, String)>,
+    model: &str,
+    messages: serde_json::Value,
+    max_tokens: u32,
+) -> Result<(String, Option<TokenUsage>)> {
+    let mut req_builder = client.post(url);
+    for (k, v) in headers {
+        req_builder = req_builder.header(k, v);
+    }
+    let resp = req_builder
+        .json(&serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": 0.7
+        }))
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let err_text = resp.text().await.unwrap_or_default();
+        return Err(anyhow!("API Error (HTTP {}, URL: {}): {}", status, url, err_text));
+    }
+
+    let res_json: serde_json::Value = resp.json().await?;
+    let content = res_json
+        .pointer("/choices/0/message/content")
+        .and_then(|s| s.as_str())
+        .or_else(|| res_json.get("result").and_then(|s| s.as_str()))
+        .unwrap_or("")
+        .to_string();
+    let usage: Option<TokenUsage> = res_json.get("usage").and_then(|u| serde_json::from_value(u.clone()).ok());
+    Ok((content, usage))
+}
+
+async fn pg_call_prompt(
+    req: &crate::api::PromptGrabberReq,
+    system_prompt: &str,
+    meta_text: &str,
+    image_b64: Option<(String, String)>,
+    request_timeout_sec: u64,
+) -> Result<(String, Option<TokenUsage>, String)> {
+    let settings = crate::settings::load_settings().unwrap_or_default();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(request_timeout_sec.clamp(15, 900)))
+        .build()?;
+
+    let model = req.model.trim();
+    let provider_lower = req.provider.trim().to_lowercase();
+    let key = req.api_key.clone().unwrap_or_default().trim().to_string();
+    let token = req.token.trim().to_string();
+
+    let has_key = !key.is_empty();
+    let has_token = !token.is_empty();
+    let wants_gateway = req.connection_mode.trim().to_lowercase().contains("gateway") || req.connection_mode.trim().to_lowercase().contains("server");
+
+    let is_openrouter = provider_lower.contains("openrouter") || key.starts_with("sk-or-");
+    let is_key_google = key.starts_with("AIza");
+    let is_gemini = model.to_lowercase().contains("gemini") || provider_lower.contains("gemini") || is_key_google;
+
+    let use_server = wants_gateway && !has_key && has_token;
+
+    let max_tokens = promptgrab_max_tokens(&req.detail_level);
+    let messages = if let Some((b64, mime)) = image_b64 {
+        pg_messages_with_image(system_prompt, meta_text, &b64, &mime, max_tokens)
+    } else {
+        pg_messages_text_only(system_prompt, meta_text)
+    };
+
+    if use_server {
+        let base = settings.server_url.trim_end_matches('/');
+        let url = format!("{}/ai/generate", base);
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&serde_json::json!({
+                "model": model,
+                "messages": messages,
+                "prompt": meta_text,
+                "retries": req.retries
+            }))
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let err_text = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("Gateway API Error (HTTP {}): {}", status, err_text));
+        }
+        let res_json: serde_json::Value = resp.json().await?;
+        let content = res_json
+            .get("result")
+            .and_then(|s| s.as_str())
+            .or_else(|| res_json.pointer("/choices/0/message/content").and_then(|s| s.as_str()))
+            .unwrap_or("")
+            .to_string();
+        let usage: Option<TokenUsage> = res_json.get("usage").and_then(|u| serde_json::from_value(u.clone()).ok());
+        return Ok((content, usage, "gateway".into()));
+    }
+
+    if !has_key {
+        return Err(anyhow!("Missing API key"));
+    }
+
+    let url = if is_openrouter {
+        let ep = settings.openrouter_endpoint.trim();
+        if ep.is_empty() { "https://openrouter.ai/api/v1/chat/completions".to_string() } else { ep.to_string() }
+    } else if is_gemini {
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string()
+    } else {
+        "https://api.openai.com/v1/chat/completions".to_string()
+    };
+
+    let mut headers = vec![("Authorization", format!("Bearer {}", key)), ("Content-Type", "application/json".to_string())];
+    if is_openrouter {
+        headers.push(("HTTP-Referer", "https://metabayn.com".to_string()));
+        headers.push(("X-Title", "Metabayn Studio".to_string()));
+    }
+
+    let (content, usage) = pg_call_ai_openai_compatible(&client, &url, headers, model, messages, max_tokens).await?;
+    Ok((content, usage, "direct".into()))
+}
+
+pub async fn prompt_grabber_scan_folder(
+    window: tauri::Window,
+    input_folder: &str,
+    recurse: bool,
+    min_size: u32,
+    max_files: u32,
+) -> Result<Vec<crate::api::PromptGrabberScanItem>> {
+    prompt_grabber_scan_folder_impl(window, input_folder, recurse, min_size, max_files, true).await
+}
+
+pub async fn prompt_grabber_scan_folder_fast(
+    window: tauri::Window,
+    input_folder: &str,
+    recurse: bool,
+    min_size: u32,
+    max_files: u32,
+) -> Result<Vec<crate::api::PromptGrabberScanItem>> {
+    prompt_grabber_scan_folder_impl(window, input_folder, recurse, min_size, max_files, false).await
+}
+
+async fn prompt_grabber_scan_folder_impl(
+    window: tauri::Window,
+    input_folder: &str,
+    recurse: bool,
+    min_size: u32,
+    max_files: u32,
+    include_thumbs: bool,
+) -> Result<Vec<crate::api::PromptGrabberScanItem>> {
+    let mut out: Vec<crate::api::PromptGrabberScanItem> = Vec::new();
+    let max_files_usize = if max_files == 0 { usize::MAX } else { max_files as usize };
+
+    let _ = window.emit("tools_log", serde_json::json!({
+        "code": "TOOL_TOTAL",
+        "text": "",
+        "total": 0,
+        "status": "processing"
+    }));
+
+    let walker = if recurse {
+        WalkDir::new(input_folder).into_iter()
+    } else {
+        WalkDir::new(input_folder).max_depth(1).into_iter()
+    };
+
+    for entry in walker.filter_map(|e| e.ok()) {
+        if prompt_cancel_requested() {
+            break;
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if pg_is_hidden_name(&name) {
+            continue;
+        }
+        let path = entry.path().to_string_lossy().to_string();
+        if !pg_is_supported_media_path(&path) {
+            continue;
+        }
+        if out.len() >= max_files_usize {
+            break;
+        }
+
+        let is_video = pg_is_video_path(&path);
+        let (w, h) = if is_video {
+            (0, 0)
+        } else {
+            pg_image_dimensions(&path).unwrap_or((0, 0))
+        };
+        if !is_video && min_size > 0 {
+            let min_side = w.min(h);
+            if min_side > 0 && min_side < min_size {
+                continue;
+            }
+        }
+
+        let thumb = if include_thumbs {
+            pg_make_thumb_data_url(&path).await
+        } else {
+            None
+        };
+
+        out.push(crate::api::PromptGrabberScanItem {
+            file_path: path.clone(),
+            file_name: Path::new(&path).file_name().and_then(|s| s.to_str()).unwrap_or("").to_string(),
+            kind: if is_video { "video".into() } else { "image".into() },
+            width: w,
+            height: h,
+            thumb_data_url: thumb,
+        });
+    }
+
+    let _ = window.emit("tools_log", serde_json::json!({
+        "code": "TOOL_TOTAL",
+        "text": "",
+        "total": out.len(),
+        "status": "processing"
+    }));
+
+    Ok(out)
+}
+
+pub async fn prompt_grabber_get_thumbnails(
+    window: tauri::Window,
+    files: Vec<String>,
+) -> Result<Vec<crate::api::PromptGrabberThumbItem>> {
+    use std::sync::Arc;
+    use tokio::sync::Semaphore;
+
+    let settings = crate::settings::load_settings().unwrap_or_default();
+    let max_parallel = (settings.max_threads.max(1).min(10) as usize).min(8);
+    let sem = Arc::new(Semaphore::new(max_parallel));
+    let mut set: tokio::task::JoinSet<crate::api::PromptGrabberThumbItem> = tokio::task::JoinSet::new();
+
+    for p in files.into_iter() {
+        if prompt_cancel_requested() {
+            break;
+        }
+        let permit = sem.clone().acquire_owned().await.unwrap();
+        let w2 = window.clone();
+        set.spawn(async move {
+            let _permit = permit;
+            if prompt_cancel_requested() {
+                return crate::api::PromptGrabberThumbItem { file_path: p, thumb_data_url: None };
+            }
+            let thumb = pg_make_thumb_data_url(&p).await;
+            let _ = w2.emit("tools_log", serde_json::json!({
+                "code": "PROMPT_THUMB_READY",
+                "file": p,
+                "status": "success"
+            }));
+            crate::api::PromptGrabberThumbItem { file_path: p, thumb_data_url: thumb }
+        });
+    }
+
+    let mut out: Vec<crate::api::PromptGrabberThumbItem> = Vec::new();
+    while let Some(r) = set.join_next().await {
+        if let Ok(item) = r {
+            out.push(item);
+        }
+    }
+    Ok(out)
+}
+
+pub async fn prompt_grabber_generate(
+    window: tauri::Window,
+    req: crate::api::PromptGrabberReq,
+) -> Result<Vec<crate::api::PromptGrabberResult>> {
+    let total = req.files.len();
+    let system_prompt = promptgrab_system_prompt(&req.platform, &req.detail_level, &req.language, &req.extra_prompt);
+    let request_timeout_sec = req.request_timeout_sec.unwrap_or(45).clamp(15, 900);
+    let max_tokens = promptgrab_max_tokens(&req.detail_level);
+    let settings = crate::settings::load_settings().unwrap_or_default();
+    let max_threads = req
+        .max_threads
+        .unwrap_or(settings.max_threads)
+        .clamp(1, 16) as usize;
+
+    let _ = window.emit("tools_log", serde_json::json!({
+        "code": "TOOL_TOTAL",
+        "text": "",
+        "total": total,
+        "status": "processing"
+    }));
+
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Semaphore;
+    let sem = Arc::new(Semaphore::new(max_threads));
+    let done = Arc::new(AtomicUsize::new(0));
+
+    let mut set: tokio::task::JoinSet<(usize, crate::api::PromptGrabberResult)> = tokio::task::JoinSet::new();
+    for (idx, file_path) in req.files.iter().cloned().enumerate() {
+        if prompt_cancel_requested() {
+            break;
+        }
+        let permit = sem.clone().acquire_owned().await.unwrap();
+        let window2 = window.clone();
+        let req2 = req.clone();
+        let system_prompt2 = system_prompt.clone();
+        let done2 = done.clone();
+
+        set.spawn(async move {
+            let _permit = permit;
+            let p = file_path;
+            let file_name = Path::new(&p).file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let is_video = pg_is_video_path(&p);
+            let kind = if is_video { "video" } else { "image" };
+            let (w, h) = if is_video { (0, 0) } else { pg_image_dimensions(&p).unwrap_or((0, 0)) };
+
+            let _ = window2.emit("tools_log", serde_json::json!({
+                "code": "PROMPT_FILE_PROCESSING",
+                "text": format!("PromptGrabber: memproses {}", file_name),
+                "file": p,
+                "status": "processing"
+            }));
+
+            let meta_text = if kind == "video" {
+                let descriptor = [
+                    format!("Jenis video: {}", "video"),
+                    if w > 0 && h > 0 { format!("Resolusi: {}x{}", w, h) } else { "".to_string() },
+                    if !file_name.is_empty() { format!("Sumber video: {}", file_name) } else { "".to_string() }
+                ].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" | ");
+                pg_build_meta_text(&p, kind, 0, 0).replace("Informasi gambar:", "Informasi video:").replace("Tipe elemen:", &format!("Tipe elemen: {}", descriptor))
+            } else {
+                pg_build_meta_text(&p, kind, w, h)
+            };
+
+            let image_data = prepare_image_data(&p, req2.model.trim()).await.ok().map(|(b64, mime)| (b64, mime));
+            let mut last_err = String::new();
+            let mut prompt = String::new();
+            let mut provider_used = String::new();
+            let mut usage: Option<TokenUsage> = None;
+
+            let attempts = (req2.retries as usize).saturating_add(1).max(1);
+            for attempt in 0..attempts {
+                if prompt_cancel_requested() { break; }
+                match pg_call_prompt(&req2, &system_prompt2, &meta_text, image_data.clone(), request_timeout_sec).await {
+                    Ok((txt, u, prov)) => {
+                        prompt = txt.trim().to_string();
+                        usage = u;
+                        provider_used = prov;
+                        break;
+                    }
+                    Err(e) => {
+                        last_err = e.to_string();
+                        if attempt + 1 < attempts {
+                            tokio::time::sleep(Duration::from_millis(300)).await;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            if prompt.is_empty() {
+                let fallback = if kind == "video" { "Beautiful cinematic video scene, high quality, detailed, 4k" } else { "Beautiful visual, high quality, detailed, 4k" };
+                prompt = fallback.to_string();
+                let _ = window2.emit("tools_log", serde_json::json!({
+                    "code": "PROMPT_FILE_ERROR",
+                    "text": format!("PromptGrabber: fallback (gagal generate) {}", file_name),
+                    "detail": last_err,
+                    "file": p,
+                    "status": "error"
+                }));
+            } else {
+                let mut detail_msg = String::new();
+                if let Some(u) = usage {
+                    detail_msg = format!("Mode: {} | Tokens: in {} out {} | max_tokens {}", provider_used, u.prompt_tokens, u.completion_tokens, max_tokens);
+                }
+                let _ = window2.emit("tools_log", serde_json::json!({
+                    "code": "PROMPT_FILE_SUCCESS",
+                    "text": format!("PromptGrabber: selesai {}", file_name),
+                    "detail": detail_msg,
+                    "file": p,
+                    "status": "success"
+                }));
+            }
+
+            let done_now = done2.fetch_add(1, Ordering::SeqCst) + 1;
+            let _ = window2.emit("tools_log", serde_json::json!({
+                "code": "TOOL_PROGRESS",
+                "text": "",
+                "done": done_now,
+                "total": total,
+                "status": "processing"
+            }));
+
+            (
+                idx,
+                crate::api::PromptGrabberResult {
+                    file_path: p.clone(),
+                    file_name,
+                    kind: kind.to_string(),
+                    prompt,
+                },
+            )
+        });
+    }
+
+    let mut slots: Vec<Option<crate::api::PromptGrabberResult>> = vec![None; total];
+    while let Some(r) = set.join_next().await {
+        match r {
+            Ok((idx, item)) => {
+                if idx < slots.len() {
+                    slots[idx] = Some(item);
+                }
+            }
+            Err(_) => {}
+        }
+        if prompt_cancel_requested() {
+            set.abort_all();
+            break;
+        }
+    }
+
+    let mut out: Vec<crate::api::PromptGrabberResult> = Vec::with_capacity(total);
+    for it in slots.into_iter().flatten() {
+        out.push(it);
+    }
+    Ok(out)
 }
 
 async fn prepare_image_data(path: &str, _model: &str) -> Result<(String, String)> {

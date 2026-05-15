@@ -1,6 +1,9 @@
 fn main() {
-  let mut windows = tauri_build::WindowsAttributes::new();
-  windows = windows.app_manifest(include_str!("app.manifest"));
-  tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows))
-    .expect("failed to run build script");
+  println!("cargo:rerun-if-env-changed=TAURI_CONFIG");
+  println!("cargo:rerun-if-changed=tauri.conf.json");
+
+  let res = tauri_build::try_build(tauri_build::Attributes::default());
+  if let Err(e) = res {
+    println!("cargo:warning=tauri-build failed: {}", e);
+  }
 }

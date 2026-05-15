@@ -4,7 +4,7 @@ import { handleCloudflareGenerate } from './handlers/cloudflareAi';
 import { handleBalance, handleHistory, handleTopup } from './handlers/user';
 import { handleAdminModelPrices, handleAdminConfig, handleAdminSyncUsdIdr, handleListUsers, handleUpdateSubscription, handleResetPassword, handleDeleteUser, handlePurgeNonAdminUsers, handleAdminUsersOverview, handleExportUsersCsv, handleAdminLynkPurchases, handleAdminLynkWebhookLogs, handleAdminCleanupOpenRouterKeys } from './handlers/admin';
 import { handleUserUsage, handleExportUsageCsv, handleAuditCheck, handleAdminReverseBalance, handleAdminBalanceStressTest } from './handlers/adminReports';
-import { handleRedeemVoucher, handleListVouchers, handleCreateVoucher, handleDeleteVoucher, handleBulkCreateVouchers, handleExtendVoucher, handleLynkIdWebhook } from './handlers/voucher';
+import { handleRedeemVoucher, handleListVouchers, handleCreateVoucher, handleDeleteVoucher, handleBulkCreateVouchers, handleExtendVoucher, handleLicenseActivate, handleLicenseStatus, handleToolLicenseActivate, handleToolLicenseStatus, handleSupportLicenseClaim, handleAdminListLicenseSupport, handleAdminFindLynkPurchasesByEmail, handleAdminApproveLicenseSupport, handleAdminRejectLicenseSupport } from './handlers/voucher';
 import { listTopups, getTopupDetail, manualApproveTopup, deleteTopup, deleteAllTopups, getTopupStatistics, exportTopupCsv } from './handlers/adminTopup';
 import { createPaypalPayment, handlePaypalWebhook, checkPaypalStatus, checkLastLynkIdTransaction, paymentSuccessPage, paymentCancelPage } from './handlers/payment';
 import { verifyToken } from './lib/crypto';
@@ -12,7 +12,7 @@ import { Env } from './types';
 import { getExchangeRate } from './utils/currency';
 import { runValidationTests } from './tests/validationTest';
 import { filterVisionModelPrices } from './utils/modelFilter.js';
-import { handleLynkPurchaseWebhook, processLynkPurchaseRetries, expireBonusTokens } from './handlers/lynkPurchase';
+import { handleLynkPurchaseWebhook, processLynkPurchaseRetries } from './handlers/lynkPurchase';
 
 export type { Env }; // Re-export for handlers if needed, though they should import from types
 
@@ -35,7 +35,6 @@ export default {
 
       const now = Date.now();
       try { await processLynkPurchaseRetries(env, now); } catch {}
-      try { await expireBonusTokens(env, now); } catch {}
     } catch (e) {
       // Silent fail to avoid crashing scheduled event
       console.log('Scheduled rate sync failed:', e);
@@ -80,7 +79,7 @@ export default {
     };
 
     const routeLynkWebhook = async (req: Request): Promise<Response> => {
-      return handleLynkIdWebhook(req, env);
+      return handleLynkPurchaseWebhook(req, env);
     };
 
     const routeLynkPurchaseWebhook = async (req: Request): Promise<Response> => {
@@ -490,6 +489,10 @@ export default {
   if (path === '/admin/vouchers/bulk-create' && method === 'POST') return await wrapCors(handleBulkCreateVouchers(request, env));
   if (path === '/admin/vouchers/extend' && method === 'POST') return await wrapCors(handleExtendVoucher(request, env));
           if (path === '/admin/vouchers/delete' && method === 'POST') return await wrapCors(handleDeleteVoucher(request, env));
+          if (path === '/admin/support/license-claims' && method === 'GET') return await wrapCors(handleAdminListLicenseSupport(request, env));
+          if (path === '/admin/support/lynk-purchases' && method === 'GET') return await wrapCors(handleAdminFindLynkPurchasesByEmail(request, env));
+          if (path === '/admin/support/license-claims/approve' && method === 'POST') return await wrapCors(handleAdminApproveLicenseSupport(request, env));
+          if (path === '/admin/support/license-claims/reject' && method === 'POST') return await wrapCors(handleAdminRejectLicenseSupport(request, env));
 
           // Top-Up Admin Routes
           if (path === '/admin/topup/list' && method === 'GET') return await wrapCors(listTopups(request, env));
@@ -529,6 +532,7 @@ export default {
       
       // --- AUTHENTICATED ROUTES ---
       if (path === '/user/me' && method === 'GET') return await wrapCors(handleGetMe(userId, env));
+      if (path === '/support/license-claim' && method === 'POST') return await wrapCors(handleSupportLicenseClaim(request, env, userId));
       if ((path === '/token/balance' || path === '/user/balance' || path === '/api/v1/wallet/token-balance') && method === 'GET') {
         return await wrapCors(handleBalance(userId, env));
       }
@@ -655,6 +659,11 @@ export default {
         }
       }
       
+      if (path === '/license/status' && method === 'GET') return await wrapCors(handleLicenseStatus(request, env, userId));
+      if (path === '/license/activate' && method === 'POST') return await wrapCors(handleLicenseActivate(request, env, userId));
+      if (path === '/tool/license/status' && method === 'GET') return await wrapCors(handleToolLicenseStatus(request, env, userId));
+      if (path === '/tool/license/activate' && method === 'POST') return await wrapCors(handleToolLicenseActivate(request, env, userId));
+
       // Voucher Redemption
       if (path === '/voucher/redeem' && method === 'POST') return await wrapCors(handleRedeemVoucher(request, env, userId));
 

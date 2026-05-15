@@ -5,11 +5,11 @@ import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
 import Login from './pages/Login'
 import VideoPlayerWindow from './pages/VideoPlayerWindow'
-import { apiCheckLynkIdStatus, apiCheckPaypalStatus, apiGetUserProfile, apiRedeemVoucher, clearTokenLocal, getMachineHash, getTokenLocal, isValidToken, saveTokenLocal } from './api/backend'
+import { apiGetUserProfile, apiLicenseActivate, apiLicenseStatus, clearTokenLocal, getMachineHash, getTokenLocal, isValidToken, saveTokenLocal } from './api/backend'
 import AdminPanel from './pages/AdminPanel'
 import { getApiUrl } from './api/backend'
 import CustomModal from './components/CustomModal'
-import { appWindow } from '@tauri-apps/api/window'
+import { appWindow, WebviewWindow } from '@tauri-apps/api/window'
 import { clearBatchState } from './utils/batchLifecycle'
 import { translations } from './utils/translations'
 import { checkUpdate, installUpdate } from '@tauri-apps/api/updater'
@@ -19,33 +19,12 @@ import { relaunch } from '@tauri-apps/api/process'
 const isTauri = typeof (window as any).__TAURI_IPC__ === 'function'
 
 const MODAL_EVENT_NAME = 'metabayn:modal';
-const PENDING_PAYMENT_KEY = 'metabayn:pendingPayment:v1';
-const LAST_PAYMENT_POPUP_TS_KEY = 'metabayn:lastPaymentPopupTs';
 const LAST_UPDATE_PROMPT_KEY = 'metabayn:lastUpdatePrompt:v1';
+const LICENSE_OPEN_EVENT_NAME = 'metabayn:license:open';
+const LICENSE_CHANGED_EVENT_NAME = 'metabayn:license:changed';
 
 type ModalType = 'success' | 'error' | 'info' | 'warning';
 type ModalEventDetail = { title: string; message: string; type: ModalType; afterClose?: () => void };
-
-type PendingPayment = {
-  method: 'paypal' | 'lynkid';
-  productType: 'token' | 'subscription';
-  productId: string;
-  packageLabel: string;
-  durationLabel?: string;
-  durationDays?: number;
-  tokensExpected?: number;
-  bonusTokensExpected?: number;
-  amountIdr?: number;
-  amountUsd?: number;
-  transactionId?: string | number;
-  since?: number;
-  createdAt: number;
-  snapshot?: {
-    tokens: number;
-    subscription_active: boolean;
-    subscription_expiry: string | null;
-  };
-};
 
 function safeParseJson<T>(raw: string | null): T | null {
   if (!raw) return null;
@@ -86,212 +65,31 @@ function extractEmailFromToken(token: string): string {
   }
 }
 
-function getPendingPayment(): PendingPayment | null {
-  return safeParseJson<PendingPayment>(localStorage.getItem(PENDING_PAYMENT_KEY));
-}
-
-function clearPendingPayment() {
+async function openInAppWeb(url: string, label: string, title: string, opts?: { mobile?: boolean }) {
+  const u = String(url || '').trim()
+  if (!u) return
+  const mobile = !!opts?.mobile
+  if (!isTauri) {
+    try { window.open(u, '_blank', 'noopener,noreferrer') } catch {}
+    return
+  }
   try {
-    localStorage.removeItem(PENDING_PAYMENT_KEY);
+    const existing = WebviewWindow.getByLabel(label)
+    if (existing) {
+      try { await existing.setFocus() } catch {}
+      return
+    }
+    new WebviewWindow(label, {
+      url: u,
+      title: title || 'Metabayn Store',
+      width: mobile ? 520 : 980,
+      height: mobile ? 720 : 720,
+      minWidth: mobile ? 420 : 720,
+      minHeight: 600,
+      resizable: true,
+      focus: true
+    })
   } catch {}
-}
-
-function getProcessedTxIds(): string[] {
-  try {
-    const raw = localStorage.getItem('processed_tx_ids');
-    const parsed = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map((x) => String(x));
-  } catch {
-    return [];
-  }
-}
-
-function markProcessedTxId(id: string) {
-  const next = getProcessedTxIds();
-  if (next.includes(id)) return;
-  next.push(id);
-  if (next.length > 20) next.splice(0, next.length - 20);
-  try {
-    localStorage.setItem('processed_tx_ids', JSON.stringify(next));
-  } catch {}
-}
-
-function detectLynkIdSuccessFromProfile(pending: PendingPayment, profile: any, snapshot: NonNullable<PendingPayment['snapshot']>) {
-  const tokensBefore = Number(snapshot.tokens || 0) || 0;
-  const tokensNow = Number(profile?.tokens || 0) || 0;
-  const tokenDiff = tokensNow - tokensBefore;
-
-  if (pending.productType === 'token') {
-    const expected = Number(pending.tokensExpected || 0) || 0;
-    if (expected > 0 && tokenDiff >= expected) {
-      return { ok: true as const, tokens_added: expected, amount_rp: 0, duration_days: 0, subscription_expiry: null };
-    }
-    return { ok: false as const };
-  }
-
-  const prevExpiryMs = snapshot.subscription_expiry ? new Date(snapshot.subscription_expiry).getTime() : 0;
-  const newExpiryMs = profile?.subscription_expiry ? new Date(profile.subscription_expiry).getTime() : 0;
-  const prevActive = !!snapshot.subscription_active;
-  const newActive = !!(profile?.subscription_active === 1 || profile?.subscription_active === true);
-  const expiryExtended = (newExpiryMs && newExpiryMs > prevExpiryMs) || (!prevActive && newActive);
-
-  if (!expiryExtended) return { ok: false as const };
-
-  const bonusExpected = Number(pending.bonusTokensExpected || 0) || 0;
-  const bonusTokens = bonusExpected > 0 && tokenDiff >= bonusExpected ? bonusExpected : (tokenDiff > 0 ? tokenDiff : 0);
-  const durationDays = Number(pending.durationDays || 0) || 0;
-
-  return {
-    ok: true as const,
-    tokens_added: bonusTokens,
-    amount_rp: 0,
-    duration_days: durationDays,
-    subscription_expiry: profile?.subscription_expiry ? String(profile.subscription_expiry) : null
-  };
-}
-
-function formatIdr(num: number) {
-  return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(num);
-}
-
-function formatUsd(num: number) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(num);
-}
-
-function formatDate(isoOrDate: string | number | Date, lang: 'en' | 'id' = 'en') {
-  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
-  if (Number.isNaN(d.getTime())) return '-';
-  return d.toLocaleDateString(lang === 'id' ? 'id-ID' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-}
-
-function inferSubscriptionLabel(durationDays?: number, lang: 'en' | 'id' = 'en') {
-  const a = (translations as any)[lang]?.app || (translations as any)['en']?.app || {}
-  if (!durationDays || durationDays <= 0) return a.subscriptionLabel || 'Subscription';
-  if (durationDays === 30) return a.duration1Month || '1 Month';
-  if (durationDays === 90) return a.duration3Months || '3 Months';
-  if (durationDays === 180) return a.duration6Months || '6 Months';
-  if (durationDays === 365) return a.duration1Year || '1 Year';
-  return String(a.durationDays || '{value} Days').replace('{value}', String(durationDays));
-}
-
-function validatePayment(pending: PendingPayment, statusRes: any) {
-  if (!pending || !statusRes) return { ok: true as const };
-
-  const inferredType =
-    statusRes?.type ??
-    (statusRes?.duration_days && Number(statusRes.duration_days) > 0 ? 'subscription' :
-     statusRes?.subscription_expiry || statusRes?.subscription_active ? 'subscription' : 'token');
-  const statusType = inferredType === 'subscription' ? 'subscription' : 'token';
-  const pendingType = pending.productType;
-  if (statusType !== pendingType) return { ok: false as const, reason: `Product type mismatch (${pendingType} vs ${statusType})` };
-
-  const tokensAddedRaw = typeof statusRes.tokens_added === 'number' ? statusRes.tokens_added : Number(statusRes.tokens_added);
-  const tokensAdded = Number.isFinite(tokensAddedRaw) ? tokensAddedRaw : null;
-
-  if (pendingType === 'token' && pending.tokensExpected && tokensAdded !== null && tokensAdded > 0) {
-    if (tokensAdded !== pending.tokensExpected) return { ok: false as const, reason: `Token mismatch (${pending.tokensExpected} vs ${tokensAdded})` };
-  }
-
-  if (pendingType === 'subscription' && pending.durationDays) {
-    const durationRaw = typeof statusRes.duration_days === 'number' ? statusRes.duration_days : Number(statusRes.duration_days);
-    const duration = Number.isFinite(durationRaw) ? durationRaw : null;
-    if (duration !== null && duration > 0 && duration !== pending.durationDays) {
-      return { ok: false as const, reason: `Duration mismatch (${pending.durationDays} vs ${duration})` };
-    }
-  }
-
-  const amountUsdRaw = typeof statusRes.amount_usd === 'number' ? statusRes.amount_usd : Number(statusRes.amount_usd);
-  if (pending.method === 'paypal' && pending.amountUsd && Number.isFinite(amountUsdRaw) && amountUsdRaw > 0) {
-    if (Math.abs(amountUsdRaw - pending.amountUsd) > 0.75) return { ok: false as const, reason: `Amount mismatch (${pending.amountUsd} vs ${amountUsdRaw})` };
-  }
-
-  const amountIdrRaw = typeof statusRes.amount_rp === 'number' ? statusRes.amount_rp : Number(statusRes.amount_rp);
-  /* DISABLED PER USER REQUEST: "jika anda deteksi jumlah total pembelian maka jangan gunakan"
-  if (pending.method === 'lynkid' && pending.amountIdr && Number.isFinite(amountIdrRaw) && amountIdrRaw > 0) {
-    // Increased tolerance to 25000 to match backend and account for potential fee variations
-    if (Math.abs(amountIdrRaw - pending.amountIdr) > 25000) {
-        console.warn(`[App] Validation Failed: Amount mismatch. Expected ${pending.amountIdr}, Got ${amountIdrRaw}`);
-        return { ok: false as const, reason: `Amount mismatch (${pending.amountIdr} vs ${amountIdrRaw})` };
-    }
-  }
-  */
-
-  return { ok: true as const };
-}
-
-function buildPaymentModalMessage(
-  pending: PendingPayment,
-  statusRes: any,
-  userProfile: any | null
-): { title: string; message: string; type: ModalType } {
-  const lang = getAppLang()
-  const a = (translations as any)[lang]?.app || (translations as any)['en']?.app || {}
-  const fmt = (template: string, value: any) => String(template || '').replace('{value}', String(value ?? ''))
-  const nf = new Intl.NumberFormat(lang === 'id' ? 'id-ID' : 'en-US')
-  const productType = (pending.productType || statusRes?.type) === 'subscription' ? 'subscription' : 'token';
-
-  const amountUsdRaw = typeof statusRes?.amount_usd === 'number' ? statusRes.amount_usd : Number(statusRes?.amount_usd);
-  const amountIdrRaw = typeof statusRes?.amount_rp === 'number' ? statusRes.amount_rp : Number(statusRes?.amount_rp);
-
-  const paidUsd = Number.isFinite(amountUsdRaw) && amountUsdRaw > 0 ? amountUsdRaw : (pending.amountUsd || 0);
-  const paidIdr = Number.isFinite(amountIdrRaw) && amountIdrRaw > 0 ? amountIdrRaw : (pending.amountIdr || 0);
-
-  const tokensAddedRaw = typeof statusRes?.tokens_added === 'number' ? statusRes.tokens_added : Number(statusRes?.tokens_added);
-  const tokensAdded = Number.isFinite(tokensAddedRaw) ? tokensAddedRaw : 0;
-
-  const durationDaysRaw = typeof statusRes?.duration_days === 'number' ? statusRes.duration_days : Number(statusRes?.duration_days);
-  const durationDays = Number.isFinite(durationDaysRaw) && durationDaysRaw > 0 ? durationDaysRaw : (pending.durationDays || 0);
-  const durationLabel = pending.durationLabel || inferSubscriptionLabel(durationDays, lang);
-
-  const isUsd = pending.method === 'paypal';
-
-  if (productType === 'subscription') {
-    const expiryIso = statusRes?.subscription_expiry || userProfile?.subscription_expiry || null;
-    const startDate = new Date();
-    const expiryDate = expiryIso ? new Date(expiryIso) : (durationDays > 0 ? new Date(startDate.getTime() + durationDays * 24 * 60 * 60 * 1000) : null);
-
-    const lines: string[] = [];
-    lines.push(a.subscriptionActivated || 'Subscription Activated!')
-    lines.push(fmt(a.receiptPackage || 'Package: {value}', pending.packageLabel))
-    lines.push(fmt(a.receiptDuration || 'Duration: {value}', durationLabel))
-    lines.push(fmt(a.receiptStartDate || 'Start Date: {value}', formatDate(startDate, lang)))
-    lines.push(fmt(a.receiptExpirationDate || 'Expiration Date: {value}', expiryDate ? formatDate(expiryDate, lang) : '-'))
-
-    const bonusTokens = Number.isFinite(tokensAddedRaw) ? tokensAdded : (pending.bonusTokensExpected || 0);
-    if (bonusTokens > 0) {
-      lines.push(fmt(a.receiptBonusTokens || 'Bonus Tokens: {value}', nf.format(bonusTokens)))
-    }
-
-    if (isUsd) {
-      if (paidUsd > 0) lines.push(fmt(a.receiptTotalPaid || 'Total Paid: {value}', formatUsd(paidUsd)));
-    } else {
-      if (paidIdr > 0) lines.push(fmt(a.receiptTotalPaid || 'Total Paid: {value}', formatIdr(paidIdr)));
-    }
-
-    return { title: a.receiptSuccessTitle || 'Success', message: lines.join('\n'), type: 'success' };
-  }
-
-  const expectedTokens = pending.tokensExpected || 0;
-  const tokensForDisplay = tokensAdded > 0 ? tokensAdded : expectedTokens;
-
-  const lines: string[] = [];
-  lines.push(a.tokenTopUpSuccessful || 'Token Top-Up Successful!')
-  lines.push(fmt(a.receiptPackage || 'Package: {value}', pending.packageLabel))
-  lines.push(fmt(a.receiptTokensAdded || 'Tokens Added: {value}', nf.format(tokensForDisplay)))
-
-  if (isUsd) {
-    if (paidUsd > 0) lines.push(fmt(a.receiptTotalPaid || 'Total Paid: {value}', formatUsd(paidUsd)));
-  } else {
-    if (paidIdr > 0) lines.push(fmt(a.receiptTotalPaid || 'Total Paid: {value}', formatIdr(paidIdr)));
-  }
-
-  const newBalance = typeof userProfile?.tokens === 'number' ? userProfile.tokens : null;
-  if (newBalance !== null) {
-    lines.push(fmt(a.receiptTotalBalance || 'Total Balance: {value}', nf.format(newBalance)));
-  }
-
-  return { title: a.receiptSuccessTitle || 'Success', message: lines.join('\n'), type: 'success' };
 }
 
 // Error Boundary Component to catch runtime errors
@@ -455,10 +253,18 @@ export default function App(){
   useEffect(() => {
     if (!isTauri) return;
     const onUnhandled = (e: PromiseRejectionEvent) => {
-      e.preventDefault();
+      try {
+        const msg = e?.reason instanceof Error ? e.reason.message : String(e?.reason ?? 'Unhandled promise rejection')
+        console.error('[App] unhandledrejection:', e?.reason)
+        window.dispatchEvent(new CustomEvent(MODAL_EVENT_NAME, { detail: { title: 'Error', message: msg, type: 'error' } }))
+      } catch {}
     };
     const onError = (e: ErrorEvent) => {
-      e.preventDefault();
+      try {
+        const msg = String((e as any)?.message ?? 'Unhandled error')
+        console.error('[App] error:', e?.error || e)
+        window.dispatchEvent(new CustomEvent(MODAL_EVENT_NAME, { detail: { title: 'Error', message: msg, type: 'error' } }))
+      } catch {}
     };
     window.addEventListener('unhandledrejection', onUnhandled);
     window.addEventListener('error', onError);
@@ -628,20 +434,21 @@ export default function App(){
     ;(async () => {
       const profile: any = await apiGetUserProfile(token).catch(() => null);
       if (cancelled || !profile) return;
+      const emailLc = String(profile?.email || '').trim().toLowerCase();
+      const adminFlag = !!(profile && (profile.is_admin === 1 || profile.is_admin === true || emailLc === 'metabayn@gmail.com'));
       const uid = profile?.id ?? profile?.user_id ?? '';
       const userIdStr = uid !== undefined && uid !== null ? String(uid) : '';
-      const active = !!(profile?.subscription_active === 1 || profile?.subscription_active === true);
-      const tokens = Number(profile?.tokens ?? 0) || 0;
-      const redeemedKey = userIdStr ? `metabayn:redeemed_voucher:${userIdStr}` : '';
-      const alreadyRedeemed = redeemedKey ? localStorage.getItem(redeemedKey) === '1' : false;
-      const promptedKey = userIdStr ? `metabayn:voucher_prompted:${userIdStr}` : '';
-      const alreadyPrompted = promptedKey ? localStorage.getItem(promptedKey) === '1' : false;
-      const createdAtRaw = (profile as any)?.created_at;
-      const createdAtSec = typeof createdAtRaw === 'number' ? createdAtRaw : Number(createdAtRaw);
-      const createdAtMs = !isNaN(createdAtSec) && createdAtSec > 0 ? createdAtSec * 1000 : null;
-      const isNewUser = createdAtMs !== null ? (Date.now() - createdAtMs) <= 48 * 60 * 60 * 1000 : false;
+      const deviceHash = await getMachineHash().catch(() => '');
       setRedeemUserId(userIdStr);
-      setRedeemEligible(!active && !alreadyRedeemed && !alreadyPrompted && (tokens <= 0 || isNewUser));
+      if (adminFlag) {
+        setRedeemEligible(false);
+        return;
+      }
+      const licenseRes = userIdStr && deviceHash
+        ? await apiLicenseStatus(token, userIdStr, deviceHash).catch(() => null)
+        : null;
+      const active = !!(licenseRes && licenseRes.active);
+      setRedeemEligible(!active);
     })();
 
     return () => { cancelled = true; };
@@ -684,155 +491,14 @@ export default function App(){
   }, []);
 
   useEffect(() => {
-    if (!token) return;
-
-    let interval: any;
-    let running = false;
-
-    const poll = async () => {
-      if (running) return;
-      running = true;
-      try {
-        const pending = getPendingPayment();
-        if (!pending) return;
-
-        // DEBUG: Log polling attempt
-        // console.log("[App] Polling payment status...", pending);
-
-        const pendingSince = pending.since || pending.createdAt || Date.now();
-
-        let statusRes: any = null;
-        let profileForModal: any | null = null;
-
-        if (pending.method === 'paypal' && pending.transactionId) {
-          statusRes = await apiCheckPaypalStatus(token, pending.transactionId);
-        } else if (pending.method === 'lynkid') {
-          try {
-            statusRes = await apiCheckLynkIdStatus(token, pendingSince, {
-              productType: pending.productType,
-              durationDays: pending.durationDays,
-              tokensExpected: pending.tokensExpected
-            });
-          } catch (e) {
-            statusRes = null;
-          }
-
-          if (statusRes && statusRes.status === 'paid') {
-            profileForModal = await apiGetUserProfile(token).catch(() => null);
-          } else if (pending.snapshot) {
-            const profile = await apiGetUserProfile(token).catch(() => null);
-            if (profile) {
-              const detected = detectLynkIdSuccessFromProfile(pending, profile, pending.snapshot);
-              if (detected.ok) {
-                profileForModal = profile;
-                statusRes = {
-                  status: 'paid',
-                  method: 'lynkid',
-                  id: `lynkid-fallback:${pending.createdAt || pendingSince}`,
-                  type: pending.productType,
-                  tokens_added: detected.tokens_added,
-                  amount_rp: detected.amount_rp,
-                  duration_days: detected.duration_days,
-                  created_at: new Date().toISOString(),
-                  server_time: Date.now(),
-                  subscription_expiry: detected.subscription_expiry || undefined
-                };
-              }
-            }
-          }
-        } else {
-          clearPendingPayment();
-          return;
-        }
-
-        if (statusRes && statusRes.status === 'paid') {
-          const txId = statusRes?.id ? String(statusRes.id) : `paid:${pending.method}:${pending.createdAt || pendingSince}`;
-          if (getProcessedTxIds().includes(txId)) {
-            clearPendingPayment();
-            return;
-          }
-          markProcessedTxId(txId);
-
-          // 2. Server-side Relative Time Check (Optional but good safety)
-          // If server_time is provided, check if transaction is reasonably fresh (e.g. < 20 mins old)
-          // This comparison is SERVER TIME vs SERVER TIME, so client clock doesn't matter.
-          if (statusRes.server_time && statusRes.created_at) {
-              const txTime = new Date(statusRes.created_at).getTime();
-              const serverTime = statusRes.server_time;
-              const ageMs = serverTime - txTime;
-              // If transaction is older than 20 mins, it might be a stale one.
-              // However, if the user just clicked "Buy" and we found a matching amount, maybe it IS the one?
-              // Let's be safe: 30 minutes.
-              if (ageMs > 30 * 60 * 1000) {
-                  // Too old, probably from a previous session. Ignore.
-                  // BUT: Only ignore if we are strict. 
-                  // If we trust "pendingPayment" exists means user just clicked...
-                  // Let's stick to the ID check as the primary guard.
-                  // console.log("Transaction too old:", ageMs);
-                  // return; // Uncomment to enforce freshness
-              }
-          }
-
-          clearPendingPayment();
-
-          const profile = profileForModal || await apiGetUserProfile(token).catch(() => null);
-          if (pending.method === 'lynkid' && pending.snapshot && profile) {
-            const detected = detectLynkIdSuccessFromProfile(pending, profile, pending.snapshot);
-            if (detected.ok) {
-              statusRes = {
-                ...statusRes,
-                type: pending.productType,
-                tokens_added: detected.tokens_added,
-                duration_days: detected.duration_days,
-                subscription_expiry: detected.subscription_expiry || statusRes?.subscription_expiry
-              };
-            }
-          }
-          const validation = validatePayment(pending, statusRes);
-          
-          if (!validation.ok) {
-            localStorage.setItem(LAST_PAYMENT_POPUP_TS_KEY, String(Date.now()));
-            setModalData({
-              title: 'Payment Verified (Validation Failed)',
-              message: `Your payment is verified, but details don't match the selected product.\nReason: ${validation.reason}`,
-              type: 'warning',
-              afterClose: undefined
-            });
-            setModalOpen(true);
-            return;
-          }
-          
-          const modal = buildPaymentModalMessage(pending, statusRes, profile);
-          localStorage.setItem(LAST_PAYMENT_POPUP_TS_KEY, String(Date.now()));
-          setModalData({ 
-            title: modal.title, 
-            message: modal.message, 
-            type: modal.type as any, 
-            afterClose: undefined 
-          });
-          setModalOpen(true);
-
-        } else if (statusRes?.paypal_status === 'CAPTURE_FAILED') {
-          clearPendingPayment();
-          localStorage.setItem(LAST_PAYMENT_POPUP_TS_KEY, String(Date.now()));
-          setModalData({
-            title: 'Payment Failed',
-            message: `Payment Verification Failed.\nReason: ${statusRes?.error_details || 'Unknown error'}`,
-            type: 'error',
-            afterClose: undefined
-          });
-          setModalOpen(true);
-        }
-      } catch (e) {
-        console.error('[App] Payment polling error:', e);
-      } finally {
-        running = false;
-      }
+    const handler = () => {
+      if (!token) return;
+      setRedeemError('');
+      setRedeemCode('');
+      setRedeemOpen(true);
     };
-
-    poll();
-    interval = setInterval(poll, 3000);
-    return () => clearInterval(interval);
+    window.addEventListener(LICENSE_OPEN_EVENT_NAME, handler as any);
+    return () => window.removeEventListener(LICENSE_OPEN_EVENT_NAME, handler as any);
   }, [token]);
 
   async function init(){
@@ -906,7 +572,7 @@ export default function App(){
   async function runRedeemVoucher() {
     const code = redeemCode.trim();
     if (!code) {
-      setRedeemError(lang === 'id' ? 'Masukkan kode voucher.' : 'Enter voucher code.');
+      setRedeemError(lang === 'id' ? 'Masukkan kode lisensi.' : 'Enter license code.');
       return;
     }
     if (!token) return;
@@ -916,14 +582,16 @@ export default function App(){
       const deviceHash = await getMachineHash();
       const userIdStr = redeemUserId;
       if (!userIdStr) throw new Error(lang === 'id' ? 'User ID tidak ditemukan.' : 'User ID not found.');
-      const res = await apiRedeemVoucher(token, code, userIdStr, deviceHash);
-      try {
-        localStorage.setItem(`metabayn:redeemed_voucher:${userIdStr}`, '1');
-      } catch {}
+      const res = await apiLicenseActivate(token, code, userIdStr, deviceHash);
       setRedeemOpen(false);
       setRedeemEligible(false);
+      setRedeemCode('');
+      setRedeemError('');
+      try {
+        window.dispatchEvent(new CustomEvent(LICENSE_CHANGED_EVENT_NAME, { detail: { active: true } }));
+      } catch {}
       setModalData({
-        title: lang === 'id' ? 'Voucher berhasil' : 'Voucher redeemed',
+        title: lang === 'id' ? 'Lisensi berhasil' : 'License activated',
         message: String(res?.message || ''),
         type: 'success',
         afterClose: undefined
@@ -989,7 +657,7 @@ export default function App(){
             )}
 
             {page==='settings'&&<Settings onBack={()=>setPage('dashboard')} lang={lang} />}
-            {page==='admin'&&<AdminPanel onBack={()=>setPage('dashboard')} />}
+            {page==='admin'&&<AdminPanel onBack={()=>setPage('dashboard')} lang={lang} />}
             
         </div>
         <CustomModal
@@ -1039,15 +707,55 @@ export default function App(){
               boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.5)'
             }}>
               <div style={{ color: '#fff', fontSize: 18, fontWeight: 700, marginBottom: 6 }}>
-                {(translations as any)[lang]?.topup?.redeemTitle || 'Tukarkan Voucher'}
+                {lang === 'id' ? 'Aktivasi Lisensi' : 'License Activation'}
               </div>
               <div style={{ color: '#a1a1aa', fontSize: 13, lineHeight: 1.5, marginBottom: 12 }}>
-                {lang === 'id' ? 'Masukkan kode voucher yang dikirim ke email Anda.' : 'Enter the voucher code sent to your email.'}
+                {lang === 'id'
+                  ? 'Masukkan kode lisensi yang dikirim ke email Anda.\nJika ingin membeli lisensi untuk perangkat baru, klik tombol Beli Lisensi.'
+                  : 'Enter the license code sent to your email.\nTo buy a new license for another device, click Buy License.'}
+              </div>
+              <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+                <button
+                  className="btn-click-anim"
+                  onClick={() => { void openInAppWeb('http://lynk.id/metabayn/mxj5l2ydrd9g', 'metabayn-buy-license', 'Lisensi Metabayn', { mobile: true }) }}
+                  disabled={redeemLoading}
+                  style={{
+                    padding: '10px 12px',
+                    backgroundColor: 'transparent',
+                    color: '#fff',
+                    border: '1px solid #3f3f46',
+                    borderRadius: 10,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: redeemLoading ? 'not-allowed' : 'pointer',
+                    opacity: redeemLoading ? 0.6 : 1
+                  }}
+                >
+                  {lang === 'id' ? 'Beli Lisensi' : 'Buy License'}
+                </button>
+                <button
+                  className="btn-click-anim"
+                  onClick={() => { void openInAppWeb('https://lynk.id/metabayn', 'metabayn-store', 'Metabayn Store', { mobile: true }) }}
+                  disabled={redeemLoading}
+                  style={{
+                    padding: '10px 12px',
+                    backgroundColor: 'transparent',
+                    color: '#a1a1aa',
+                    border: '1px solid #27272a',
+                    borderRadius: 10,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: redeemLoading ? 'not-allowed' : 'pointer',
+                    opacity: redeemLoading ? 0.6 : 1
+                  }}
+                >
+                  {lang === 'id' ? 'Lihat Produk' : 'View Products'}
+                </button>
               </div>
               <input
                 value={redeemCode}
                 onChange={(e) => setRedeemCode(e.target.value)}
-                placeholder={(translations as any)[lang]?.topup?.enterCode || 'Masukkan Kode'}
+                placeholder={lang === 'id' ? 'Masukkan Kode Lisensi' : 'Enter License Code'}
                 disabled={redeemLoading}
                 style={{
                   width: '100%',
@@ -1071,7 +779,8 @@ export default function App(){
                   className="btn-click-anim"
                   onClick={() => {
                     setRedeemOpen(false);
-                    setRedeemEligible(false);
+                    setRedeemError('');
+                    setRedeemCode('');
                   }}
                   disabled={redeemLoading}
                   style={{
@@ -1087,7 +796,7 @@ export default function App(){
                     opacity: redeemLoading ? 0.6 : 1
                   }}
                 >
-                  Close
+                  {lang === 'id' ? 'Tutup' : 'Close'}
                 </button>
                 <button
                   className="btn-click-anim"
@@ -1106,7 +815,7 @@ export default function App(){
                     opacity: redeemLoading ? 0.7 : 1
                   }}
                 >
-                  {redeemLoading ? (lang === 'id' ? 'Redeeming...' : 'Redeeming...') : 'Redeem'}
+                  {redeemLoading ? (lang === 'id' ? 'Mengaktifkan...' : 'Activating...') : (lang === 'id' ? 'Aktifkan' : 'Activate')}
                 </button>
               </div>
             </div>

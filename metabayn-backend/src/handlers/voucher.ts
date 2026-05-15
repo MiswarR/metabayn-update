@@ -1,6 +1,6 @@
 
 import { Env } from '../types';
-import { getWelcomeVoucherTemplate, getPurchaseVoucherTemplate, sendEmail, getWelcomeDualVoucherTemplate, getLicenseVoucherTemplate, getTopupSuccessTemplate, getSubscriptionSuccessTemplate } from '../utils/email';
+import { getWelcomeVoucherTemplate, getPurchaseVoucherTemplate, sendEmail, getWelcomeDualVoucherTemplate, getLicenseVoucherTemplate, getToolLicenseVoucherTemplate, getTopupSuccessTemplate, getSubscriptionSuccessTemplate } from '../utils/email';
 import { addUserTokens } from '../utils/userToken';
 
 // --- VOUCHER PACKAGES CONFIGURATION (SMART RANGES) ---
@@ -11,7 +11,12 @@ import { addUserTokens } from '../utils/userToken';
 
 
 // Admin: List Vouchers
-export async function handleListVouchers(_req: Request, env: Env) {
+export async function handleListVouchers(req: Request, env: Env) {
+  const url = new URL(req.url);
+  const typeParam = String(url.searchParams.get('type') || '').trim().toLowerCase();
+  const includeAll = typeParam === 'all' || typeParam === '*';
+  const requestedType = typeParam && !includeAll ? typeParam : 'license';
+
   // 1. Lazy Cleanup: Delete vouchers expired more than 7 days ago
   // We also need to delete associated claims to prevent FK violations (if enforced) or just for cleanup
   try {
@@ -41,7 +46,9 @@ export async function handleListVouchers(_req: Request, env: Env) {
     // Continue listing even if cleanup fails
   }
 
-  const vouchers = await env.DB.prepare("SELECT * FROM vouchers ORDER BY created_at DESC").all();
+  const vouchers = includeAll
+    ? await env.DB.prepare("SELECT * FROM vouchers ORDER BY created_at DESC").all()
+    : await env.DB.prepare("SELECT * FROM vouchers WHERE type = ? ORDER BY created_at DESC").bind(requestedType).all();
   return Response.json(vouchers.results);
 }
 
@@ -96,7 +103,7 @@ export async function handleExtendVoucher(req: Request, env: Env) {
 // Admin: Create Voucher
 export async function handleCreateVoucher(req: Request, env: Env) {
   const body: any = await req.json();
-  const { code, amount, max_usage, expires_at, allowed_emails, type, duration_days } = body;
+  const { code, amount, max_usage, expires_at, allowed_emails, type, duration_days, tool_code } = body;
 
   if (!code) {
     return Response.json({ error: "Missing voucher code" }, { status: 400 });
@@ -133,6 +140,11 @@ export async function handleCreateVoucher(req: Request, env: Env) {
       }
       finalAmount = n;
       finalDurationDays = d;
+  } else if (voucherType === 'tool_license') {
+      const tc = String(tool_code || '').trim().toLowerCase();
+      if (!tc) {
+        return Response.json({ error: "tool_code wajib diisi untuk tool_license vouchers" }, { status: 400 });
+      }
   } else {
       return Response.json({ error: "Invalid voucher type" }, { status: 400 });
   }
@@ -140,7 +152,7 @@ export async function handleCreateVoucher(req: Request, env: Env) {
   try {
     // allowed_emails: "email1@a.com, email2@b.com" -> store as string
     await env.DB.prepare(
-      "INSERT INTO vouchers (code, amount, max_usage, current_usage, expires_at, allowed_emails, type, duration_days, created_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)"
+      "INSERT INTO vouchers (code, amount, max_usage, current_usage, expires_at, allowed_emails, type, duration_days, tool_code, created_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?)"
     ).bind(
       code.toUpperCase(), 
       finalAmount || 0, 
@@ -149,6 +161,7 @@ export async function handleCreateVoucher(req: Request, env: Env) {
       allowed_emails || null, 
       voucherType,
       finalDurationDays || 0,
+      voucherType === 'tool_license' ? String(tool_code || '').trim().toLowerCase() : null,
       new Date().toISOString()
     ).run();
 
@@ -161,7 +174,7 @@ export async function handleCreateVoucher(req: Request, env: Env) {
 // Admin: Bulk Create Vouchers
 export async function handleBulkCreateVouchers(req: Request, env: Env) {
   const body: any = await req.json();
-  const { amount, quantity, max_usage, expires_at, type, duration_days } = body;
+  const { amount, quantity, max_usage, expires_at, type, duration_days, tool_code } = body;
 
   // Validation
   const voucherType = String(type || 'token').trim() || 'token';
@@ -194,6 +207,11 @@ export async function handleBulkCreateVouchers(req: Request, env: Env) {
       }
       finalAmount = n;
       finalDurationDays = d;
+  } else if (voucherType === 'tool_license') {
+      const tc = String(tool_code || '').trim().toLowerCase();
+      if (!tc) {
+        return Response.json({ error: "tool_code wajib diisi untuk tool_license vouchers" }, { status: 400 });
+      }
   } else {
       return Response.json({ error: "Invalid voucher type" }, { status: 400 });
   }
@@ -226,7 +244,7 @@ export async function handleBulkCreateVouchers(req: Request, env: Env) {
     generatedCodes.push(code);
     stmts.push(
       env.DB.prepare(
-        "INSERT INTO vouchers (code, amount, max_usage, current_usage, expires_at, type, duration_days, created_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?)"
+        "INSERT INTO vouchers (code, amount, max_usage, current_usage, expires_at, type, duration_days, tool_code, created_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)"
       ).bind(
           code, 
           finalAmount || 0, 
@@ -234,6 +252,7 @@ export async function handleBulkCreateVouchers(req: Request, env: Env) {
           expires_at || null, 
           voucherType,
           finalDurationDays || 0,
+          voucherType === 'tool_license' ? String(tool_code || '').trim().toLowerCase() : null,
           createdAt
       )
     );
@@ -269,206 +288,671 @@ export async function handleDeleteVoucher(req: Request, env: Env) {
 
 // User: Redeem (Updated)
 export async function handleRedeemVoucher(req: Request, env: Env, authUserId?: string | number) {
-  const body: any = await req.json();
-  const { userId, code, deviceHash } = body;
-  await ensureVoucherTables(env);
+  return Response.json(
+    { error: "Endpoint voucher sudah dinonaktifkan. Gunakan aktivasi lisensi.", error_code: "deprecated" },
+    { status: 410 }
+  );
+}
 
-  if (!userId || !code || !deviceHash) {
-    return Response.json({ error: "Field tidak lengkap", error_code: "missing_fields" }, { status: 400 });
+async function ensureLicenseTables(env: Env) {
+  await ensureVoucherTables(env);
+  try {
+    await env.DB.prepare(
+      `
+      CREATE TABLE IF NOT EXISTS device_licenses (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        device_hash TEXT NOT NULL,
+        voucher_code TEXT NOT NULL,
+        activated_at INTEGER NOT NULL,
+        revoked_at INTEGER,
+        last_seen_at INTEGER
+      );
+      `
+    ).run();
+  } catch {}
+
+  try {
+    await env.DB.prepare("DROP INDEX IF EXISTS idx_device_licenses_device_unique;").run();
+  } catch {}
+  try {
+    await env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_device_licenses_voucher_unique ON device_licenses(voucher_code) WHERE revoked_at IS NULL;").run();
+  } catch {}
+  try {
+    await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_device_licenses_user ON device_licenses(user_id, revoked_at);").run();
+  } catch {}
+  try {
+    await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_device_licenses_device ON device_licenses(device_hash, revoked_at);").run();
+  } catch {}
+}
+
+async function ensureToolLicenseTables(env: Env) {
+  await ensureVoucherTables(env);
+  try {
+    await env.DB.prepare(
+      `
+      CREATE TABLE IF NOT EXISTS device_tool_licenses (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        device_hash TEXT NOT NULL,
+        tool_code TEXT NOT NULL,
+        voucher_code TEXT NOT NULL,
+        activated_at INTEGER NOT NULL,
+        revoked_at INTEGER,
+        last_seen_at INTEGER
+      );
+      `
+    ).run();
+  } catch {}
+
+  try {
+    await env.DB.prepare("DROP INDEX IF EXISTS idx_device_tool_licenses_device_tool_unique;").run();
+  } catch {}
+  try {
+    await env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_device_tool_licenses_voucher_unique ON device_tool_licenses(voucher_code) WHERE revoked_at IS NULL;").run();
+  } catch {}
+  try {
+    await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_device_tool_licenses_user ON device_tool_licenses(user_id, revoked_at);").run();
+  } catch {}
+  try {
+    await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_device_tool_licenses_device_tool ON device_tool_licenses(device_hash, tool_code, revoked_at);").run();
+  } catch {}
+}
+
+export async function handleLicenseStatus(req: Request, env: Env, authUserId?: string | number) {
+  await ensureLicenseTables(env);
+  const url = new URL(req.url);
+  const userIdParam = url.searchParams.get('user_id') || url.searchParams.get('userId');
+  const deviceHash = (url.searchParams.get('device_hash') || url.searchParams.get('deviceHash') || '').trim();
+  const userId = String((authUserId ?? userIdParam) ?? '').trim();
+  if (!userId || !deviceHash) {
+    return Response.json({ error: "Missing fields", error_code: "missing_fields" }, { status: 400 });
   }
-  if (authUserId != null && String(userId) !== String(authUserId)) {
+  if (authUserId != null && String(authUserId) !== String(userId)) {
     return Response.json({ error: "User tidak valid", error_code: "user_mismatch" }, { status: 403 });
   }
 
-  const voucherCode = code.toUpperCase().trim();
+  try {
+    const u: any = await env.DB.prepare("SELECT email, is_admin FROM users WHERE id = ? LIMIT 1").bind(userId).first();
+    const email = String(u?.email || '').trim().toLowerCase();
+    const isAdmin = u && (u.is_admin === 1 || u.is_admin === true || email === 'metabayn@gmail.com');
+    if (isAdmin) {
+      return Response.json({
+        active: true,
+        bound: true,
+        is_admin: true,
+        license_code: 'ADMIN'
+      }, { headers: { "Cache-Control": "no-store" } });
+    }
+  } catch {}
 
-  const globalClaim: any = await env.DB.prepare("SELECT user_id FROM voucher_claims WHERE voucher_code = ? LIMIT 1")
+  const row: any = await env.DB.prepare(
+    "SELECT voucher_code, activated_at, revoked_at FROM device_licenses WHERE user_id = ? AND device_hash = ? AND revoked_at IS NULL ORDER BY activated_at DESC LIMIT 1"
+  ).bind(userId, deviceHash).first();
+
+  if (!row) {
+    return Response.json({ active: false, bound: false }, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  try {
+    await env.DB.prepare("UPDATE device_licenses SET last_seen_at = ? WHERE user_id = ? AND device_hash = ? AND revoked_at IS NULL")
+      .bind(Date.now(), userId, deviceHash)
+      .run();
+  } catch {}
+
+  return Response.json({
+    active: true,
+    bound: true,
+    license_code: String(row.voucher_code || ''),
+    activated_at: Number(row.activated_at || 0) || 0
+  }, { headers: { "Cache-Control": "no-store" } });
+}
+
+export async function handleToolLicenseStatus(req: Request, env: Env, authUserId?: string | number) {
+  await ensureToolLicenseTables(env);
+  const url = new URL(req.url);
+  const userIdParam = url.searchParams.get('user_id') || url.searchParams.get('userId');
+  const deviceHash = (url.searchParams.get('device_hash') || url.searchParams.get('deviceHash') || '').trim();
+  const toolCodeRaw = url.searchParams.get('tool') || url.searchParams.get('tool_code') || url.searchParams.get('toolCode');
+  const toolCode = String(toolCodeRaw || '').trim().toLowerCase();
+  const userId = String((authUserId ?? userIdParam) ?? '').trim();
+  if (!userId || !deviceHash || !toolCode) {
+    return Response.json({ error: "Missing fields", error_code: "missing_fields" }, { status: 400 });
+  }
+  if (authUserId != null && String(authUserId) !== String(userId)) {
+    return Response.json({ error: "User tidak valid", error_code: "user_mismatch" }, { status: 403 });
+  }
+
+  let userEmail = '';
+  try {
+    const u: any = await env.DB.prepare("SELECT email, is_admin FROM users WHERE id = ? LIMIT 1").bind(userId).first();
+    userEmail = String(u?.email || '').trim().toLowerCase();
+    const isAdmin = u && (u.is_admin === 1 || u.is_admin === true || userEmail === 'metabayn@gmail.com');
+    if (isAdmin) {
+      return Response.json({
+        active: true,
+        bound: true,
+        is_admin: true,
+        tool_code: toolCode,
+        license_code: 'ADMIN'
+      }, { headers: { "Cache-Control": "no-store" } });
+    }
+  } catch {}
+
+  const row: any = await env.DB.prepare(
+    "SELECT voucher_code, activated_at, revoked_at FROM device_tool_licenses WHERE user_id = ? AND device_hash = ? AND tool_code = ? AND revoked_at IS NULL ORDER BY activated_at DESC LIMIT 1"
+  ).bind(userId, deviceHash, toolCode).first();
+
+  if (row) {
+    try {
+      await env.DB.prepare("UPDATE device_tool_licenses SET last_seen_at = ? WHERE user_id = ? AND device_hash = ? AND tool_code = ? AND revoked_at IS NULL")
+        .bind(Date.now(), userId, deviceHash, toolCode)
+        .run();
+    } catch {}
+    return Response.json({
+      active: true,
+      bound: true,
+      tool_code: toolCode,
+      license_code: String(row.voucher_code || ''),
+      activated_at: Number(row.activated_at || 0) || 0
+    }, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  if (!userEmail) {
+    return Response.json({ active: false, bound: false, tool_code: toolCode }, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  const voucher: any = await env.DB.prepare(
+    "SELECT code, expires_at, max_usage, current_usage FROM vouchers WHERE type = 'tool_license' AND lower(tool_code) = lower(?) AND lower(allowed_emails) = lower(?) ORDER BY created_at DESC LIMIT 1"
+  ).bind(toolCode, userEmail).first();
+
+  if (!voucher || !voucher.code) {
+    return Response.json({ active: false, bound: false, tool_code: toolCode }, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  const voucherCode = String(voucher.code || '').toUpperCase().trim();
+  const maxUsage = Number(voucher.max_usage || 0) || 0;
+  const currentUsage = Number(voucher.current_usage || 0) || 0;
+  if (maxUsage > 0 && currentUsage >= maxUsage) {
+    return Response.json({ active: false, bound: false, tool_code: toolCode }, { headers: { "Cache-Control": "no-store" } });
+  }
+  if (voucher.expires_at) {
+    const now = new Date();
+    const expiry = new Date(String(voucher.expires_at));
+    if (!Number.isNaN(expiry.getTime()) && now > expiry) {
+      return Response.json({ active: false, bound: false, tool_code: toolCode }, { headers: { "Cache-Control": "no-store" } });
+    }
+  }
+
+  const existingClaim: any = await env.DB.prepare("SELECT user_id FROM voucher_claims WHERE voucher_code = ? LIMIT 1")
+    .bind(voucherCode).first();
+  if (existingClaim) {
+    return Response.json({ active: false, bound: false, tool_code: toolCode }, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  try {
+    const nowMs = Date.now();
+    const licenseId = `tlic_${crypto.randomUUID()}`;
+    const stmts: any[] = [
+      env.DB.prepare("INSERT INTO device_tool_licenses (id, user_id, device_hash, tool_code, voucher_code, activated_at, revoked_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)")
+        .bind(licenseId, userId, deviceHash, toolCode, voucherCode, nowMs, nowMs),
+      env.DB.prepare("INSERT INTO voucher_claims (user_id, voucher_code, device_hash) VALUES (?, ?, ?)").bind(userId, voucherCode, deviceHash),
+      env.DB.prepare("UPDATE vouchers SET current_usage = current_usage + 1 WHERE code = ?").bind(voucherCode)
+    ];
+    await env.DB.batch(stmts);
+    return Response.json({ active: true, bound: true, tool_code: toolCode, license_code: voucherCode, activated_at: nowMs }, { headers: { "Cache-Control": "no-store" } });
+  } catch {
+    return Response.json({ active: false, bound: false, tool_code: toolCode }, { headers: { "Cache-Control": "no-store" } });
+  }
+}
+
+export async function handleLicenseActivate(req: Request, env: Env, authUserId?: string | number) {
+  await ensureLicenseTables(env);
+  let body: any = {};
+  try { body = await req.json(); } catch {}
+  const userId = String((authUserId ?? body.userId ?? body.user_id) ?? '').trim();
+  const deviceHash = String(body.deviceHash ?? body.device_hash ?? '').trim();
+  const codeRaw = String(body.code ?? body.license_code ?? '').trim();
+
+  if (!userId || !deviceHash || !codeRaw) {
+    return Response.json({ error: "Field tidak lengkap", error_code: "missing_fields" }, { status: 400 });
+  }
+  if (authUserId != null && String(authUserId) !== String(userId)) {
+    return Response.json({ error: "User tidak valid", error_code: "user_mismatch" }, { status: 403 });
+  }
+
+  try {
+    const u: any = await env.DB.prepare("SELECT email, is_admin FROM users WHERE id = ? LIMIT 1").bind(userId).first();
+    const email = String(u?.email || '').trim().toLowerCase();
+    const isAdmin = u && (u.is_admin === 1 || u.is_admin === true || email === 'metabayn@gmail.com');
+    if (isAdmin) {
+      return Response.json({ success: true, message: "Admin tidak memerlukan aktivasi lisensi", license_code: 'ADMIN' });
+    }
+  } catch {}
+
+  const voucherCode = codeRaw.toUpperCase().trim();
+
+  const existingVoucher: any = await env.DB.prepare(
+    "SELECT user_id, device_hash FROM device_licenses WHERE voucher_code = ? AND revoked_at IS NULL LIMIT 1"
+  ).bind(voucherCode).first();
+  if (existingVoucher) {
+    const boundUserId = String(existingVoucher.user_id || '').trim();
+    const boundDevice = String(existingVoucher.device_hash || '').trim();
+    if (boundUserId === String(userId) && boundDevice === String(deviceHash)) {
+      return Response.json({ success: true, message: "Lisensi sudah aktif di perangkat ini", license_code: voucherCode });
+    }
+    return Response.json({ error: "Lisensi sudah digunakan di perangkat lain", error_code: "license_already_used" }, { status: 409 });
+  }
+
+  const voucher: any = await env.DB.prepare("SELECT * FROM vouchers WHERE code = ?").bind(voucherCode).first();
+  if (!voucher || String(voucher.type || '') !== 'license') {
+    return Response.json({ error: "Kode lisensi tidak valid", error_code: "invalid_license" }, { status: 404 });
+  }
+  try {
+    const allowed = String(voucher.allowed_emails || '').trim().toLowerCase();
+    if (allowed) {
+      const u: any = await env.DB.prepare("SELECT email FROM users WHERE id = ? LIMIT 1").bind(userId).first();
+      const userEmail = String(u?.email || '').trim().toLowerCase();
+      if (userEmail && allowed !== userEmail) {
+        return Response.json({ error: "Kode lisensi ini tidak untuk email tersebut", error_code: "license_email_mismatch" }, { status: 403 });
+      }
+    }
+  } catch {}
+  if (voucher.expires_at) {
+    const now = new Date();
+    const expiry = new Date(String(voucher.expires_at));
+    if (!Number.isNaN(expiry.getTime()) && now > expiry) {
+      return Response.json({ error: "Lisensi sudah kadaluarsa", error_code: "expired" }, { status: 410 });
+    }
+  }
+
+  const maxUsage = Number(voucher.max_usage || 0) || 0;
+  const currentUsage = Number(voucher.current_usage || 0) || 0;
+  if (maxUsage > 0 && currentUsage >= maxUsage) {
+    return Response.json({ error: "Lisensi sudah digunakan", error_code: "license_already_used" }, { status: 409 });
+  }
+
+  const globalClaim: any = await env.DB.prepare("SELECT user_id, device_hash FROM voucher_claims WHERE voucher_code = ? LIMIT 1")
     .bind(voucherCode).first();
   if (globalClaim) {
-    const claimedBy = String(globalClaim.user_id || '');
-    if (claimedBy && claimedBy === String(userId)) {
-      return Response.json({ error: "Anda sudah pernah menggunakan voucher ini", error_code: "already_redeemed_by_you" }, { status: 409 });
+    const claimUserId = String(globalClaim.user_id || '').trim();
+    const claimDevice = String(globalClaim.device_hash || '').trim();
+    if (claimUserId === String(userId) && claimDevice === String(deviceHash)) {
+      return Response.json({ success: true, message: "Lisensi sudah aktif di perangkat ini", license_code: voucherCode });
     }
-    return Response.json({ error: "Voucher sudah digunakan", error_code: "already_redeemed" }, { status: 409 });
+    return Response.json({ error: "Lisensi sudah digunakan", error_code: "license_already_used" }, { status: 409 });
   }
 
-  // 1. Check Voucher Validity
-  const voucher = await env.DB.prepare("SELECT * FROM vouchers WHERE code = ?").bind(voucherCode).first();
-  if (!voucher) {
-    return Response.json({ error: "Kode voucher tidak valid", error_code: "invalid_voucher_code" }, { status: 404 });
-  }
-
-  // Check Expiry
-  if (voucher.expires_at) {
-      const now = new Date();
-      const expiry = new Date(voucher.expires_at as string);
-      if (now > expiry) {
-          return Response.json({ error: "Voucher sudah kadaluarsa", error_code: "expired" }, { status: 410 });
-      }
-  }
-
-  // Check Usage Limit
-  const maxUsage = voucher.max_usage as number;
-  const currentUsage = voucher.current_usage as number;
-  if (maxUsage > 0 && currentUsage >= maxUsage) {
-    return Response.json({ error: "Voucher sudah digunakan", error_code: "already_redeemed" }, { status: 410 });
-  }
-
-  // Check Whitelist (Allowed Emails)
-  if (voucher.allowed_emails) {
-      const allowedList = (voucher.allowed_emails as string).split(',').map(s => s.trim().toLowerCase());
-      // Need user email. Get from DB or Token (if passed in context, but here we only have userId in body)
-      // We should fetch user email from DB to be safe
-      const user = await env.DB.prepare("SELECT email FROM users WHERE id = ?").bind(userId).first();
-      if (!user || !allowedList.includes((user.email as string).toLowerCase())) {
-          return Response.json({ error: "Voucher ini tidak berlaku untuk akun Anda", error_code: "not_allowed" }, { status: 403 });
-      }
-  }
-
-  // 2. Check if USER already claimed THIS voucher
-  const userClaim = await env.DB.prepare("SELECT * FROM voucher_claims WHERE user_id = ? AND voucher_code = ?")
-    .bind(userId, voucherCode).first();
-  
-  if (userClaim) {
-    return Response.json({ error: "Anda sudah pernah menggunakan voucher ini", error_code: "already_redeemed_by_you" }, { status: 409 });
-  }
-
-  // 3. Check if DEVICE already claimed THIS voucher (Anti-Tuyul)
-  const deviceClaim = await env.DB.prepare("SELECT * FROM voucher_claims WHERE device_hash = ? AND voucher_code = ?")
-    .bind(deviceHash, voucherCode).first();
-
-  if (deviceClaim) {
-    return Response.json({ error: "Perangkat ini sudah pernah menggunakan voucher ini", error_code: "already_redeemed_by_device" }, { status: 403 });
-  }
-
-  // 4. EXECUTE REDEMPTION (Atomic Transaction using Batch)
   try {
-    try {
-      await env.DB.prepare(
-        `
-        CREATE TABLE IF NOT EXISTS bonus_token_grants (
-          id TEXT PRIMARY KEY,
-          user_id TEXT NOT NULL,
-          source TEXT NOT NULL,
-          purchase_id TEXT UNIQUE,
-          amount_tenths INTEGER NOT NULL,
-          remaining_tenths INTEGER NOT NULL,
-          expires_at INTEGER NOT NULL,
-          created_at INTEGER NOT NULL,
-          deleted_at INTEGER
-        );
-        `
-      ).run();
-    } catch {}
-
-    const userUpdateStmts: any[] = [];
-    let successMessage = "";
-    let responseData: any = {};
-
-    if (voucher.type === 'subscription') {
-        // --- SUBSCRIPTION LOGIC ---
-        let durationDays = Number(voucher.duration_days);
-        if (isNaN(durationDays) || durationDays < 1) durationDays = 30;
-        
-        // Get current user subscription status to determine start date
-        const currentUser = await env.DB.prepare("SELECT subscription_expiry FROM users WHERE id = ?").bind(userId).first();
-        
-        let newExpiryDate = new Date();
-        if (currentUser && currentUser.subscription_expiry) {
-            const currentExpiry = new Date(currentUser.subscription_expiry as string);
-            // If current expiry is in the future, extend from there
-            if (currentExpiry > new Date()) {
-                newExpiryDate = currentExpiry;
-            }
-        }
-        
-        // Add duration
-        newExpiryDate.setDate(newExpiryDate.getDate() + durationDays);
-        const newExpiryIso = newExpiryDate.toISOString();
-
-        userUpdateStmts.push(
-            env.DB.prepare("UPDATE users SET subscription_active = 1, subscription_expiry = ? WHERE id = ?")
-                .bind(newExpiryIso, userId)
-        );
-
-        successMessage = `Subscription activated! Valid until ${newExpiryDate.toLocaleDateString()}`;
-        responseData = { subscription_active: true, subscription_expiry: newExpiryIso };
-
-    } else if (voucher.type === 'license') {
-        let durationDays = Number(voucher.duration_days);
-        if (isNaN(durationDays) || durationDays < 1) durationDays = 30;
-
-        let bonusTokens = Number(voucher.amount);
-        if (isNaN(bonusTokens) || bonusTokens < 1) bonusTokens = 50000;
-
-        const currentUser = await env.DB.prepare("SELECT subscription_expiry FROM users WHERE id = ?").bind(userId).first();
-        let newExpiryDate = new Date();
-        if (currentUser && currentUser.subscription_expiry) {
-            const currentExpiry = new Date(currentUser.subscription_expiry as string);
-            if (currentExpiry > new Date()) {
-                newExpiryDate = currentExpiry;
-            }
-        }
-        newExpiryDate.setDate(newExpiryDate.getDate() + durationDays);
-        const newExpiryIso = newExpiryDate.toISOString();
-
-        const expiresAtMs = new Date(newExpiryIso).getTime();
-        const nowMs = Date.now();
-        const amountTenths = Math.round(bonusTokens * 10);
-        const grantId = `grant_${crypto.randomUUID()}`;
-        const purchaseId = `voucher:${voucherCode}:${userId}`;
-
-        userUpdateStmts.push(
-            env.DB.prepare("UPDATE users SET subscription_active = 1, subscription_expiry = ? WHERE id = ?")
-                .bind(newExpiryIso, userId),
-            env.DB.prepare("UPDATE users SET tokens = COALESCE(tokens, 0) + ? WHERE id = ?").bind(bonusTokens, userId),
-            env.DB.prepare(
-              "INSERT OR IGNORE INTO bonus_token_grants (id, user_id, source, purchase_id, amount_tenths, remaining_tenths, expires_at, created_at, deleted_at) VALUES (?, ?, 'voucher_license', ?, ?, ?, ?, ?, NULL)"
-            ).bind(grantId, userId, purchaseId, amountTenths, amountTenths, expiresAtMs, nowMs)
-        );
-
-        successMessage = `License activated! Valid until ${newExpiryDate.toLocaleDateString()} and ${bonusTokens.toLocaleString()} bonus tokens added.`;
-        responseData = { subscription_active: true, subscription_expiry: newExpiryIso, bonus_tokens_added: bonusTokens };
-    } else {
-        // --- TOKEN LOGIC (Default) ---
-        userUpdateStmts.push(
-            // Use COALESCE to handle case where tokens might be NULL (legacy users)
-            env.DB.prepare("UPDATE users SET tokens = COALESCE(tokens, 0) + ? WHERE id = ?").bind(voucher.amount, userId)
-        );
-        successMessage = `Voucher redeemed! ${voucher.amount} tokens added.`;
-        responseData = { amount_added: voucher.amount };
-    }
-
+    const nowMs = Date.now();
+    const licenseId = `lic_${crypto.randomUUID()}`;
     const stmts: any[] = [
+      env.DB.prepare("INSERT INTO device_licenses (id, user_id, device_hash, voucher_code, activated_at, revoked_at, last_seen_at) VALUES (?, ?, ?, ?, ?, NULL, ?)")
+        .bind(licenseId, userId, deviceHash, voucherCode, nowMs, nowMs),
       env.DB.prepare("INSERT INTO voucher_claims (user_id, voucher_code, device_hash) VALUES (?, ?, ?)").bind(userId, voucherCode, deviceHash),
-      env.DB.prepare("UPDATE vouchers SET current_usage = current_usage + 1 WHERE code = ?").bind(voucherCode),
-      ...userUpdateStmts
+      env.DB.prepare("UPDATE vouchers SET current_usage = current_usage + 1 WHERE code = ?").bind(voucherCode)
     ];
-
     await env.DB.batch(stmts);
 
-    // 5. Auto-Delete if Max Usage Reached
-    // User Requirement: "setiap kode voucher yang maksimal usage nya terpenuhi maka otomatis terhapus"
-    // "tidak mempengaruhi token user" -> We already updated user tokens in the batch above.
-    
-    // We check if the NEW usage matches Max Usage.
-    // currentUsage (from DB select) was before increment. So new usage is currentUsage + 1.
+    try {
+      await env.DB.prepare(
+        "UPDATE lynk_purchases SET status = 'activated', activated_at = ?, activation_started_at = COALESCE(activation_started_at, ?), user_id = COALESCE(user_id, ?), updated_at = ? WHERE voucher_code = ? AND deleted_at IS NULL"
+      )
+        .bind(nowMs, nowMs, userId, nowMs, voucherCode)
+        .run();
+    } catch {}
+
     if (maxUsage > 0 && (currentUsage + 1) >= maxUsage) {
-       await env.DB.prepare("DELETE FROM vouchers WHERE code = ?").bind(voucherCode).run();
-       console.log(`Voucher ${voucherCode} auto-deleted (Max usage reached)`);
+      await env.DB.prepare("DELETE FROM vouchers WHERE code = ?").bind(voucherCode).run();
     }
 
-    return Response.json({ 
-        success: true, 
-        message: successMessage,
-        ...responseData
-    });
-
+    return Response.json({ success: true, message: "Lisensi berhasil diaktifkan", license_code: voucherCode });
   } catch (e: any) {
-    console.error("Voucher Redeem Error:", e);
-    // If batch fails, none of the changes are applied (D1 batch is atomic)
-    return Response.json({ error: "Gagal redeem voucher. Silakan coba lagi.", error_code: "redeem_failed" }, { status: 500 });
+    return Response.json({ error: "Gagal aktivasi lisensi", error_code: "activation_failed" }, { status: 500 });
   }
+}
+
+export async function handleToolLicenseActivate(req: Request, env: Env, authUserId?: string | number) {
+  await ensureToolLicenseTables(env);
+  let body: any = {};
+  try { body = await req.json(); } catch {}
+  const userId = String((authUserId ?? body.userId ?? body.user_id) ?? '').trim();
+  const deviceHash = String(body.deviceHash ?? body.device_hash ?? '').trim();
+  const codeRaw = String(body.code ?? body.license_code ?? '').trim();
+  const toolCode = String(body.tool ?? body.tool_code ?? body.toolCode ?? '').trim().toLowerCase();
+
+  if (!userId || !deviceHash || !codeRaw || !toolCode) {
+    return Response.json({ error: "Field tidak lengkap", error_code: "missing_fields" }, { status: 400 });
+  }
+  if (authUserId != null && String(authUserId) !== String(userId)) {
+    return Response.json({ error: "User tidak valid", error_code: "user_mismatch" }, { status: 403 });
+  }
+
+  try {
+    const u: any = await env.DB.prepare("SELECT email, is_admin FROM users WHERE id = ? LIMIT 1").bind(userId).first();
+    const email = String(u?.email || '').trim().toLowerCase();
+    const isAdmin = u && (u.is_admin === 1 || u.is_admin === true || email === 'metabayn@gmail.com');
+    if (isAdmin) {
+      return Response.json({ success: true, message: "Admin tidak memerlukan aktivasi lisensi", license_code: 'ADMIN', tool_code: toolCode });
+    }
+  } catch {}
+
+  const voucherCode = codeRaw.toUpperCase().trim();
+
+  const existingVoucher: any = await env.DB.prepare(
+    "SELECT user_id, device_hash FROM device_tool_licenses WHERE voucher_code = ? AND revoked_at IS NULL LIMIT 1"
+  ).bind(voucherCode).first();
+  if (existingVoucher) {
+    const boundUserId = String(existingVoucher.user_id || '').trim();
+    const boundDevice = String(existingVoucher.device_hash || '').trim();
+    if (boundUserId === String(userId) && boundDevice === String(deviceHash)) {
+      return Response.json({ success: true, message: "Lisensi tools sudah aktif di perangkat ini", license_code: voucherCode, tool_code: toolCode });
+    }
+    return Response.json({ error: "Lisensi tools sudah digunakan di perangkat lain", error_code: "license_already_used" }, { status: 409 });
+  }
+
+  const voucher: any = await env.DB.prepare("SELECT * FROM vouchers WHERE code = ?").bind(voucherCode).first();
+  if (!voucher || String(voucher.type || '') !== 'tool_license' || String(voucher.tool_code || '').trim().toLowerCase() !== toolCode) {
+    return Response.json({ error: "Kode lisensi tools tidak valid", error_code: "invalid_license" }, { status: 404 });
+  }
+
+  try {
+    const allowed = String(voucher.allowed_emails || '').trim().toLowerCase();
+    if (allowed) {
+      const u: any = await env.DB.prepare("SELECT email FROM users WHERE id = ? LIMIT 1").bind(userId).first();
+      const userEmail = String(u?.email || '').trim().toLowerCase();
+      if (userEmail && allowed !== userEmail) {
+        return Response.json({ error: "Kode lisensi ini tidak untuk email tersebut", error_code: "license_email_mismatch" }, { status: 403 });
+      }
+    }
+  } catch {}
+
+  if (voucher.expires_at) {
+    const now = new Date();
+    const expiry = new Date(String(voucher.expires_at));
+    if (!Number.isNaN(expiry.getTime()) && now > expiry) {
+      return Response.json({ error: "Lisensi sudah kadaluarsa", error_code: "expired" }, { status: 410 });
+    }
+  }
+
+  const maxUsage = Number(voucher.max_usage || 0) || 0;
+  const currentUsage = Number(voucher.current_usage || 0) || 0;
+  if (maxUsage > 0 && currentUsage >= maxUsage) {
+    return Response.json({ error: "Lisensi sudah digunakan", error_code: "license_already_used" }, { status: 409 });
+  }
+
+  const globalClaim: any = await env.DB.prepare("SELECT user_id, device_hash FROM voucher_claims WHERE voucher_code = ? LIMIT 1")
+    .bind(voucherCode).first();
+  if (globalClaim) {
+    const claimUserId = String(globalClaim.user_id || '').trim();
+    const claimDevice = String(globalClaim.device_hash || '').trim();
+    if (claimUserId === String(userId) && claimDevice === String(deviceHash)) {
+      return Response.json({ success: true, message: "Lisensi tools sudah aktif di perangkat ini", license_code: voucherCode, tool_code: toolCode });
+    }
+    return Response.json({ error: "Lisensi sudah digunakan", error_code: "license_already_used" }, { status: 409 });
+  }
+
+  try {
+    const nowMs = Date.now();
+    const licenseId = `tlic_${crypto.randomUUID()}`;
+    const stmts: any[] = [
+      env.DB.prepare("INSERT INTO device_tool_licenses (id, user_id, device_hash, tool_code, voucher_code, activated_at, revoked_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)")
+        .bind(licenseId, userId, deviceHash, toolCode, voucherCode, nowMs, nowMs),
+      env.DB.prepare("INSERT INTO voucher_claims (user_id, voucher_code, device_hash) VALUES (?, ?, ?)").bind(userId, voucherCode, deviceHash),
+      env.DB.prepare("UPDATE vouchers SET current_usage = current_usage + 1 WHERE code = ?").bind(voucherCode)
+    ];
+    await env.DB.batch(stmts);
+
+    if (maxUsage > 0 && (currentUsage + 1) >= maxUsage) {
+      await env.DB.prepare("DELETE FROM vouchers WHERE code = ?").bind(voucherCode).run();
+    }
+
+    return Response.json({ success: true, message: "Lisensi tools berhasil diaktifkan", license_code: voucherCode, tool_code: toolCode });
+  } catch {
+    return Response.json({ error: "Gagal aktivasi lisensi", error_code: "activation_failed" }, { status: 500 });
+  }
+}
+
+async function ensureLicenseSupportTables(env: Env) {
+  try {
+    await env.DB.prepare(
+      `
+      CREATE TABLE IF NOT EXISTS license_support_requests (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        account_email TEXT NOT NULL,
+        purchase_email TEXT NOT NULL,
+        product_code TEXT,
+        purchase_time_hint TEXT,
+        amount_hint TEXT,
+        note TEXT,
+        admin_note TEXT,
+        selected_voucher_code TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      `
+    ).run();
+  } catch {}
+
+  try { await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_license_support_status_created ON license_support_requests(status, created_at);").run(); } catch {}
+  try { await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_license_support_user ON license_support_requests(user_id, created_at);").run(); } catch {}
+  try { await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_license_support_purchase_email ON license_support_requests(purchase_email, created_at);").run(); } catch {}
+}
+
+function normalizeEmailValue(v: any) {
+  return String(v ?? '').trim().toLowerCase();
+}
+
+function isValidEmailValue(email: string) {
+  return /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(String(email || ''));
+}
+
+export async function handleSupportLicenseClaim(req: Request, env: Env, authUserId?: string | number) {
+  await ensureLicenseSupportTables(env);
+  let body: any = {};
+  try { body = await req.json(); } catch {}
+
+  const userId = String(authUserId ?? '').trim();
+  const purchaseEmail = normalizeEmailValue(body.purchase_email ?? body.purchaseEmail);
+  const productCode = String(body.product_code ?? body.productCode ?? '').trim().toLowerCase();
+  const purchaseTimeHint = String(body.purchase_time_hint ?? body.purchaseTimeHint ?? '').trim();
+  const amountHint = String(body.amount_hint ?? body.amountHint ?? '').trim();
+  const note = String(body.note ?? body.message ?? '').trim();
+
+  if (!userId || !purchaseEmail) {
+    return Response.json({ error: "Field tidak lengkap", error_code: "missing_fields" }, { status: 400 });
+  }
+  if (!isValidEmailValue(purchaseEmail)) {
+    return Response.json({ error: "Email pembelian tidak valid", error_code: "invalid_email" }, { status: 422 });
+  }
+
+  const allowedProduct = productCode === 'license' || productCode === 'prompt_grabber';
+  const normalizedProduct = allowedProduct ? productCode : '';
+
+  try {
+    const u: any = await env.DB.prepare("SELECT email FROM users WHERE id = ? LIMIT 1").bind(userId).first();
+    const accountEmail = normalizeEmailValue(u?.email || '');
+    if (!accountEmail) return Response.json({ error: "Akun tidak valid", error_code: "account_invalid" }, { status: 403 });
+
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    const cntRow: any = await env.DB.prepare(
+      "SELECT COUNT(1) AS c FROM license_support_requests WHERE user_id = ? AND created_at >= ?"
+    ).bind(userId, since).first();
+    const c = Number(cntRow?.c ?? 0) || 0;
+    if (c >= 5) {
+      return Response.json({ error: "Terlalu banyak permintaan. Coba lagi besok.", error_code: "rate_limited" }, { status: 429 });
+    }
+
+    const id = `lsr_${crypto.randomUUID()}`;
+    const now = Date.now();
+    await env.DB.prepare(
+      `
+      INSERT INTO license_support_requests
+      (id, status, user_id, account_email, purchase_email, product_code, purchase_time_hint, amount_hint, note, admin_note, selected_voucher_code, created_at, updated_at)
+      VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+      `
+    ).bind(
+      id,
+      userId,
+      accountEmail,
+      purchaseEmail,
+      normalizedProduct || null,
+      purchaseTimeHint || null,
+      amountHint || null,
+      note ? note.slice(0, 4000) : null,
+      now,
+      now
+    ).run();
+
+    return Response.json({ success: true, request_id: id, status: 'pending' });
+  } catch (e: any) {
+    return Response.json({ error: "Gagal mengirim permintaan", error_code: "request_failed" }, { status: 500 });
+  }
+}
+
+export async function handleAdminListLicenseSupport(req: Request, env: Env) {
+  await ensureLicenseSupportTables(env);
+  const url = new URL(req.url);
+  const status = String(url.searchParams.get('status') || 'pending').trim().toLowerCase();
+  const q = String(url.searchParams.get('q') || '').trim().toLowerCase();
+  const limitRaw = Number(url.searchParams.get('limit') || 100);
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(Math.floor(limitRaw), 200)) : 100;
+
+  const where: string[] = [];
+  const binds: any[] = [];
+  if (status && status !== 'all' && status !== '*') {
+    where.push("status = ?");
+    binds.push(status);
+  }
+  if (q) {
+    where.push("(lower(account_email) LIKE ? OR lower(purchase_email) LIKE ? OR lower(note) LIKE ? OR lower(product_code) LIKE ?)");
+    binds.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  const rows = await env.DB.prepare(
+    `
+    SELECT *
+    FROM license_support_requests
+    ${whereSql}
+    ORDER BY created_at DESC
+    LIMIT ?
+    `
+  ).bind(...binds, limit).all();
+
+  return Response.json({ results: rows?.results || [] });
+}
+
+export async function handleAdminFindLynkPurchasesByEmail(req: Request, env: Env) {
+  const url = new URL(req.url);
+  const email = normalizeEmailValue(url.searchParams.get('email') || '');
+  const limitRaw = Number(url.searchParams.get('limit') || 30);
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(Math.floor(limitRaw), 100)) : 30;
+  if (!email || !isValidEmailValue(email)) {
+    return Response.json({ error: "Email tidak valid", error_code: "invalid_email" }, { status: 422 });
+  }
+
+  const rows = await env.DB.prepare(
+    `
+    SELECT id, idempotency_key, product_ref, email, voucher_code, payment_status, purchase_ts, status, email_status, email_last_error, created_at, updated_at
+    FROM lynk_purchases
+    WHERE deleted_at IS NULL AND lower(email) = lower(?)
+    ORDER BY purchase_ts DESC, created_at DESC
+    LIMIT ?
+    `
+  ).bind(email, limit).all();
+
+  return Response.json({ results: rows?.results || [] });
+}
+
+export async function handleAdminApproveLicenseSupport(req: Request, env: Env) {
+  await ensureLicenseSupportTables(env);
+  let body: any = {};
+  try { body = await req.json(); } catch {}
+  const ticketId = String(body.ticket_id ?? body.ticketId ?? '').trim();
+  const voucherCodeRaw = String(body.voucher_code ?? body.voucherCode ?? '').trim();
+  const newEmail = normalizeEmailValue(body.new_email ?? body.newEmail ?? '');
+  const resend = body.resend === true || String(body.resend || '') === '1';
+
+  if (!ticketId || !voucherCodeRaw || !newEmail) {
+    return Response.json({ error: "Field tidak lengkap", error_code: "missing_fields" }, { status: 400 });
+  }
+  if (!isValidEmailValue(newEmail)) {
+    return Response.json({ error: "Email baru tidak valid", error_code: "invalid_email" }, { status: 422 });
+  }
+
+  const voucherCode = voucherCodeRaw.toUpperCase().trim();
+  const ticket: any = await env.DB.prepare("SELECT * FROM license_support_requests WHERE id = ? LIMIT 1").bind(ticketId).first();
+  if (!ticket) return Response.json({ error: "Request tidak ditemukan", error_code: "not_found" }, { status: 404 });
+  if (String(ticket.status || '') !== 'pending') {
+    return Response.json({ error: "Request sudah diproses", error_code: "already_processed" }, { status: 409 });
+  }
+
+  const voucher: any = await env.DB.prepare("SELECT * FROM vouchers WHERE code = ? LIMIT 1").bind(voucherCode).first();
+  if (!voucher) return Response.json({ error: "Voucher tidak ditemukan", error_code: "voucher_not_found" }, { status: 404 });
+
+  try {
+    await env.DB.prepare("UPDATE vouchers SET allowed_emails = ? WHERE code = ?").bind(newEmail, voucherCode).run();
+  } catch (e: any) {
+    return Response.json({ error: "Gagal update voucher", error_code: "voucher_update_failed" }, { status: 500 });
+  }
+
+  try {
+    await env.DB.prepare("UPDATE lynk_purchases SET email = ?, updated_at = ? WHERE voucher_code = ? AND deleted_at IS NULL")
+      .bind(newEmail, Date.now(), voucherCode)
+      .run();
+  } catch {}
+
+  const now = Date.now();
+  try {
+    await env.DB.prepare(
+      "UPDATE license_support_requests SET status = 'approved', selected_voucher_code = ?, admin_note = ?, updated_at = ? WHERE id = ?"
+    )
+      .bind(voucherCode, `approved:${newEmail}`, now, ticketId)
+      .run();
+  } catch {}
+
+  if (resend) {
+    try {
+      const vType = String(voucher.type || '').trim().toLowerCase();
+      const toolCode = String(voucher.tool_code || '').trim().toLowerCase();
+      const subject = vType === 'tool_license'
+        ? `Kode Lisensi Tools ${toolCode === 'prompt_grabber' ? 'Prompt Grabber' : 'Metabayn'} (1 Perangkat)`
+        : 'Kode Lisensi Metabayn (1 Perangkat)';
+      const html = vType === 'tool_license'
+        ? getToolLicenseVoucherTemplate(newEmail, voucherCode, toolCode === 'prompt_grabber' ? 'Tools Prompt Grabber' : 'Tools')
+        : getLicenseVoucherTemplate(newEmail, voucherCode, 0, 0);
+      await sendEmail(newEmail, subject, html, env);
+    } catch {}
+  }
+
+  return Response.json({ success: true, status: 'approved', voucher_code: voucherCode, new_email: newEmail, resent: resend });
+}
+
+export async function handleAdminRejectLicenseSupport(req: Request, env: Env) {
+  await ensureLicenseSupportTables(env);
+  let body: any = {};
+  try { body = await req.json(); } catch {}
+  const ticketId = String(body.ticket_id ?? body.ticketId ?? '').trim();
+  const adminNote = String(body.admin_note ?? body.adminNote ?? '').trim();
+  if (!ticketId) {
+    return Response.json({ error: "Field tidak lengkap", error_code: "missing_fields" }, { status: 400 });
+  }
+  const ticket: any = await env.DB.prepare("SELECT status FROM license_support_requests WHERE id = ? LIMIT 1").bind(ticketId).first();
+  if (!ticket) return Response.json({ error: "Request tidak ditemukan", error_code: "not_found" }, { status: 404 });
+  if (String(ticket.status || '') !== 'pending') {
+    return Response.json({ error: "Request sudah diproses", error_code: "already_processed" }, { status: 409 });
+  }
+
+  await env.DB.prepare(
+    "UPDATE license_support_requests SET status = 'rejected', admin_note = ?, updated_at = ? WHERE id = ?"
+  )
+    .bind(adminNote ? adminNote.slice(0, 2000) : 'rejected', Date.now(), ticketId)
+    .run();
+
+  return Response.json({ success: true, status: 'rejected' });
 }
 
 export async function handleLynkIdWebhook(req: Request, env: Env) {
@@ -698,26 +1182,52 @@ export async function handleLynkIdWebhook(req: Request, env: Env) {
     .replace(/[\u2012\u2013\u2014\u2015–]/g, '-')
     .replace(/\s+/g, ' ')
     .trim();
-
-  const TITLE_MAP: Record<string, any> = {
-    [normalizeTitle("Metabayn – Smart Metadata Generator App for Images & Videos")]: { type: 'license', amount: 50000, duration: 30 },
-    [normalizeTitle("Metabayn - Smart Metadata Agent")]: { type: 'license', amount: 50000, duration: 30 },
-    [normalizeTitle("Metabayn Token 20.000 – Credit Top-Up for Metadata Processing")]: { type: 'token', amount: 20000 },
-    [normalizeTitle("Metabayn Token 50.000 – Credit Top-Up for Metadata Processing")]: { type: 'token', amount: 50000 },
-    [normalizeTitle("Metabayn Token 100.000 – Credit Top-Up for Metadata Processing")]: { type: 'token', amount: 100000 },
-    [normalizeTitle("Metabayn Token 150.000 – Credit Top-Up for Metadata Processing")]: { type: 'token', amount: 150000 },
-    [normalizeTitle("Metabayn Subscription - 30 Days")]: { type: 'subscription', duration: 30 },
-    [normalizeTitle("Metabayn Subscription - 3 Months")]: { type: 'subscription', duration: 90 },
-    [normalizeTitle("Metabayn Subscription - 6 Months")]: { type: 'subscription', duration: 180 },
-    [normalizeTitle("Metabayn Subscription - 1 Year")]: { type: 'subscription', duration: 365 }
+  const normalizeCompact = (s: string) => normalizeTitle(s).replace(/[^a-z0-9]/g, '');
+  const includesAny = (hay: string, needles: string[]) => {
+    const h = normalizeCompact(hay);
+    if (!h) return false;
+    for (const n of needles) {
+      const nn = normalizeCompact(n);
+      if (nn && h.includes(nn)) return true;
+    }
+    return false;
+  };
+  const collectItemHints = (item: any): string[] => {
+    const hints: any[] = [];
+    const add = (v: any) => { if (typeof v === 'string' && v.trim()) hints.push(v); };
+    add(item?.title);
+    add(item?.name);
+    add(item?.product_name);
+    add(item?.productName);
+    add(item?.product);
+    add(item?.product_ref);
+    add(item?.productRef);
+    add(item?.ref);
+    add(item?.sku);
+    add(item?.slug);
+    add(item?.url);
+    add(item?.link);
+    add(item?.href);
+    add(item?.id);
+    add(item?.item_id);
+    add(item?.itemId);
+    return hints.map((x) => String(x));
   };
 
-  const tokenGrants: Array<{ amount: number; titleNormalized: string; logLabel: string }> = [];
+  const TITLE_MAP: Record<string, any> = {
+    [normalizeTitle("Metabayn – Smart Metadata Generator App for Images & Videos")]: { type: 'license' },
+    [normalizeTitle("Metabayn - Smart Metadata Agent")]: { type: 'license' }
+  };
+
   const results: any[] = [];
   let totalAmountRp = 0;
-  let totalSubscriptionDays = 0;
-  let maxDurationDays = 0;
   let hasLicenseItem = false;
+  const rawString = (() => { try { return JSON.stringify(body || {}).toLowerCase(); } catch { return ''; } })();
+  const productRefMatched = rawString.includes('851png1z505m');
+  let hasPromptGrabberItem = false;
+  const promptGrabberRefMatched = rawString.includes('wp6d9o37o51d');
+  const promptGrabberNeedles = ['prompt grabber', 'promptgrabber', 'prompt_grabber', 'wp6d9o37o51d'];
+  const messageTitleHint = String(messageData?.title || messageData?.product?.title || '').trim();
 
   for (const item of items) {
     const title = item.title || "";
@@ -734,25 +1244,15 @@ export async function handleLynkIdWebhook(req: Request, env: Env) {
     totalAmountRp += price;
 
     const titleNormalized = normalizeTitle(title);
-    const titleLower = String(title || '').toLowerCase();
 
     let matched = false;
-    let voucherType: 'token' | 'subscription' | 'license' = 'token';
-    let tokenAmount = 0;
-    let subscriptionDuration = 0;
+    let voucherType: 'license' | null = null;
 
     if (TITLE_MAP[titleNormalized]) {
       matched = true;
       const mapData = TITLE_MAP[titleNormalized];
-      voucherType = mapData.type || 'token';
-      if (voucherType === 'subscription') {
-        subscriptionDuration = Number(mapData.duration || 0) || 0;
-      } else if (voucherType === 'license') {
-        subscriptionDuration = Number(mapData.duration || 30) || 30;
-        tokenAmount = Number(mapData.amount || 0) || 0;
-      } else {
-        tokenAmount = Number(mapData.amount || 0) || 0;
-      }
+      voucherType = mapData.type === 'license' ? 'license' : null;
+      if (voucherType === 'license') hasLicenseItem = true;
     }
 
     if (!matched) {
@@ -763,362 +1263,146 @@ export async function handleLynkIdWebhook(req: Request, env: Env) {
       if (isSmartMetadataAgent) {
         matched = true;
         voucherType = 'license';
-        subscriptionDuration = 30;
-        tokenAmount = 50000;
-      } else if (titleLower.includes('subscription') || titleLower.includes('langganan')) {
+        hasLicenseItem = true;
+      }
+    }
+
+    if (!matched) {
+      const itemHints = collectItemHints(item);
+      if (messageTitleHint) itemHints.push(messageTitleHint);
+      const isPromptGrabber =
+        includesAny(title, promptGrabberNeedles) ||
+        includesAny(messageTitleHint, promptGrabberNeedles) ||
+        itemHints.some((h) => includesAny(h, promptGrabberNeedles));
+      if (isPromptGrabber) {
+        hasPromptGrabberItem = true;
         matched = true;
-        voucherType = 'subscription';
-        if (titleLower.includes('1 year') || titleLower.includes('tahun')) {
-          subscriptionDuration = 365;
-        } else if (titleLower.includes('6 month') || titleLower.includes('6 bulan')) {
-          subscriptionDuration = 180;
-        } else if (titleLower.includes('3 month') || titleLower.includes('3 bulan')) {
-          subscriptionDuration = 90;
-        } else {
-          subscriptionDuration = 30;
-        }
-      } else if (titleLower.includes('token')) {
-        voucherType = 'token';
-        const allowedTokenAmounts = new Set([20000, 50000, 100000, 150000]);
-        const normalizeDigits = (s: string) => s.replace(/[^\d]/g, '');
-
-        let parsed = 0;
-
-        const rbMatch = titleLower.match(/(\d{1,3})\s*(rb|ribu)\b/i);
-        if (rbMatch?.[1]) {
-          const base = Number(rbMatch[1]);
-          if (Number.isFinite(base) && base > 0) parsed = base * 1000;
-        }
-
-        if (!parsed) {
-          const sepMatch = titleLower.match(/(\d{1,3}(?:[.,]\s*\d{3})+)\b/);
-          const digits = sepMatch?.[1] ? normalizeDigits(String(sepMatch[1])) : '';
-          const num = digits ? Number(digits) : 0;
-          if (Number.isFinite(num) && num > 0) parsed = num;
-        }
-
-        if (!parsed) {
-          const tokenDigitsMatch = titleLower.match(/token[\s\-_:]*.*?(\d{1,6})\b/i);
-          const digits = tokenDigitsMatch?.[1] ? normalizeDigits(String(tokenDigitsMatch[1])) : '';
-          const num = digits ? Number(digits) : 0;
-          if (Number.isFinite(num) && num > 0) {
-            parsed = num < 1000 && (num === 20 || num === 50 || num === 100 || num === 150) ? num * 1000 : num;
-          }
-        }
-
-        if (allowedTokenAmounts.has(parsed)) {
-          matched = true;
-          tokenAmount = parsed;
-        }
       }
     }
 
     if (!matched) continue;
-
-    if (subscriptionDuration > 0) {
-      totalSubscriptionDays += subscriptionDuration;
-      maxDurationDays = Math.max(maxDurationDays, subscriptionDuration);
-    }
-
-    if (tokenAmount > 0) {
-      if (voucherType === 'license') hasLicenseItem = true;
-      tokenGrants.push({
-        amount: tokenAmount,
-        titleNormalized,
-        logLabel: voucherType === 'license' ? 'Voucher' : 'Top-up'
-      });
-    }
+    if (voucherType === 'license') hasLicenseItem = true;
   }
 
-  const totalTokenAmount = tokenGrants.reduce((sum, g) => sum + (Number(g.amount) || 0), 0);
-  const totalTokensAdded = totalTokenAmount;
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 30);
+  if (!hasLicenseItem && productRefMatched) {
+    hasLicenseItem = true;
+  }
+
+  if (!hasPromptGrabberItem && promptGrabberRefMatched) {
+    hasPromptGrabberItem = true;
+  }
+
+  if (!hasLicenseItem && !hasPromptGrabberItem) {
+    return Response.json({ success: true, ignored: true, reason: 'unsupported_product', order_id: orderId || null });
+  }
 
   const user = await env.DB.prepare("SELECT id FROM users WHERE lower(email) = lower(?)").bind(email).first();
 
-  if (totalTokenAmount > 0 || totalSubscriptionDays > 0) {
+  if (hasLicenseItem || hasPromptGrabberItem) {
     const nowMs = Date.now();
     const idempotencyKey = orderId || (body?.event_id ? String(body.event_id) : `lynkid:${nowMs}`);
     const purchaseId = existingPurchase?.id ? String(existingPurchase.id) : crypto.randomUUID();
     const productRef = normalizeTitle(items[0]?.title || '');
 
-    const purchaseKind: 'license' | 'subscription' | 'token' =
-      hasLicenseItem ? 'license' : (totalSubscriptionDays > 0 ? 'subscription' : 'token');
+    const voucherCode = existingPurchase?.voucher_code ? String(existingPurchase.voucher_code) : generateCode();
+    const voucherTypeFinal: 'license' | 'tool_license' = hasLicenseItem ? 'license' : 'tool_license';
+    const toolCodeFinal = voucherTypeFinal === 'tool_license' ? 'prompt_grabber' : null;
 
-    if (purchaseKind === 'license') {
-      const voucherCode = existingPurchase?.voucher_code ? String(existingPurchase.voucher_code) : generateCode();
-
-      if (!existingPurchase) {
-        try {
-          await env.DB.prepare(
-            `
-            INSERT INTO lynk_purchases
-            (id, idempotency_key, provider, product_ref, email, voucher_code, payment_status, purchase_ts, status, user_id, activated_at, activation_started_at, raw_payload, signature_status, email_status, email_last_error, failure_count, next_retry_at, last_error, created_at, updated_at, deleted_at)
-            VALUES (?, ?, 'lynkid', ?, ?, ?, ?, ?, 'voucher_pending', ?, NULL, NULL, ?, NULL, 'pending', NULL, 0, NULL, NULL, ?, ?, NULL)
-            `
-          )
-            .bind(
-              purchaseId,
-              idempotencyKey,
-              productRef,
-              email,
-              voucherCode,
-              eventNorm,
-              nowMs,
-              user?.id ? String((user as any).id) : null,
-              JSON.stringify(body),
-              nowMs,
-              nowMs
-            )
-            .run();
-        } catch {}
-      } else if (!existingPurchase?.voucher_code) {
-        try {
-          await env.DB.prepare("UPDATE lynk_purchases SET voucher_code = ?, updated_at = ? WHERE id = ?")
-            .bind(voucherCode, nowMs, purchaseId)
-            .run();
-        } catch {}
-      } else if (user?.id) {
-        try {
-          await env.DB.prepare("UPDATE lynk_purchases SET user_id = ?, updated_at = ? WHERE id = ?")
-            .bind(String((user as any).id), nowMs, purchaseId)
-            .run();
-        } catch {}
-      }
-
+    if (!existingPurchase) {
       try {
         await env.DB.prepare(
-          "INSERT OR IGNORE INTO vouchers (code, amount, max_usage, current_usage, expires_at, allowed_emails, type, duration_days, created_at) VALUES (?, ?, 1, 0, ?, ?, 'license', ?, ?)"
-        ).bind(
-          voucherCode,
-          totalTokenAmount,
-          expiresAt.toISOString(),
-          email,
-          totalSubscriptionDays || 30,
-          new Date().toISOString()
-        ).run();
-      } catch {}
-
-      const emailSubject = 'Kode Voucher Metabayn';
-      const emailHtml = getLicenseVoucherTemplate(email, voucherCode, totalSubscriptionDays || 30, totalTokenAmount);
-
-      let emailOutcome: 'sent' | 'failed' | 'skipped_test_mode' = 'sent';
-      let emailError: string | null = null;
-
-      try {
-        await sendEmailFn(email, emailSubject, emailHtml, env);
-        try {
-          await env.DB.prepare(
-            "UPDATE lynk_purchases SET email_status = 'sent', email_last_error = NULL, status = 'voucher_sent', next_retry_at = NULL, updated_at = ? WHERE id = ?"
-          )
-            .bind(nowMs, purchaseId)
-            .run();
-        } catch {}
-      } catch (e: any) {
-        emailOutcome = 'failed';
-        const msg = e instanceof Error ? e.message : String(e);
-        emailError = msg.slice(0, 2000);
-        const prevFc = Number(existingPurchase?.failure_count ?? 0);
-        const nextFc = prevFc + 1;
-        const backoffMs = Math.min(60 * 60 * 1000, 30_000 * Math.pow(2, Math.min(6, nextFc)));
-        const nextRetryAt = nowMs + backoffMs;
-        try {
-          await env.DB.prepare(
-            "UPDATE lynk_purchases SET email_status = 'failed', email_last_error = ?, failure_count = ?, next_retry_at = ?, updated_at = ? WHERE id = ?"
-          )
-            .bind(emailError, nextFc, nextRetryAt, nowMs, purchaseId)
-            .run();
-        } catch {}
-        console.error("Failed to send Lynk.id voucher email:", e);
-      }
-
-      results.push({
-        code: voucherCode,
-        type: 'license',
-        amount: totalTokenAmount,
-        duration: totalSubscriptionDays || 30
-      });
-
-      if (isEmailTestMode) {
-        emailOutcome = 'skipped_test_mode';
-        emailError = null;
-      }
-
-    } else {
-      if (!user?.id) {
-        try {
-          if (!existingPurchase) {
-            await env.DB.prepare(
-              `
-              INSERT INTO lynk_purchases
-              (id, idempotency_key, provider, product_ref, email, voucher_code, payment_status, purchase_ts, status, user_id, activated_at, activation_started_at, raw_payload, signature_status, email_status, email_last_error, failure_count, next_retry_at, last_error, created_at, updated_at, deleted_at)
-              VALUES (?, ?, 'lynkid', ?, ?, NULL, ?, ?, 'pending_apply', NULL, NULL, NULL, ?, NULL, 'failed', 'user_not_found', 0, NULL, 'user_not_found', ?, ?, NULL)
-              `
-            )
-              .bind(purchaseId, idempotencyKey, productRef, email, eventNorm, nowMs, JSON.stringify(body), nowMs, nowMs)
-              .run();
-          }
-        } catch {}
-        return Response.json({ success: true, applied: false, reason: 'user_not_found', order_id: orderId || null }, { status: 202 });
-      }
-
-      if (!existingPurchase) {
-        try {
-          await env.DB.prepare(
-            `
-            INSERT INTO lynk_purchases
-            (id, idempotency_key, provider, product_ref, email, voucher_code, payment_status, purchase_ts, status, user_id, activated_at, activation_started_at, raw_payload, signature_status, email_status, email_last_error, failure_count, next_retry_at, last_error, created_at, updated_at, deleted_at)
-            VALUES (?, ?, 'lynkid', ?, ?, NULL, ?, ?, 'pending_apply', ?, NULL, NULL, ?, NULL, 'pending', NULL, 0, NULL, NULL, ?, ?, NULL)
-            `
-          )
-            .bind(
-              purchaseId,
-              idempotencyKey,
-              productRef,
-              email,
-              eventNorm,
-              nowMs,
-              String((user as any).id),
-              JSON.stringify(body),
-              nowMs,
-              nowMs
-            )
-            .run();
-        } catch {}
-      }
-
-      let locked = false;
-      try {
-        const lockRes: any = await env.DB.prepare(
           `
-          UPDATE lynk_purchases
-          SET activation_started_at = ?,
-              user_id = ?,
-              updated_at = ?
-          WHERE id = ?
-            AND deleted_at IS NULL
-            AND status = 'pending_apply'
-            AND activation_started_at IS NULL
+          INSERT INTO lynk_purchases
+          (id, idempotency_key, provider, product_ref, email, voucher_code, payment_status, purchase_ts, status, user_id, activated_at, activation_started_at, raw_payload, signature_status, email_status, email_last_error, failure_count, next_retry_at, last_error, created_at, updated_at, deleted_at)
+          VALUES (?, ?, 'lynkid', ?, ?, ?, ?, ?, 'voucher_pending', ?, NULL, NULL, ?, NULL, 'pending', NULL, 0, NULL, NULL, ?, ?, NULL)
           `
         )
-          .bind(nowMs, String((user as any).id), nowMs, purchaseId)
-          .run();
-        locked = !!(lockRes?.meta?.changes > 0);
-      } catch {}
-
-      if (!locked) {
-        return Response.json({ success: true, status: 'already_processed', order_id: orderId || null });
-      }
-
-      let newExpiryIso: string | null = null;
-      try {
-        if (totalSubscriptionDays > 0) {
-          const currentUser = await env.DB.prepare("SELECT subscription_expiry FROM users WHERE id = ?").bind(String((user as any).id)).first();
-          let newExpiryDate = new Date();
-          if (currentUser && (currentUser as any).subscription_expiry) {
-            const currentExpiry = new Date(String((currentUser as any).subscription_expiry));
-            if (currentExpiry > new Date()) newExpiryDate = currentExpiry;
-          }
-          newExpiryDate.setDate(newExpiryDate.getDate() + totalSubscriptionDays);
-          newExpiryIso = newExpiryDate.toISOString();
-          await env.DB.prepare("UPDATE users SET subscription_active = 1, subscription_expiry = ? WHERE id = ?")
-            .bind(newExpiryIso, String((user as any).id))
-            .run();
-        }
-
-        if (totalTokenAmount > 0) {
-          await addUserTokens(String((user as any).id), totalTokenAmount, env, {
-            logLabel: 'Top-up',
-            reason: 'Lynk.id',
-            idempotencyKey: `lynkid:${idempotencyKey}:credit`,
-            meta: { source: 'lynkid', order_id: idempotencyKey }
-          });
-        }
-      } catch (e: any) {
-        const msg = e instanceof Error ? e.message : String(e);
-        try {
-          await env.DB.prepare(
-            "UPDATE lynk_purchases SET status = 'failed', last_error = ?, email_status = 'failed', email_last_error = ?, updated_at = ? WHERE id = ?"
+          .bind(
+            purchaseId,
+            idempotencyKey,
+            productRef,
+            email,
+            voucherCode,
+            eventNorm,
+            nowMs,
+            user?.id ? String((user as any).id) : null,
+            JSON.stringify(body),
+            nowMs,
+            nowMs
           )
-            .bind(msg.slice(0, 1000), msg.slice(0, 1000), Date.now(), purchaseId)
-            .run();
-        } catch {}
-        return Response.json({ success: false, error: 'apply_failed' }, { status: 500 });
-      }
-
-      try {
-        await env.DB.prepare(
-          "UPDATE lynk_purchases SET status = 'applied', activated_at = ?, updated_at = ? WHERE id = ?"
-        )
-          .bind(Date.now(), Date.now(), purchaseId)
           .run();
       } catch {}
-
+    } else if (!existingPurchase?.voucher_code) {
       try {
-        const isSub = totalSubscriptionDays > 0;
-        if (isSub) {
-          const subject = `Subscription Activated (${totalSubscriptionDays} Days)`;
-          const html = getSubscriptionSuccessTemplate(totalAmountRp, totalSubscriptionDays, 0, newExpiryIso || new Date().toISOString(), 'IDR');
-          await sendEmailFn(email, subject, html, env);
-        } else {
-          const subject = `Top Up Successful (${totalTokenAmount} Tokens)`;
-          const html = getTopupSuccessTemplate(totalAmountRp, totalTokenAmount, 'IDR');
-          await sendEmailFn(email, subject, html, env);
-        }
-        try {
-          await env.DB.prepare("UPDATE lynk_purchases SET email_status = 'sent', email_last_error = NULL, updated_at = ? WHERE id = ?")
-            .bind(Date.now(), purchaseId)
-            .run();
-        } catch {}
-      } catch (e: any) {
-        const msg = e instanceof Error ? e.message : String(e);
-        try {
-          await env.DB.prepare("UPDATE lynk_purchases SET email_status = 'failed', email_last_error = ?, updated_at = ? WHERE id = ?")
-            .bind(msg.slice(0, 1000), Date.now(), purchaseId)
-            .run();
-        } catch {}
-      }
-
-      results.push({
-        type: purchaseKind,
-        amount: totalTokenAmount,
-        duration: totalSubscriptionDays,
-        applied: true,
-        subscription_expiry: newExpiryIso
-      });
+        await env.DB.prepare("UPDATE lynk_purchases SET voucher_code = ?, updated_at = ? WHERE id = ?")
+          .bind(voucherCode, nowMs, purchaseId)
+          .run();
+      } catch {}
+    } else if (user?.id) {
+      try {
+        await env.DB.prepare("UPDATE lynk_purchases SET user_id = ?, updated_at = ? WHERE id = ?")
+          .bind(String((user as any).id), nowMs, purchaseId)
+          .run();
+      } catch {}
     }
-  }
 
-  // LOG TRANSACTION TO topup_transactions
-  try {
-      const orderId = data?.order_id || body.event_id || `lynkid-${Date.now()}`;
-      const purchaseKindForLog: 'license' | 'subscription' | 'token' =
-        hasLicenseItem ? 'license' : (totalSubscriptionDays > 0 ? 'subscription' : 'token');
-      const loggedTokensAdded = purchaseKindForLog === 'token' ? totalTokenAmount : 0;
-      const loggedDurationDays = purchaseKindForLog === 'subscription' ? maxDurationDays : 0;
-      
-      // Try to find user by email
-      const user = await env.DB.prepare("SELECT id FROM users WHERE lower(email) = lower(?)").bind(email).first();
-      // If user not found, use special format "email:user@example.com" so admin panel can extract it
-      const userId = user ? String(user.id) : `email:${email}`;
-      
-      await env.DB.prepare(`
-          INSERT INTO topup_transactions 
-          (user_id, amount_rp, tokens_added, method, status, payment_ref, created_at, duration_days) 
-          VALUES (?, ?, ?, 'lynkid', 'paid', ?, ?, ?)
-      `).bind(
-          userId, 
-          totalAmountRp, 
-          loggedTokensAdded, 
-          orderId, 
-          new Date().toISOString(),
-          loggedDurationDays
+    try {
+      await env.DB.prepare(
+        "INSERT OR IGNORE INTO vouchers (code, amount, max_usage, current_usage, expires_at, allowed_emails, type, duration_days, tool_code, created_at) VALUES (?, 0, 1, 0, NULL, ?, ?, 0, ?, ?)"
+      ).bind(
+        voucherCode,
+        email,
+        voucherTypeFinal,
+        toolCodeFinal,
+        new Date().toISOString()
       ).run();
-      
-      console.log(`Logged Lynk.id transaction for ${email} (User: ${userId}, Amount: ${totalAmountRp}, Duration: ${loggedDurationDays})`);
-  } catch (txErr) {
-      console.error("Failed to log Lynk.id transaction:", txErr);
+    } catch {}
+
+    const emailSubject = voucherTypeFinal === 'tool_license'
+      ? 'Kode Lisensi Tools Prompt Grabber (1 Perangkat)'
+      : 'Kode Lisensi Metabayn (1 Perangkat)';
+    const emailHtml = getLicenseVoucherTemplate(email, voucherCode, 0, 0);
+
+    let emailOutcome: 'sent' | 'failed' | 'skipped_test_mode' = 'sent';
+    let emailError: string | null = null;
+
+    try {
+      await sendEmailFn(email, emailSubject, emailHtml, env);
+      try {
+        await env.DB.prepare(
+          "UPDATE lynk_purchases SET email_status = 'sent', email_last_error = NULL, status = 'voucher_sent', next_retry_at = NULL, updated_at = ? WHERE id = ?"
+        )
+          .bind(nowMs, purchaseId)
+          .run();
+      } catch {}
+    } catch (e: any) {
+      emailOutcome = 'failed';
+      const msg = e instanceof Error ? e.message : String(e);
+      emailError = msg.slice(0, 2000);
+      const prevFc = Number(existingPurchase?.failure_count ?? 0);
+      const nextFc = prevFc + 1;
+      const backoffMs = Math.min(60 * 60 * 1000, 30_000 * Math.pow(2, Math.min(6, nextFc)));
+      const nextRetryAt = nowMs + backoffMs;
+      try {
+        await env.DB.prepare(
+          "UPDATE lynk_purchases SET email_status = 'failed', email_last_error = ?, failure_count = ?, next_retry_at = ?, updated_at = ? WHERE id = ?"
+        )
+          .bind(emailError, nextFc, nextRetryAt, nowMs, purchaseId)
+          .run();
+      } catch {}
+      console.error("Failed to send Lynk.id voucher email:", e);
+    }
+
+    results.push({
+      code: voucherCode,
+      type: voucherTypeFinal,
+      tool_code: toolCodeFinal
+    });
+
+    if (isEmailTestMode) {
+      emailOutcome = 'skipped_test_mode';
+      emailError = null;
+    }
   }
 
   try {
@@ -1138,8 +1422,8 @@ export async function handleLynkIdWebhook(req: Request, env: Env) {
           event: eventNorm,
           order_id: orderId,
           total_amount_rp: totalAmountRp,
-          total_tokens_added: hasLicenseItem ? 0 : totalTokensAdded,
-          duration_days: hasLicenseItem ? 0 : maxDurationDays,
+          total_tokens_added: 0,
+          duration_days: 0,
           results: safeResults,
           processed_at: new Date().toISOString()
       };
@@ -1149,10 +1433,7 @@ export async function handleLynkIdWebhook(req: Request, env: Env) {
       console.error("Failed to log Lynk.id processing summary:", logErr);
   }
 
-  if (hasLicenseItem) {
-    return Response.json({ success: true, bundle_mode: 'single_voucher_v2', generated: results });
-  }
-  return Response.json({ success: true, mode: 'auto_apply_v1', applied: true, result: results });
+  return Response.json({ success: true, bundle_mode: 'single_voucher_v2', generated: results });
 }
 
 async function ensureLynkPurchaseSchema(env: Env) {
@@ -1209,6 +1490,7 @@ async function ensureVoucherTables(env: Env) {
         allowed_emails TEXT,
         type TEXT NOT NULL,
         duration_days INTEGER NOT NULL,
+        tool_code TEXT,
         created_at TEXT NOT NULL
       );
       `
@@ -1218,6 +1500,10 @@ async function ensureVoucherTables(env: Env) {
   try {
     await env.DB.prepare("ALTER TABLE vouchers ADD COLUMN created_at TEXT;").run();
     await env.DB.prepare("UPDATE vouchers SET created_at = COALESCE(created_at, datetime('now')) WHERE created_at IS NULL;").run();
+  } catch {}
+
+  try {
+    await env.DB.prepare("ALTER TABLE vouchers ADD COLUMN tool_code TEXT;").run();
   } catch {}
 
   try {
