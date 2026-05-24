@@ -194,7 +194,13 @@ pub async fn generate_csv_from_folder(
 ) -> Result<String> {
     clear_cancel_generate_batch();
     clear_stop_csv_tools_scheduling();
-    let exiftool = resolve_exiftool().ok_or(anyhow!("ExifTool not found"))?;
+    let exiftool = resolve_exiftool().ok_or(anyhow!(
+        "ExifTool tidak ditemukan atau tidak valid.\n\
+Solusi cepat:\n\
+1) Install ExifTool untuk Windows (exiftool(-k).exe), rename menjadi exiftool.exe\n\
+2) Taruh file exiftool.exe di folder resources aplikasi (sefolder dengan app) atau di C:\\\\Windows\\\\exiftool.exe\n\
+3) Jika Windows Security/antivirus menghapus/quarantine, restore lalu jalankan ulang aplikasi."
+    ))?;
     
     // Run ExifTool on the folder
     let _ = window.emit("csv_log", serde_json::json!({
@@ -3183,7 +3189,13 @@ pub async fn strip_metadata_batch(window: tauri::Window, input_folder: &str, rec
         return Err(anyhow!("Folder tidak ditemukan: {}", input_folder));
     }
 
-    let exiftool = resolve_exiftool().ok_or(anyhow!("ExifTool not found"))?;
+    let exiftool = resolve_exiftool().ok_or(anyhow!(
+        "ExifTool tidak ditemukan atau tidak valid.\n\
+Solusi cepat:\n\
+1) Install ExifTool untuk Windows (exiftool(-k).exe), rename menjadi exiftool.exe\n\
+2) Taruh file exiftool.exe di folder resources aplikasi (sefolder dengan app) atau di C:\\\\Windows\\\\exiftool.exe\n\
+3) Jika Windows Security/antivirus menghapus/quarantine, restore lalu jalankan ulang aplikasi."
+    ))?;
 
     let total = {
         use walkdir::WalkDir;
@@ -3344,7 +3356,13 @@ pub async fn move_to_rejected_with_metadata(
     };
 
     // Use blocking command for ExifTool since we are in sync/async boundary or just use standard process
-    let exiftool = resolve_exiftool().ok_or(anyhow!("ExifTool not found"))?;
+    let exiftool = resolve_exiftool().ok_or(anyhow!(
+        "ExifTool tidak ditemukan atau tidak valid.\n\
+Solusi cepat:\n\
+1) Install ExifTool untuk Windows (exiftool(-k).exe), rename menjadi exiftool.exe\n\
+2) Taruh file exiftool.exe di folder resources aplikasi (sefolder dengan app) atau di C:\\\\Windows\\\\exiftool.exe\n\
+3) Jika Windows Security/antivirus menghapus/quarantine, restore lalu jalankan ulang aplikasi."
+    ))?;
     
     let mut args = vec![
         "-overwrite_original".to_string(),
@@ -3483,7 +3501,13 @@ pub async fn write_image(req: &crate::api::ImageMetaReq) -> Result<Option<String
         return Err(anyhow!("Target file already exists: {}", target.to_string_lossy()));
     }
 
-    let exiftool = resolve_exiftool().ok_or(anyhow!("ExifTool not found"))?;
+    let exiftool = resolve_exiftool().ok_or(anyhow!(
+        "ExifTool tidak ditemukan atau tidak valid.\n\
+Solusi cepat:\n\
+1) Install ExifTool untuk Windows (exiftool(-k).exe), rename menjadi exiftool.exe\n\
+2) Taruh file exiftool.exe di folder resources aplikasi (sefolder dengan app) atau di C:\\\\Windows\\\\exiftool.exe\n\
+3) Jika Windows Security/antivirus menghapus/quarantine, restore lalu jalankan ulang aplikasi."
+    ))?;
     
     let mut args = vec![
         "-overwrite_original".to_string(),
@@ -3558,7 +3582,14 @@ pub async fn write_image(req: &crate::api::ImageMetaReq) -> Result<Option<String
         Err(e) => {
             let _ = if working_path != source { fs::remove_file(&working_path) } else { Ok(()) };
             if e.raw_os_error() == Some(216) {
-                return Err(anyhow!("ExifTool tidak kompatibel atau rusak di Windows ini (os error 216). Solusi: reinstall versi terbaru atau update ke rilis berikutnya."));
+                return Err(anyhow!(
+                    "ExifTool gagal dijalankan (os error 216).\n\
+Ini biasanya terjadi karena exiftool.exe yang dipakai tidak valid/korup (mis. file terpotong), atau diblokir antivirus.\n\
+Solusi cepat:\n\
+1) Install ExifTool untuk Windows (exiftool(-k).exe), rename menjadi exiftool.exe\n\
+2) Taruh file exiftool.exe di folder resources aplikasi (sefolder dengan app) atau di C:\\\\Windows\\\\exiftool.exe\n\
+3) Cek Windows Security/antivirus: restore file yang di-quarantine & jalankan ulang."
+                ));
             }
             return Err(anyhow!("{}", e));
         }
@@ -3660,7 +3691,22 @@ pub fn apply_file_rename(path: &Path, title: &str) -> Result<Option<PathBuf>> {
 }
 
 fn resolve_exiftool() -> Option<PathBuf> {
-    if let Ok(p) = which::which("exiftool") { return Some(p); }
+    #[cfg(target_os = "windows")]
+    fn is_probably_valid_windows_exe(p: &Path) -> bool {
+        // ExifTool exe typically ~50-60KB on Windows, reject files < 10KB as clearly broken
+        std::fs::metadata(p).map(|m| m.len() >= 10_000).unwrap_or(false)
+    }
+
+    if let Ok(p) = which::which("exiftool") {
+        #[cfg(target_os = "windows")]
+        {
+            if is_probably_valid_windows_exe(&p) { return Some(p); }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            return Some(p);
+        }
+    }
     if let Ok(exe) = std::env::current_exe() {
         let base = exe.parent().unwrap_or_else(|| Path::new("."));
         
@@ -3681,7 +3727,14 @@ fn resolve_exiftool() -> Option<PathBuf> {
             base.join("../../src-tauri/resources/exiftool"),
         ];
 
-        for c in &candidates { if c.exists() { return Some(c.clone()); } }
+        for c in &candidates {
+            if !c.exists() { continue; }
+            #[cfg(target_os = "windows")]
+            {
+                if !is_probably_valid_windows_exe(c) { continue; }
+            }
+            return Some(c.clone());
+        }
     }
     None
 }
