@@ -1054,6 +1054,19 @@ export async function handleAdminLynkPurchases(req: Request, env: Env): Promise<
       ).run();
     } catch {}
 
+    try {
+      await env.DB.prepare(
+        `
+        CREATE TABLE IF NOT EXISTS vouchers (
+          code TEXT PRIMARY KEY,
+          type TEXT NOT NULL,
+          tool_code TEXT,
+          created_at TEXT
+        );
+        `
+      ).run();
+    } catch {}
+
     const where: string[] = ["p.deleted_at IS NULL"];
     const args: any[] = [];
     if (status) {
@@ -1090,9 +1103,12 @@ export async function handleAdminLynkPurchases(req: Request, env: Env): Promise<
         p.created_at,
         p.updated_at,
         vc.user_id AS voucher_redeemed_by_user_id,
-        vc.created_at AS voucher_redeemed_at
+        vc.created_at AS voucher_redeemed_at,
+        v.type AS voucher_type,
+        v.tool_code AS voucher_tool_code
       FROM lynk_purchases p
       LEFT JOIN voucher_claims vc ON vc.voucher_code = p.voucher_code
+      LEFT JOIN vouchers v ON v.code = p.voucher_code
       ${whereSql}
       ORDER BY p.created_at DESC
       LIMIT ? OFFSET ?

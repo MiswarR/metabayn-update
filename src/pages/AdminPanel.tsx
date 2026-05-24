@@ -416,12 +416,19 @@ export default function AdminPanel({ onBack, lang }: { onBack: () => void, lang:
     try {
       const token = getTokenLocal();
       if (!token) throw new Error('Unauthorized');
-      const genCode = () => {
-        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        let out = "";
-        for (let i = 0; i < 6; i++) out += chars[Math.floor(Math.random() * chars.length)];
+      const genSuffix = (len = 12) => {
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        const cryptoObj: any = (globalThis as any)?.crypto;
+        const bytes = cryptoObj?.getRandomValues ? new Uint8Array(len) : null;
+        if (bytes) cryptoObj.getRandomValues(bytes);
+        let out = '';
+        for (let i = 0; i < len; i++) {
+          const idx = bytes ? (bytes[i] % chars.length) : Math.floor(Math.random() * chars.length);
+          out += chars[idx];
+        }
         return out;
       };
+      const genCode = () => `APM-${genSuffix(12)}`;
       const code = (String(voucherForm.code || '').trim() ? String(voucherForm.code || '').trim().toUpperCase() : genCode());
 
       const maxUsageRaw = String(voucherForm.max_usage || '').trim();
@@ -579,31 +586,6 @@ export default function AdminPanel({ onBack, lang }: { onBack: () => void, lang:
     }
   }
 
-  async function syncModelPrices(kind: 'official' | 'live') {
-    setConfigSaving(true);
-    setConfigStatus(null);
-    try {
-      const apiUrl = await getApiUrl();
-      const token = getTokenLocal();
-      if (!token) throw new Error(t('Tidak punya akses', 'Unauthorized'));
-      const path = kind === 'official' ? '/admin/model-prices/sync' : '/admin/model-prices/sync-live';
-      const res = await fetch(`${apiUrl}${path}`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
-      });
-      const txt = await res.text();
-      if (!res.ok) throw new Error(txt || `HTTP ${res.status}`);
-      let count: any = null;
-      try { count = JSON.parse(txt)?.count; } catch {}
-      setConfigStatus({ ok: true, message: t(`Sync harga model selesai${count ? ` (${count} model)` : ''}.`, `Model prices synced${count ? ` (${count} models)` : ''}.`) });
-    } catch (e: any) {
-      setConfigStatus({ ok: false, message: String(e?.message || e) });
-    } finally {
-      setConfigSaving(false);
-    }
-  }
-
   useEffect(() => { fetchUsers(); }, []);
   useEffect(() => { fetchConfig(); }, []);
 
@@ -699,6 +681,19 @@ export default function AdminPanel({ onBack, lang }: { onBack: () => void, lang:
   const totalUsers = users.length;
   const licensedUsers = users.filter(u => (Number((u as any)?.license_active_count ?? 0) || 0) > 0).length;
   const adminUsers = users.filter(u => !!u.is_admin).length;
+
+  function getLynkPurchaseTypeLabel(p: any) {
+    const vt = String(p?.voucher_type || '').trim().toLowerCase();
+    const tool = String(p?.voucher_tool_code || '').trim().toLowerCase();
+    const pr = String(p?.product_ref || '').trim().toLowerCase();
+    const isTool = vt === 'tool_license' || !!tool || pr.includes('prompt_grabber') || pr.includes('promptgrabber') || pr.includes('prompt grabber') || pr.includes('wp6d9o37o51d');
+    if (isTool) {
+      if (tool === 'prompt_grabber' || pr.includes('prompt')) return t('Lisensi Tools: Prompt Grabber', 'Tools License: Prompt Grabber');
+      return t('Lisensi Tools', 'Tools License');
+    }
+    if (vt === 'license' || pr) return t('Lisensi Aplikasi', 'App License');
+    return '-';
+  }
 
   return (
     <div style={{ 
@@ -798,7 +793,7 @@ export default function AdminPanel({ onBack, lang }: { onBack: () => void, lang:
                   <div>
                     <div style={{ color: '#fff', fontWeight: 700, fontSize: 14 }}>{t('Pengaturan Admin', 'Admin Settings')}</div>
                     <div style={{ color: '#71717a', fontSize: 12 }}>
-                      {t('Profit, kurs, throttling, dan sinkronisasi harga.', 'Profit, exchange rate, throttling, and model price sync.')}
+                      {t('Profit, kurs, dan throttling.', 'Profit, exchange rate, and throttling.')}
                     </div>
                   </div>
                 </div>
@@ -875,21 +870,6 @@ export default function AdminPanel({ onBack, lang }: { onBack: () => void, lang:
                         />
                         <div style={{ color: '#71717a', fontSize: 12, marginTop: 8 }}>
                           Unlimited akan override limit menjadi tinggi di runtime.
-                        </div>
-                      </div>
- 
-                      <div style={{ background: '#0f0f12', border: '1px solid #27272a', borderRadius: 12, padding: 14 }}>
-                        <div style={{ color: '#a1a1aa', fontSize: 12, marginBottom: 8 }}>Harga Model</div>
-                        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                          <button onClick={() => syncModelPrices('official')} disabled={configSaving} style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', color: '#34d399', padding: '10px 12px', borderRadius: 10, cursor: configSaving ? 'wait' : 'pointer', fontWeight: 800, fontSize: 12 }}>
-                            {t('Sync Resmi', 'Sync Official')}
-                          </button>
-                          <button onClick={() => syncModelPrices('live')} disabled={configSaving} style={{ background: 'rgba(249,115,22,0.12)', border: '1px solid rgba(249,115,22,0.25)', color: '#fb923c', padding: '10px 12px', borderRadius: 10, cursor: configSaving ? 'wait' : 'pointer', fontWeight: 800, fontSize: 12 }}>
-                            Sync Live
-                          </button>
-                        </div>
-                        <div style={{ color: '#71717a', fontSize: 12, marginTop: 10 }}>
-                          Sync akan mengisi tabel model_prices untuk kalkulasi biaya.
                         </div>
                       </div>
                     </div>
@@ -1188,6 +1168,7 @@ export default function AdminPanel({ onBack, lang }: { onBack: () => void, lang:
                                 <tr style={{ background: '#27272a', textAlign: 'left' }}>
                                     <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>ID</th>
                                     <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Email</th>
+                                    <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>{t('Tipe', 'Type')}</th>
                                     <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>{t('Kode Lisensi', 'License Code')}</th>
                                     <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Redeem</th>
                                     <th style={{ padding: '10px 16px', color: '#a1a1aa' }}>Status</th>
@@ -1200,14 +1181,15 @@ export default function AdminPanel({ onBack, lang }: { onBack: () => void, lang:
                             </thead>
                             <tbody>
                                 {lynkLoading && lynkPurchases.length === 0 ? (
-                                    <tr><td colSpan={10} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>{isId ? 'Memuat...' : 'Loading...'}</td></tr>
+                                    <tr><td colSpan={11} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>{isId ? 'Memuat...' : 'Loading...'}</td></tr>
                                 ) : lynkPurchases.length === 0 ? (
-                                    <tr><td colSpan={10} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>{t('Tidak ada pembelian.', 'No purchases found.')}</td></tr>
+                                    <tr><td colSpan={11} style={{ padding: 32, textAlign: 'center', color: '#71717a' }}>{t('Tidak ada pembelian.', 'No purchases found.')}</td></tr>
                                 ) : (
                                     lynkPurchases.map((p) => (
                                         <tr key={p.id} style={{ borderBottom: '1px solid #27272a' }}>
                                             <td style={{ padding: '10px 16px', color: '#71717a' }}>{p.id}</td>
                                             <td style={{ padding: '10px 16px', color: '#fff' }}>{p.email}</td>
+                                            <td style={{ padding: '10px 16px', color: '#a1a1aa' }} title={String(p?.product_ref || '')}>{getLynkPurchaseTypeLabel(p)}</td>
                                             <td style={{ padding: '10px 16px', color: '#a1a1aa' }}>{p.voucher_code || '-'}</td>
                                             <td style={{ padding: '10px 16px' }}>
                                                 {!p.voucher_code ? (

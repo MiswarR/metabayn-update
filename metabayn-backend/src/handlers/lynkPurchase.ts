@@ -140,11 +140,26 @@ async function sha256Hex(input: string) {
   return out;
 }
 
-function generateVoucherCode() {
+function voucherPrefix(kind: 'license' | 'tool_license' | 'unknown', toolCode: string | null) {
+  if (kind === 'tool_license') {
+    const tc = String(toolCode || '').trim().toLowerCase();
+    if (tc === 'prompt_grabber') return 'TPG-';
+    if (tc) return `TL-${tc.toUpperCase().slice(0, 8)}-`;
+    return 'TL-';
+  }
+  if (kind === 'license') return 'APM-';
+  return 'LIC-';
+}
+
+function generateVoucherSuffix(len = 12) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let out = '';
-  for (let i = 0; i < 12; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
   return out;
+}
+
+function generateVoucherCode(kind: 'license' | 'tool_license' | 'unknown', toolCode: string | null) {
+  return `${voucherPrefix(kind, toolCode)}${generateVoucherSuffix(12)}`;
 }
 
 async function ensureVoucherTables(env: Env) {
@@ -818,7 +833,7 @@ export async function handleLynkPurchaseWebhook(req: Request, env: Env) {
       const voucherType = product.kind;
       const toolCode = product.tool_code;
       for (let i = 0; i < 6 && !voucherCode; i++) {
-        const candidate = generateVoucherCode();
+        const candidate = generateVoucherCode(voucherType, toolCode);
         try {
           await env.DB.prepare(
             "INSERT INTO vouchers (code, amount, max_usage, current_usage, expires_at, allowed_emails, type, duration_days, tool_code, created_at) VALUES (?, 0, 1, 0, NULL, ?, ?, 0, ?, ?)"
@@ -923,7 +938,7 @@ export async function processLynkPurchaseRetries(env: Env, nowMs: number) {
             if (!voucherCode) {
               const now = Date.now();
               for (let i = 0; i < 6 && !voucherCode; i++) {
-                const candidate = generateVoucherCode();
+                const candidate = generateVoucherCode(voucherType, toolCode);
                 try {
                   await env.DB.prepare(
                     "INSERT INTO vouchers (code, amount, max_usage, current_usage, expires_at, allowed_emails, type, duration_days, tool_code, created_at) VALUES (?, 0, 1, 0, NULL, ?, ?, 0, ?, ?)"

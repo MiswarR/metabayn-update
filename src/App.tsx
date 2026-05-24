@@ -254,16 +254,47 @@ export default function App(){
     if (!isTauri) return;
     const onUnhandled = (e: PromiseRejectionEvent) => {
       try {
-        const msg = e?.reason instanceof Error ? e.reason.message : String(e?.reason ?? 'Unhandled promise rejection')
-        console.error('[App] unhandledrejection:', e?.reason)
-        window.dispatchEvent(new CustomEvent(MODAL_EVENT_NAME, { detail: { title: 'Error', message: msg, type: 'error' } }))
+        let msg = 'Unhandled promise rejection';
+        const reason = e?.reason;
+        if (reason !== null && reason !== undefined) {
+          if (reason instanceof Error) {
+            msg = reason.message;
+          } else if (typeof reason === 'string') {
+            msg = reason;
+          } else if (typeof reason === 'object') {
+            // Try to extract useful info from error objects
+            const errObj = reason as any;
+            msg = errObj?.message || errObj?.error || errObj?.reason || String(reason);
+          } else {
+            msg = String(reason);
+          }
+        }
+        console.error('[App] unhandledrejection:', reason)
+        // Only show modal for actual errors, not for benign rejections
+        if (msg && !msg.includes('aborted') && !msg.includes('cancelled')) {
+          window.dispatchEvent(new CustomEvent(MODAL_EVENT_NAME, { detail: { title: 'Error', message: msg, type: 'error' } }))
+        }
       } catch {}
     };
     const onError = (e: ErrorEvent) => {
       try {
-        const msg = String((e as any)?.message ?? 'Unhandled error')
+        let msg = 'Unhandled error';
+        const err = e?.error || e?.message;
+        if (err) {
+          if (err instanceof Error) {
+            msg = err.message;
+          } else if (typeof err === 'string') {
+            msg = err;
+          } else if (typeof err === 'object') {
+            const errObj = err as any;
+            msg = errObj?.message || errObj?.error || String(err);
+          }
+        }
         console.error('[App] error:', e?.error || e)
-        window.dispatchEvent(new CustomEvent(MODAL_EVENT_NAME, { detail: { title: 'Error', message: msg, type: 'error' } }))
+        // Filter out non-critical errors
+        if (msg && !msg.includes('ResizeObserver') && !msg.includes('ResizeObserver loop')) {
+          window.dispatchEvent(new CustomEvent(MODAL_EVENT_NAME, { detail: { title: 'Error', message: msg, type: 'error' } }))
+        }
       } catch {}
     };
     window.addEventListener('unhandledrejection', onUnhandled);
