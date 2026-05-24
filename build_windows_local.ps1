@@ -42,38 +42,99 @@ if (-not (Test-Path $ffmpegDest)) {
     Write-Host "   FFmpeg sudah ada." -ForegroundColor Green
 }
 
-# ExifTool
+# ExifTool - ALWAYS download fresh from official source
+Write-Host "   Downloading ExifTool from official source (exiftool.org)..."
 $exiftoolDest = "$resourceDir/exiftool.exe"
-if (-not (Test-Path $exiftoolDest)) {
-    Write-Host "   Downloading ExifTool..."
-    # Menggunakan SourceForge mirror yang lebih stabil
-    $exiftoolUrl = "https://downloads.sourceforge.net/project/exiftool/exiftool-13.47_64.zip"
-    try {
-        Invoke-WebRequest -Uri $exiftoolUrl -OutFile "exiftool.zip"
-        Expand-Archive -Path "exiftool.zip" -DestinationPath "exiftool_temp" -Force
-        $exiftoolExe = Get-ChildItem -Path "exiftool_temp" -Filter "exiftool(-k).exe" -Recurse | Select-Object -First 1
-        if ($exiftoolExe) {
-            Copy-Item $exiftoolExe.FullName $exiftoolDest -Force
-            Write-Host "   ExifTool berhasil disiapkan." -ForegroundColor Green
-        } else {
-            Write-Error "   Gagal menemukan exiftool(-k).exe dalam zip."
+$exiftoolZipUrl = "https://exiftool.org/exiftool-13.50.zip"
+$exiftoolZip = "exiftool_download.zip"
+$exiftoolTempDir = "exiftool_temp_extract"
+
+try {
+    # Download fresh exiftool
+    Invoke-WebRequest -Uri $exiftoolZipUrl -OutFile $exiftoolZip -UseBasicParsing
+    $downloadedSize = (Get-Item $exiftoolZip).Length
+    Write-Host "   Downloaded zip size: $downloadedSize bytes"
+
+    if ($downloadedSize -lt 500000) {
+        throw "Downloaded zip too small - likely failed"
+    }
+
+    # Extract
+    if (Test-Path $exiftoolTempDir) { Remove-Item $exiftoolTempDir -Recurse -Force }
+    Expand-Archive -Path $exiftoolZip -DestinationPath $exiftoolTempDir -Force
+
+    # Find exiftool(-k).exe
+    $exiftoolExe = Get-ChildItem -Path $exiftoolTempDir -Filter "exiftool(-k).exe" -Recurse | Select-Object -First 1
+
+    if (-not $exiftoolExe) {
+        throw "Failed to find exiftool(-k).exe in zip"
+    }
+
+    Write-Host "   Found: $($exiftoolExe.FullName) ($($exiftoolExe.Length) bytes)"
+
+    # Validate size
+    if ($exiftoolExe.Length -lt 1000000) {
+        Write-Host "   WARNING: exiftool.exe is small ($($exiftoolExe.Length) bytes). Validating PE header..."
+        $bytes = [System.IO.File]::ReadAllBytes($exiftoolExe.FullName)[0..1]
+        if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+            throw "exiftool.exe does not have valid PE header"
         }
-    } catch {
-        Write-Warning "   Gagal download dari SourceForge, mencoba exiftool.org..."
-        $exiftoolUrlOrg = "https://exiftool.org/exiftool-13.47_64.zip"
-        Invoke-WebRequest -Uri $exiftoolUrlOrg -OutFile "exiftool.zip"
-        Expand-Archive -Path "exiftool.zip" -DestinationPath "exiftool_temp" -Force
-        $exiftoolExe = Get-ChildItem -Path "exiftool_temp" -Filter "exiftool(-k).exe" -Recurse | Select-Object -First 1
-        if ($exiftoolExe) {
-            Copy-Item $exiftoolExe.FullName $exiftoolDest -Force
-            Write-Host "   ExifTool berhasil disiapkan (dari backup)." -ForegroundColor Green
+        Write-Host "   PE header OK"
+    }
+
+    # Copy exe
+    Copy-Item $exiftoolExe.FullName $exiftoolDest -Force
+    Write-Host "   Copied exiftool.exe to resources ($($exiftoolExe.Length) bytes)"
+
+    # Copy exiftool_files/lib
+    $libParent = Get-ChildItem -Path $exiftoolTempDir -Directory -Filter "Image-ExifTool-*" | Select-Object -First 1
+    if ($libParent) {
+        $libSrc = Join-Path $libParent.FullName "exiftool_files"
+        if (Test-Path $libSrc) {
+            if (Test-Path "$resourceDir/exiftool_files") {
+                Remove-Item "$resourceDir/exiftool_files" -Recurse -Force
+            }
+            Copy-Item $libSrc "$resourceDir/exiftool_files" -Recurse -Force
+            Write-Host "   Copied exiftool_files/lib"
         }
     }
-    
-    if (Test-Path "exiftool.zip") { Remove-Item "exiftool.zip" -Force }
-    if (Test-Path "exiftool_temp") { Remove-Item "exiftool_temp" -Recurse -Force }
-} else {
-    Write-Host "   ExifTool sudah ada." -ForegroundColor Green
+
+    Write-Host "   ExifTool ready." -ForegroundColor Green
+
+} catch {
+    Write-Warning "   Download failed: $_"
+    Write-Host "   Trying alternative (SourceForge)..."
+
+    try {
+        $altUrl = "https://downloads.sourceforge.net/project/exiftool/exiftool-13.50.zip"
+        Invoke-WebRequest -Uri $altUrl -OutFile $exiftoolZip -UseBasicParsing
+
+        if (Test-Path $exiftoolTempDir) { Remove-Item $exiftoolTempDir -Recurse -Force }
+        Expand-Archive -Path $exiftoolZip -DestinationPath $exiftoolTempDir -Force
+
+        $exiftoolExe = Get-ChildItem -Path $exiftoolTempDir -Filter "exiftool(-k).exe" -Recurse | Select-Object -First 1
+        if ($exiftoolExe) {
+            Copy-Item $exiftoolExe.FullName $exiftoolDest -Force
+
+            $libParent = Get-ChildItem -Path $exiftoolTempDir -Directory -Filter "Image-ExifTool-*" | Select-Object -First 1
+            if ($libParent) {
+                $libSrc = Join-Path $libParent.FullName "exiftool_files"
+                if (Test-Path $libSrc) {
+                    if (Test-Path "$resourceDir/exiftool_files") {
+                        Remove-Item "$resourceDir/exiftool_files" -Recurse -Force
+                    }
+                    Copy-Item $libSrc "$resourceDir/exiftool_files" -Recurse -Force
+                }
+            }
+            Write-Host "   ExifTool ready (from SourceForge backup)." -ForegroundColor Green
+        }
+    } catch {
+        Write-Error "   Failed to download ExifTool: $_"
+    }
+} finally {
+    # Cleanup
+    if (Test-Path $exiftoolZip) { Remove-Item $exiftoolZip -Force -ErrorAction SilentlyContinue }
+    if (Test-Path $exiftoolTempDir) { Remove-Item $exiftoolTempDir -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 # 3. Install Dependencies

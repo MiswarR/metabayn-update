@@ -220,18 +220,6 @@ export async function handleBulkCreateVouchers(req: Request, env: Env) {
     return Response.json({ error: "Invalid quantity" }, { status: 400 });
   }
 
-  // Helper to generate 6-char random alphanumeric code
-  const generateCode = () => {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let result = "";
-    const randomValues = new Uint8Array(6);
-    crypto.getRandomValues(randomValues);
-    for (let i = 0; i < 6; i++) {
-      result += chars[randomValues[i] % chars.length];
-    }
-    return result;
-  };
-
   const generatedCodes: string[] = [];
   const stmts: any[] = [];
   const createdAt = new Date().toISOString();
@@ -240,7 +228,10 @@ export async function handleBulkCreateVouchers(req: Request, env: Env) {
   const safeQuantity = Math.min(quantity, 500);
 
   for (let i = 0; i < safeQuantity; i++) {
-    const code = generateCode();
+    const code =
+      voucherType === 'license' || voucherType === 'tool_license'
+        ? generatePrefixedVoucherCode(voucherType as any, voucherType === 'tool_license' ? String(tool_code || '').trim().toLowerCase() || null : null)
+        : generateShortCode();
     generatedCodes.push(code);
     stmts.push(
       env.DB.prepare(
@@ -1304,9 +1295,11 @@ export async function handleLynkIdWebhook(req: Request, env: Env) {
     const purchaseId = existingPurchase?.id ? String(existingPurchase.id) : crypto.randomUUID();
     const productRef = normalizeTitle(items[0]?.title || '');
 
-    const voucherCode = existingPurchase?.voucher_code ? String(existingPurchase.voucher_code) : generateCode();
     const voucherTypeFinal: 'license' | 'tool_license' = hasLicenseItem ? 'license' : 'tool_license';
     const toolCodeFinal = voucherTypeFinal === 'tool_license' ? 'prompt_grabber' : null;
+    const voucherCode = existingPurchase?.voucher_code
+      ? String(existingPurchase.voucher_code)
+      : generatePrefixedVoucherCode(voucherTypeFinal, toolCodeFinal);
 
     if (!existingPurchase) {
       try {
@@ -1533,13 +1526,36 @@ async function ensureVoucherTables(env: Env) {
 }
 
 // Helper to generate 6-char random alphanumeric code (Moved out to be shared)
-function generateCode() {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let result = "";
-    const randomValues = new Uint8Array(6);
-    crypto.getRandomValues(randomValues);
-    for (let i = 0; i < 6; i++) {
-      result += chars[randomValues[i] % chars.length];
-    }
-    return result;
+function generateShortCode() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let result = "";
+  const randomValues = new Uint8Array(6);
+  crypto.getRandomValues(randomValues);
+  for (let i = 0; i < 6; i++) {
+    result += chars[randomValues[i] % chars.length];
+  }
+  return result;
+}
+
+function voucherPrefix(kind: 'license' | 'tool_license', toolCode: string | null) {
+  if (kind === 'tool_license') {
+    const tc = String(toolCode || '').trim().toLowerCase();
+    if (tc === 'prompt_grabber') return 'TPG-';
+    if (tc) return `TL-${tc.toUpperCase().slice(0, 8)}-`;
+    return 'TL-';
+  }
+  return 'APM-';
+}
+
+function generateVoucherSuffix(len = 12) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = new Uint8Array(len);
+  crypto.getRandomValues(bytes);
+  let out = '';
+  for (let i = 0; i < len; i++) out += chars[bytes[i] % chars.length];
+  return out;
+}
+
+function generatePrefixedVoucherCode(kind: 'license' | 'tool_license', toolCode: string | null) {
+  return `${voucherPrefix(kind, toolCode)}${generateVoucherSuffix(12)}`;
 }

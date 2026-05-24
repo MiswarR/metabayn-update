@@ -538,15 +538,13 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       const freeVisionReasoning = freeVision.filter(supportsReasoning)
       const paidAffordableVision = vision.filter(m => !isFree(m) && isAffordable(m))
       const paidAffordableVisionReasoning = paidAffordableVision.filter(supportsReasoning)
-      const pool = freeVisionReasoning.length > 0
-        ? freeVisionReasoning
-        : freeVision.length > 0
-          ? freeVision
-          : paidAffordableVisionReasoning.length > 0
-            ? paidAffordableVisionReasoning
-            : paidAffordableVision.length > 0
-              ? paidAffordableVision
-              : vision
+      const pool = !freeVisionReasoning.length
+        ? (!freeVision.length
+          ? (!paidAffordableVisionReasoning.length
+            ? (!paidAffordableVision.length ? vision : paidAffordableVision)
+            : paidAffordableVisionReasoning)
+          : freeVision)
+        : freeVisionReasoning
       
       if (pool.length === 0) return 'qwen/qwen3-vl-235b-a22b-thinking';
 
