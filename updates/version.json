@@ -1,15 +1,15 @@
 {
-  "version": "5.2.6",
-  "notes": "Update 5.2.6",
-  "pub_date": "2026-05-15T08:22:47Z",
+  "version": "5.3.1",
+  "notes": "Update 5.3.1",
+  "pub_date": "2026-05-24T23:55:11Z",
   "platforms": {
     "darwin-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUVZ0dEtSZzBUa3VmZTQ3RUZFbVByTVhOMDA1eCt4QkMvWmJpcFRUcUtVQlhsUy94Q29PdlBMTGEwd3g5ZWtiRUYxU2ZYVlYxOWVCNm1JUldrRzUrUDJrcUF2QjFmTHdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc4ODMyODgzCWZpbGU6bWV0YWJheW4tc3R1ZGlvLmFwcC50YXIuZ3oKZU1rc3h2K2VCVmR6M1EwY2lpeXZXRzZqWHd5ZDB6NXVXeDV3OTdOM2ZTY0twaUUrcVVsUU12dm84Y0FZZngweFp5T2Z5OERIU0twWGpEbnRrNGVEREE9PQo=",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v5.2.6/metabayn-studio.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUVZ0dEtSZzBUa3RBL0ttaHk2bEhkN3N4RkhlT0loYzUrZG1OYm5VVGRvMitKREphcC8wK1ZmK2FQMW10bm9YOHV4UGdhMjIvUUd5cmFRMStlQlFqUU5lcHFiN1NJVkFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5NjY2NDc3CWZpbGU6bWV0YWJheW4tc3R1ZGlvLmFwcC50YXIuZ3oKcW1tRHo1aGRubWJ3a0JVaXYrMW5PdXVxZlVoQnlRbGxmYTRUZkFlUVRSRGYxbFRtbHpobzNvcWFiUU5YUnU2czBqY0hpRXduU3ArYzdUUHRnWUJKQlE9PQo=",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v5.3.1/metabayn-studio.app.tar.gz"
     },
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUVZ0dEtSZzBUa3VmZTQ3RUZFbVByTVhOMDA1eCt4QkMvWmJpcFRUcUtVQlhsUy94Q29PdlBMTGEwd3g5ZWtiRUYxU2ZYVlYxOWVCNm1JUldrRzUrUDJrcUF2QjFmTHdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc4ODMyODgzCWZpbGU6bWV0YWJheW4tc3R1ZGlvLmFwcC50YXIuZ3oKZU1rc3h2K2VCVmR6M1EwY2lpeXZXRzZqWHd5ZDB6NXVXeDV3OTdOM2ZTY0twaUUrcVVsUU12dm84Y0FZZngweFp5T2Z5OERIU0twWGpEbnRrNGVEREE9PQo=",
-      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v5.2.6/metabayn-studio.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUVZ0dEtSZzBUa3RBL0ttaHk2bEhkN3N4RkhlT0loYzUrZG1OYm5VVGRvMitKREphcC8wK1ZmK2FQMW10bm9YOHV4UGdhMjIvUUd5cmFRMStlQlFqUU5lcHFiN1NJVkFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5NjY2NDc3CWZpbGU6bWV0YWJheW4tc3R1ZGlvLmFwcC50YXIuZ3oKcW1tRHo1aGRubWJ3a0JVaXYrMW5PdXVxZlVoQnlRbGxmYTRUZkFlUVRSRGYxbFRtbHpobzNvcWFiUU5YUnU2czBqY0hpRXduU3ArYzdUUHRnWUJKQlE9PQo=",
+      "url": "https://github.com/MiswarR/metabayn-update/releases/download/v5.3.1/metabayn-studio.app.tar.gz"
     }
   }
 }
