@@ -707,7 +707,7 @@ pub async fn test_api_connection(provider: String, api_key: String, endpoint: Op
             .send()
             .await
     } else if provider == "Groq" {
-        return Err("Groq provider is currently disabled.".to_string());
+        return Err("Groq provider is not available. Please use Gemini, OpenAI, or OpenRouter instead.".to_string());
     } else if provider == "Anthropic" || provider == "Claude" {
         client
             .get("https://api.anthropic.com/v1/models")
@@ -956,7 +956,22 @@ fn resolve_ffmpeg() -> Option<PathBuf> {
 }
 
 fn resolve_exiftool() -> Option<PathBuf> {
-    if let Ok(p) = which::which("exiftool") { return Some(p); }
+    #[cfg(target_os = "windows")]
+    fn is_probably_valid_windows_exe(p: &Path) -> bool {
+        // ExifTool exe typically ~50-60KB on Windows, reject files < 10KB as clearly broken
+        std::fs::metadata(p).map(|m| m.len() >= 10_000).unwrap_or(false)
+    }
+
+    if let Ok(p) = which::which("exiftool") {
+        #[cfg(target_os = "windows")]
+        {
+            if is_probably_valid_windows_exe(&p) { return Some(p); }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            return Some(p);
+        }
+    }
     if let Ok(exe) = std::env::current_exe() {
         let base = exe.parent().unwrap_or_else(|| Path::new("."));
         
@@ -977,7 +992,14 @@ fn resolve_exiftool() -> Option<PathBuf> {
             base.join("../../src-tauri/resources/exiftool"),
         ];
 
-        for c in &candidates { if c.exists() { return Some(c.clone()); } }
+        for c in &candidates {
+            if !c.exists() { continue; }
+            #[cfg(target_os = "windows")]
+            {
+                if !is_probably_valid_windows_exe(c) { continue; }
+            }
+            return Some(c.clone());
+        }
     }
     None
 }

@@ -27,7 +27,10 @@ impl SubscriptionState {
 pub fn check_subscription_status(state: &SubscriptionState) -> SubscriptionStatus {
     let mut status = match state.status.lock() {
         Ok(g) => g,
-        Err(p) => p.into_inner(),
+        Err(p) => {
+            // If mutex is poisoned, still get the data to avoid crashing
+            p.into_inner()
+        }
     };
     
     // Check expiry
@@ -48,7 +51,10 @@ pub fn check_subscription_status(state: &SubscriptionState) -> SubscriptionStatu
 pub fn activate_mock(state: &SubscriptionState) {
     let mut status = match state.status.lock() {
         Ok(g) => g,
-        Err(p) => p.into_inner(),
+        Err(p) => {
+            // If mutex is poisoned, still get the data to avoid crashing
+            p.into_inner()
+        }
     };
     status.is_active = true;
     // Set expiry to 30 days from now
