@@ -826,6 +826,7 @@ Rules:
   - STRICT RULE: Do NOT combine two or more words into one (e.g., do NOT use "thinbudget", use "thin, budget" instead).
   - Every keyword must be a single word.
   - Every keyword must be separated by a comma.
+  - If you cannot provide enough high-quality keywords, do NOT invent nonsense or combined words.
   Pick the most searched terms microstock buyers use: subject, action, setting, style, concept, industry, usage (e.g. background, banner, template, copyspace), and close synonyms. Order from most important to least.
 - Avoid irrelevant/trending terms and any brand/trademark names.
 - Banned characters: `~@#$%^&*()_+=-/\\][{{}}|';\":?/><` (Only . and , allowed).
@@ -1339,8 +1340,13 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
       let acc_text_usage = TokenUsage::default();
       let acc_text_cost = 0.0;
 
-      // --- LOGIC FLOW ---
-      
+      // --- LOGIC FLOW WITH RETRY FOR QUALITY ---
+      let mut quality_retry_count = 0;
+      let max_quality_retries = 2; // Total 3 attempts if quality is bad
+
+      while quality_retry_count <= max_quality_retries {
+          if cancel_requested() { return Err(anyhow!("CANCELLED_BY_USER")); }
+
     // Use Vision Model Logic (Case A & B)
     if selection_on && selection_order == "before" {
         // CASE B: Single pass (Metadata + Selection)
@@ -1473,11 +1479,25 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
         }
     }
 
-      if let Some(mut g) = generated {
+      if let Some(mut g) = generated.take() {
           g.app_balance_after = file_balance_after;
           g.app_tokens_deducted = if file_tokens_deducted > 0.0 { Some(file_tokens_deducted) } else { None };
           enforce_generation_contract(&mut g, req);
-          // Validation
+
+          // Quality Check: specifically for keyword merging and minimum requirements
+          let has_merged_keywords = g.keywords.iter().any(|k| k.len() > 14 && !k.contains('-'));
+          let too_few_keywords = g.keywords.len() < (req.keywords_min_count as usize);
+
+          if (has_merged_keywords || too_few_keywords) && quality_retry_count < max_quality_retries {
+              quality_retry_count += 1;
+              let _ = window.emit("csv_log", serde_json::json!({
+                  "text": format!("> Quality check failed for {}, retrying ({})...", Path::new(f).file_name().unwrap_or_default().to_string_lossy(), quality_retry_count),
+                  "status": "warning"
+              }));
+              continue;
+          }
+
+          // Final Validation
            if valid(&g, req) { 
                 ensure_unique_title(&mut g, &mut used_title_keys, &mut used_title_norms, req);
                 out.push(g);
@@ -1486,6 +1506,7 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
                ensure_unique_title(&mut g, &mut used_title_keys, &mut used_title_norms, req);
                out.push(g);
            }
+           break; // Success or final attempt
       } else {
            // Check if the error was a Safety Block (common with Gemini)
            let lower = last_error.to_lowercase();
@@ -1493,6 +1514,11 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
            let is_safety = is_safety_block_error(&lower) && !is_rate_limited;
            let tokens_deducted = if file_tokens_deducted > 0.0 { Some(file_tokens_deducted) } else { None };
                 
+           if quality_retry_count < max_quality_retries && !is_rate_limited && !is_safety {
+               quality_retry_count += 1;
+               continue;
+           }
+
            if is_safety && selection_on {
                 // Treat as Rejected (NSFW/Safety)
                 out.push(Generated {
@@ -1538,7 +1564,9 @@ pub async fn generate_batch(req: &crate::api::BatchReq) -> Result<Vec<Generated>
                     text_model: None,
                });
            }
+           break; // Error and no more retries
       }
+    } // end quality retry while
   }
   Ok(out)
 }
@@ -1936,11 +1964,6 @@ fn enforce_generation_contract(g: &mut Generated, req: &crate::api::BatchReq) {
 
         if (cur_words.len() as u32) < tmin {
             push_words_from_text(&g.category, &mut cur_words, &mut seen_title);
-        }
-        if (cur_words.len() as u32) < tmin {
-            if let Some(stem) = std::path::Path::new(&g.file_path).file_stem().and_then(|s| s.to_str()) {
-                push_words_from_text(stem, &mut cur_words, &mut seen_title);
-            }
         }
 
         if !cur_words.is_empty() {

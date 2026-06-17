@@ -86,9 +86,17 @@ pub async fn run_clustering(window: Window, input_folder: &str, threshold: f64) 
              // Ignore some common stderr noise from python libraries if needed
              if l.trim().is_empty() { continue; }
              
+             // Check if it's just a warning or info
+             let lower = l.to_lowercase();
+             let status = if lower.contains("warning") || lower.contains("futurewarning") || lower.contains("deprecated") || lower.contains("info") {
+                 "processing"
+             } else {
+                 "error"
+             };
+
              let _ = window_clone2.emit("ai_cluster_log", serde_json::json!({
                  "text": format!("[STDERR] {}", l),
-                 "status": "error"
+                 "status": status
              }));
         }
     });

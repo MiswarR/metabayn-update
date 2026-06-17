@@ -5,6 +5,10 @@ import argparse
 import shutil
 import subprocess
 import numpy as np
+import warnings
+
+# Suppress warnings for cleaner logs
+warnings.filterwarnings("ignore")
 
 # Setup logging to stdout for Tauri to capture
 def log_message(text, status="processing", detail=None, file=None, extra=None):
