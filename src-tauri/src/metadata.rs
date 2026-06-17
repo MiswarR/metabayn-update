@@ -823,6 +823,9 @@ Rules:
 - Title: {} to {} words. Clear, buyer-intent, not keyword-stuffed. Start with main subject, then action/context/style if relevant. Use natural English.
 - {} 
 - Keywords: {} to {} tags. Single English words only, comma separated. No duplicates.
+  - STRICT RULE: Do NOT combine two or more words into one (e.g., do NOT use "thinbudget", use "thin, budget" instead).
+  - Every keyword must be a single word.
+  - Every keyword must be separated by a comma.
   Pick the most searched terms microstock buyers use: subject, action, setting, style, concept, industry, usage (e.g. background, banner, template, copyspace), and close synonyms. Order from most important to least.
 - Avoid irrelevant/trending terms and any brand/trademark names.
 - Banned characters: `~@#$%^&*()_+=-/\\][{{}}|';\":?/><` (Only . and , allowed).
@@ -2025,19 +2028,6 @@ fn enforce_generation_contract(g: &mut Generated, req: &crate::api::BatchReq) {
     }
     if kw_min > 0 && (out.len() as u32) < kw_min {
         push_from_text(&g.category, &mut out, &mut seen);
-    }
-    if kw_min > 0 && (out.len() as u32) < kw_min {
-        use std::path::Path;
-        if let Some(stem) = Path::new(&g.file_path).file_stem().and_then(|s| s.to_str()) {
-            let lower = stem.to_lowercase();
-            let clean = lower.replace(|c: char| !c.is_ascii_alphanumeric(), " ");
-            for token in clean.split_whitespace() {
-                if out.len() as u32 >= kw_min { break; }
-                if !is_meaningful_token(token, &stopwords, &banned_list) { continue; }
-                let t = token.trim().to_string();
-                if seen.insert(t.clone()) { out.push(t); }
-            }
-        }
     }
 
     if kw_min > 0 && (out.len() as u32) < kw_min {
