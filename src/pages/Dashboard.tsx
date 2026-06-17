@@ -119,7 +119,30 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
   const [logs,setLogs]=useState<any[]>([])
   const pushLog = React.useCallback((entry: any) => {
     setLogs(prev => {
-      const next = [...prev, entry]
+      const entryId = entry.id;
+      const entryFile = entry.file;
+      const entryStatus = entry.status;
+
+      if (entryId) {
+        const idx = prev.findIndex(l => l.id === entryId);
+        if (idx >= 0) {
+          const newLogs = [...prev];
+          newLogs[idx] = { ...newLogs[idx], ...entry };
+          return newLogs;
+        }
+      }
+
+      if (entryFile && entryStatus && entryStatus !== 'processing') {
+        const idx = prev.findIndex(l => l.file === entryFile && l.status === 'processing');
+        if (idx >= 0) {
+          const newLogs = [...prev];
+          newLogs[idx] = { ...newLogs[idx], ...entry, id: prev[idx].id };
+          return newLogs;
+        }
+      }
+
+      const nextEntry = { ...entry, id: entryId || `${Date.now()}-${Math.random().toString(36).substring(2, 7)}` }
+      const next = [...prev, nextEntry]
       if (next.length > 2000) next.splice(0, next.length - 2000)
       return next
     })
@@ -506,18 +529,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       }
 
       applyToolStats('csv', payload)
-      setLogs(prev => {
-          // Update existing log if file matches and previous status was processing
-          if (payload.file) {
-             const idx = prev.findIndex(l => l.file === payload.file && l.status === 'processing');
-             if (idx >= 0) {
-                 const newLogs = [...prev];
-                 newLogs[idx] = { ...newLogs[idx], ...logItem };
-                 return newLogs;
-             }
-          }
-          return [...prev, logItem];
-      });
+      pushLog(logItem)
     });
     return () => {
       unlistenPromise.then(unlisten => unlisten());
@@ -553,17 +565,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         };
       }
       applyToolStats('dup', payload)
-      setLogs(prev => {
-        if ((payload as any).file) {
-          const idx = prev.findIndex(l => l.file === (payload as any).file && l.status === 'processing');
-          if (idx >= 0) {
-            const newLogs = [...prev];
-            newLogs[idx] = { ...newLogs[idx], ...logItem };
-            return newLogs;
-          }
-        }
-        return [...prev, logItem];
-      });
+      pushLog(logItem)
     });
     return () => { unlistenPromise.then(unlisten => unlisten()); };
   }, []);
@@ -646,17 +648,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
             }
 
             applyToolStats('tools', payload)
-            setLogs(prev => {
-                if ((payload as any).file) {
-             const idx = prev.findIndex(l => l.file === (payload as any).file && l.status === 'processing');
-             if (idx >= 0) {
-                 const newLogs = [...prev];
-                 newLogs[idx] = { ...newLogs[idx], ...logItem };
-                 return newLogs;
-             }
-          }
-          return [...prev, logItem];
-      });
+            pushLog(logItem)
     });
     return () => { unlistenPromise.then(unlisten => unlisten()); };
   }, [toolT, lang, formatLogText, applyToolStats]);
@@ -739,17 +731,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       }
 
       applyToolStats('tools', payload)
-      setLogs(prev => {
-        if ((payload as any).file) {
-          const idx = prev.findIndex(l => l.file === (payload as any).file && l.status === 'processing');
-          if (idx >= 0) {
-            const newLogs = [...prev];
-            newLogs[idx] = { ...newLogs[idx], ...logItem };
-            return newLogs;
-          }
-        }
-        return [...prev, logItem];
-      });
+      pushLog(logItem)
     });
     return () => { unlistenPromise.then(unlisten => unlisten()); };
   }, [toolT, lang, formatLogText, applyToolStats]);
@@ -784,17 +766,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
             }
 
             applyToolStats('ai', payload)
-            setLogs(prev => {
-                if ((payload as any).file) {
-             const idx = prev.findIndex(l => l.file === (payload as any).file && l.status === 'processing');
-             if (idx >= 0) {
-                 const newLogs = [...prev];
-                 newLogs[idx] = { ...newLogs[idx], ...logItem };
-                 return newLogs;
-             }
-          }
-          return [...prev, logItem];
-      });
+            pushLog(logItem)
     });
     return () => {
       unlistenPromise.then(unlisten => unlisten());
@@ -829,17 +801,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         };
       }
       applyToolStats('tools', payload)
-      setLogs(prev => {
-        if ((payload as any).file) {
-          const idx = prev.findIndex(l => l.file === (payload as any).file && l.status === 'processing');
-          if (idx >= 0) {
-            const newLogs = [...prev];
-            newLogs[idx] = { ...newLogs[idx], ...logItem };
-            return newLogs;
-          }
-        }
-        return [...prev, logItem];
-      });
+      pushLog(logItem)
     });
     return () => { unlistenPromise.then(unlisten => unlisten()); };
   }, []);
@@ -1088,7 +1050,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
          if(s.input_folder) {
              // setLogs(l=>[...l, {text:'Refreshing file count...', color:'#aaa'}])
              const files = await scan(s.input_folder);
-             setLogs(l=>[...l, {text: pl('rescanCompleteFound', { count: files.length }), color:'#4caf50'}])
+             pushLog({text: pl('rescanCompleteFound', { count: files.length }), color:'#4caf50'})
          }
      } catch(e) {}
   }
@@ -1102,7 +1064,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     enableKeepAlive();
     try {
         setStats({total:0, done:0, success:0, failed:0, rejected:0});
-    setLogs(l=>[...l, {text: pl('scanning'), color:'#aaa'}])
+    pushLog({id: 'scan-init', text: pl('scanning'), color:'#aaa'})
     setProgress(0)
     setStopped(false); stoppedRef.current = false;
     setCriticalError(null);
@@ -1129,7 +1091,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         }
       }
     }
-    setLogs(l=>[...l, {text: pl('folder', { path: s.input_folder||'(None)' }), color:'#aaa'}])
+    pushLog({id: 'folder-info', text: pl('folder', { path: s.input_folder||'(None)' }), color:'#aaa'})
 
     // --- FIX: Define batchTimestamp and ensureCsvHeader here so they are available to processFile ---
     const now = new Date();
@@ -1193,21 +1155,21 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         const savedKey = localStorage.getItem('metabayn_api_key_enc');
         const savedIv = localStorage.getItem('metabayn_api_key_iv');
         if (!savedKey || !savedIv) {
-          setLogs(l=>[...l, {text: pl('apiKeyMissing'), color:'#f44336'}]);
+          pushLog({text: pl('apiKeyMissing'), color:'#f44336'});
           return;
         }
         directApiKey = (await decryptApiKey(savedKey, savedIv, deviceSecret)).trim();
         if (!directApiKey) {
-          setLogs(l=>[...l, {text: pl('apiKeyEmpty'), color:'#f44336'}]);
+          pushLog({text: pl('apiKeyEmpty'), color:'#f44336'});
           return;
         }
-        setLogs(l=>[...l, {text: pl('directModeEnabled', { provider: String(s.ai_provider||'AI') }), color:'#4caf50', hidden:true}]);
+        pushLog({text: pl('directModeEnabled', { provider: String(s.ai_provider||'AI') }), color:'#4caf50', hidden:true});
       } catch (e:any) {
-        setLogs(l=>[...l, {text: pl('failedReadApiKey'), detail: String(e), color:'#f44336'}]);
+        pushLog({text: pl('failedReadApiKey'), detail: String(e), color:'#f44336'});
         return;
       }
     } else {
-      setLogs(l=>[...l, {text: pl('gatewayModeEnabled'), color:'#4caf50', hidden:true}]);
+      pushLog({text: pl('gatewayModeEnabled'), color:'#4caf50', hidden:true});
     }
     
     // --- FIX: CSV Headers are now initialized on-demand inside processFile ---
@@ -1229,7 +1191,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
 
     const rawModel = String(s.default_model ?? '').trim();
     if (!rawModel) {
-      setLogs(l=>[...l, {text: pl('modelNotSelected'), color:'#f44336'}]);
+      pushLog({text: pl('modelNotSelected'), color:'#f44336'});
       stopProcessSystem(pl('modelNotSelectedDetail'));
       return;
     }
@@ -1429,7 +1391,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
 
         try {
             // Stop 'Starting...' animation if it's still running
-            setLogs(l => l.map(x => x.id === 'starting' ? { ...x, animating: false } : x));
+            pushLog({ id: 'starting', animating: false });
 
             const pickActualModel = (g: any): string => {
               const v = String((g && (g.vision_model || g.text_model || g.source || g.gen_provider)) || '').trim();
@@ -1574,13 +1536,13 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
                         }
                     }
 
-                    setLogs(l => l.map(x => x.id === logId ? { 
-                        ...x, 
+                    pushLog({
+                        id: logId,
                         text: isRejection ? `[${t.dashboard.reject}] ${fileName}` : `[${t.dashboard.failed}] ${fileName}`, 
                         detail: detailMsg, 
                         color: isRejection ? '#ff9800' : '#f44336', 
                         animating: false 
-                    } : x));
+                    });
                     
                     if (!isRejection) {
                          setStats(st=>({...st, failed: st.failed+1}));
@@ -1760,7 +1722,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
                         writeSuccess = true;
                     } catch(e:any){ 
                         setStats(st=>({...st,failed:st.failed+1}));
-                        setLogs(l => l.map(x => x.id === logId ? { ...x, text: pl('failedWrite', { name: fileName }), detail: localizeBackendError(String(e)), color:'#f44336', animating: false } : x));
+                        pushLog({ id: logId, text: pl('failedWrite', { name: fileName }), detail: localizeBackendError(String(e)), color:'#f44336', animating: false });
                     }
                 } else {
                     try{ 
@@ -1768,7 +1730,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
                         writeSuccess = true;
                     } catch(e:any){ 
                         setStats(st=>({...st,failed:st.failed+1}));
-                        setLogs(l => l.map(x => x.id === logId ? { ...x, text: pl('failedWrite', { name: fileName }), detail: localizeBackendError(String(e)), color:'#f44336', animating: false } : x));
+                        pushLog({ id: logId, text: pl('failedWrite', { name: fileName }), detail: localizeBackendError(String(e)), color:'#f44336', animating: false });
                     }
                 }
 
@@ -1810,13 +1772,13 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
                     
                     // Update existing log in-place
                     const isRejected = (g.selection_status || '').toLowerCase() === 'rejected';
-                    setLogs(l => l.map(x => x.id === logId ? { 
-                        ...x, 
+                    pushLog({
+                        id: logId,
                         text: isRejected ? `[${t.dashboard.reject}] ${fileName}` : `[${t.dashboard.success}] ${fileName}`, 
                         detail: tokenDetail, // Add detail for the modal log
                         color: isRejected ? '#ff9800' : '#4caf50', 
                         animating: false 
-                    } : x));
+                    });
                     
                     if (doDeleteOriginal) {
                         try {
@@ -1885,10 +1847,10 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
             if (!isCancelled) {
               const isTimeout = msg.includes(' timeout') || /\btimeout\b/i.test(msg)
               const detail = isTimeout ? pl('timeoutDetail') : localizeBackendError(msg)
-              setLogs(l => l.map(x => x.id === logId ? { ...x, text: pl('systemError', { name: fileName }), detail, color:'#f44336', animating: false } : x));
+              pushLog({ id: logId, text: pl('systemError', { name: fileName }), detail, color:'#f44336', animating: false });
               setStats(st=>({...st, failed: st.failed+1}));
             } else {
-              setLogs(l => l.map(x => x.id === logId ? { ...x, text: pl('cancelled', { name: fileName }), detail: '', color:'#ff9800', animating: false } : x));
+              pushLog({ id: logId, text: pl('cancelled', { name: fileName }), detail: '', color:'#ff9800', animating: false });
             }
             invoke('log_audit_event', {
               event_type: 'error',
@@ -1899,7 +1861,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
             // Stop animation for this file
             if (!fileRemoved) filesStayingInInputCount++;
             if (finalStatus) markFileStatus(file, finalStatus)
-            setLogs(l => l.map(x => x.id === logId ? { ...x, animating: false } : x));
+            pushLog({ id: logId, animating: false });
             i++; setStats(st=>({...st,done:i})); setProgress(Math.round((i/totalCount)*100));
             trackAutoStop(finalStatus, currentFileName || '')
         }
@@ -2004,8 +1966,8 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     return start(!!st)
   }
 
-  async function generateCSV(){
-    if (!isTauri) { setLogs(l=>[...l,{text: pl('csvGenTauriOnly'), color:'#ff9800'}]); return }
+  const generateCSV = React.useCallback(async () => {
+    if (!isTauri) { pushLog({text: pl('csvGenTauriOnly'), color:'#ff9800'}); return }
     try {
         const inputDir = await dialogOpen({
             directory: true,
@@ -2079,8 +2041,8 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         if (!apiKey) throw new Error('Missing API key')
 
         // Log: Start (Grey color, animating)
-        const logId = Date.now();
-        setLogs(l => [...l, { id: logId, text: pl('csvGenGeneratingFrom', { path: inputDir }), color: '#aaa', animating: true }]);
+        const logId = `csv-gen-${Date.now()}`;
+        pushLog({ id: logId, text: pl('csvGenGeneratingFrom', { path: inputDir }), color: '#aaa', animating: true });
         isCsvToolsRunningRef.current = true;
         
         // Output folder is same as input folder
@@ -2098,29 +2060,29 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         });
         
         // Log: Success (Update previous log to stop animation, add new success log)
-        setLogs(l => l.map(x => x.id === logId ? { ...x, animating: false } : x));
-        setLogs(l => [...l, { text: pl('csvGenSuccess', { result: res }), color: '#4caf50' }]);
+        pushLog({ id: logId, animating: false });
+        pushLog({ text: pl('csvGenSuccess', { result: res }), color: '#4caf50' });
     } catch (e) {
-        setLogs(l => l.map(x => x.animating ? { ...x, animating: false } : x)); // Stop all animations
-        setLogs(l => [...l, { text: pl('csvGenFailed', { error: String(e) }), color: '#f44336' }]);
+        pushLog({ id: logId, animating: false });
+        pushLog({ text: pl('csvGenFailed', { error: String(e) }), color: '#f44336' });
     } finally {
         isCsvToolsRunningRef.current = false;
     }
-  }
-  async function openDupConfig(){
+  }, [pl, token, openLicenseActivation])
+  const openDupConfig = React.useCallback(async () => {
     setShowDupModal(true)
     // Removed log to avoid confusion when opening config
-  }
-  async function openResizeConfig(){
+  }, [])
+  const openResizeConfig = React.useCallback(async () => {
     setShowResizeModal(true)
-  }
-  async function openConvertConfig(){
+  }, [])
+  const openConvertConfig = React.useCallback(async () => {
     setShowConvertModal(true)
-  }
-  async function openPromptGrabberConfig(){
+  }, [])
+  const openPromptGrabberConfig = React.useCallback(async () => {
     setPgMinimized(false)
     if (!isTauri) {
-      setLogs(l=>[...l,{text: '[PromptGrabber] Feature only available in Tauri app', color:'#ff9800'}])
+      pushLog({text: '[PromptGrabber] Feature only available in Tauri app', color:'#ff9800'})
       return
     }
     try {
@@ -2152,13 +2114,13 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       } catch (e:any) {
         const msg = String(e?.message || e || '').replace('Error: ', '').trim()
         toast('Prompt Grabber', msg || (lang === 'id' ? 'Gagal cek lisensi' : 'License check failed'), 'error')
-        setLogs(l=>[...l,{text: `[PromptGrabber] Gagal cek lisensi: ${msg || String(e)}`, color:'#f44336'}])
+        pushLog({text: `[PromptGrabber] Gagal cek lisensi: ${msg || String(e)}`, color:'#f44336'})
         return false
       }
     })()
     if (!ok) return
     setShowPromptGrabberModal(true)
-  }
+  }, [token, lang, toast])
   async function pgPremiumRecheckAndOpen(){
     if (pgPremiumBusy) return
     setPgPremiumBusy(true)
@@ -2183,7 +2145,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     } catch (e:any) {
       const msg = String(e?.message || e || '').replace('Error: ', '').trim()
       setPgPremiumError(msg || (lang === 'id' ? 'Gagal cek lisensi' : 'License check failed'))
-      setLogs(l=>[...l,{text: `[PromptGrabber] Premium check failed: ${msg || String(e)}`, color:'#f44336'}])
+      pushLog({text: `[PromptGrabber] Premium check failed: ${msg || String(e)}`, color:'#f44336'})
     } finally {
       setPgPremiumBusy(false)
     }
@@ -2207,13 +2169,13 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     } catch (e:any) {
       const msg = String(e?.message || e || '').replace('Error: ', '').trim()
       setPgPremiumError(msg || (lang === 'id' ? 'Gagal aktivasi' : 'Activation failed'))
-      setLogs(l=>[...l,{text: `[PromptGrabber] Premium activation failed: ${msg || String(e)}`, color:'#f44336'}])
+      pushLog({text: `[PromptGrabber] Premium activation failed: ${msg || String(e)}`, color:'#f44336'})
     } finally {
       setPgPremiumBusy(false)
     }
   }
   async function pickPromptGrabberFolder(){
-    if (!isTauri) { setLogs(l=>[...l,{text: '[PromptGrabber] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    if (!isTauri) { pushLog({text: '[PromptGrabber] Feature only available in Tauri app', color:'#ff9800'}); return }
     const inputDir = await dialogOpen({ directory: true, multiple: false, title: 'Select Folder (Prompt Grabber)' });
     if (inputDir) {
       const dir = String(inputDir)
@@ -2223,10 +2185,10 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     }
   }
   async function runPromptGrabberScan(dirOverride?: string){
-    if (!isTauri) { setLogs(l=>[...l,{text: '[PromptGrabber] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    if (!isTauri) { pushLog({text: '[PromptGrabber] Feature only available in Tauri app', color:'#ff9800'}); return }
     const inputDir = String(dirOverride || pgInputDir || '').trim()
     if (!inputDir) {
-      setLogs(l=>[...l,{text: '[PromptGrabber] No input folder selected', color:'#ff9800'}])
+      pushLog({text: '[PromptGrabber] No input folder selected', color:'#ff9800'})
       toast('Prompt Grabber', lang === 'id' ? 'Folder belum dipilih' : 'No folder selected', 'error')
       return
     }
@@ -2256,7 +2218,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         if (p) sel[p] = true
       }
       setPgSelected(sel)
-      setLogs(l=>[...l,{text: `[PromptGrabber] Scan selesai: ${list.length} file`, color:'#4caf50'}])
+      pushLog({text: `[PromptGrabber] Scan selesai: ${list.length} file`, color:'#4caf50'})
       toast('Prompt Grabber', lang === 'id' ? `Scan selesai: ${list.length} file` : `Scan done: ${list.length} files`, 'success')
 
       const paths = list.map((it: any) => String(it?.file_path || '')).filter(Boolean)
@@ -2293,7 +2255,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       }
       void runChunk(0)
     } catch (e:any) {
-      setLogs(l=>[...l,{text: `[PromptGrabber] Scan gagal: ${String(e)}`, color:'#f44336'}])
+      pushLog({text: `[PromptGrabber] Scan gagal: ${String(e)}`, color:'#f44336'})
       toast('Prompt Grabber', lang === 'id' ? 'Scan gagal' : 'Scan failed', 'error')
     } finally {
       setPgScanning(false)
@@ -2316,7 +2278,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     if (!isTauri) return
     try {
       await invoke('cancel_prompt_grabber')
-      setLogs(l=>[...l,{text: '[PromptGrabber] Stop diminta. Menunggu proses yang berjalan...', color:'#ff9800'}])
+      pushLog({text: '[PromptGrabber] Stop diminta. Menunggu proses yang berjalan...', color:'#ff9800'})
       toast('Prompt Grabber', lang === 'id' ? 'Stop diminta' : 'Stop requested', 'info')
     } catch {}
   }
@@ -2325,10 +2287,10 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       const text = String(pgOutputText || '')
       if (!text.trim()) return
       await navigator.clipboard.writeText(text)
-      setLogs(l=>[...l,{text: '[PromptGrabber] Output berhasil disalin', color:'#4caf50'}])
+      pushLog({text: '[PromptGrabber] Output berhasil disalin', color:'#4caf50'})
       toast('Prompt Grabber', lang === 'id' ? 'Output telah di-copy' : 'Output copied', 'success')
     } catch (e:any) {
-      setLogs(l=>[...l,{text: `[PromptGrabber] Gagal copy: ${String(e)}`, color:'#f44336'}])
+      pushLog({text: `[PromptGrabber] Gagal copy: ${String(e)}`, color:'#f44336'})
       toast('Prompt Grabber', lang === 'id' ? 'Gagal copy' : 'Copy failed', 'error')
     }
   }
@@ -2339,11 +2301,11 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       if (!content.trim()) return
       if (!String(pgInputDir || '').trim()) throw new Error(lang === 'id' ? 'Folder input belum dipilih' : 'Input folder not selected')
       const outPath = await invoke<string>('prompt_grabber_save_file', { input_folder: pgInputDir, file_name: 'prompt.txt', content })
-      setLogs(l=>[...l,{text: `[PromptGrabber] TXT tersimpan: ${String(outPath || '')}`, color:'#4caf50'}])
+      pushLog({text: `[PromptGrabber] TXT tersimpan: ${String(outPath || '')}`, color:'#4caf50'})
       toast('Prompt Grabber', lang === 'id' ? 'File prompt.txt tersimpan di folder input' : 'prompt.txt saved in input folder', 'success')
     } catch (e:any) {
       const msg = String(e?.message || e || '').replace('Error: ', '').trim()
-      setLogs(l=>[...l,{text: `[PromptGrabber] Gagal simpan TXT: ${msg || String(e)}`, color:'#f44336'}])
+      pushLog({text: `[PromptGrabber] Gagal simpan TXT: ${msg || String(e)}`, color:'#f44336'})
       toast('Prompt Grabber', lang === 'id' ? `Gagal simpan TXT: ${msg || 'Unknown error'}` : `Failed to save TXT: ${msg || 'Unknown error'}`, 'error')
     }
   }
@@ -2362,11 +2324,11 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       const esc = (v: string): string => `"${String(v || '').replace(/"/g, '""')}"`
       const csv = ['file_name,prompt', ...rows.map(r => `${esc(r.file_name)},${esc(r.prompt)}`)].join('\n')
       const outPath = await invoke<string>('prompt_grabber_save_file', { input_folder: pgInputDir, file_name: 'prompt.csv', content: csv })
-      setLogs(l=>[...l,{text: `[PromptGrabber] CSV tersimpan: ${String(outPath || '')}`, color:'#4caf50'}])
+      pushLog({text: `[PromptGrabber] CSV tersimpan: ${String(outPath || '')}`, color:'#4caf50'})
       toast('Prompt Grabber', lang === 'id' ? 'File prompt.csv tersimpan di folder input' : 'prompt.csv saved in input folder', 'success')
     } catch (e:any) {
       const msg = String(e?.message || e || '').replace('Error: ', '').trim()
-      setLogs(l=>[...l,{text: `[PromptGrabber] Gagal simpan CSV: ${msg || String(e)}`, color:'#f44336'}])
+      pushLog({text: `[PromptGrabber] Gagal simpan CSV: ${msg || String(e)}`, color:'#f44336'})
       toast('Prompt Grabber', lang === 'id' ? `Gagal simpan CSV: ${msg || 'Unknown error'}` : `Failed to save CSV: ${msg || 'Unknown error'}`, 'error')
     }
   }
@@ -2376,10 +2338,10 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     toast('Prompt Grabber', lang === 'id' ? 'Output dibersihkan' : 'Output cleared', 'info')
   }
   async function runPromptGrabberGenerate(){
-    if (!isTauri) { setLogs(l=>[...l,{text: '[PromptGrabber] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    if (!isTauri) { pushLog({text: '[PromptGrabber] Feature only available in Tauri app', color:'#ff9800'}); return }
     const selectedFiles = Object.keys(pgSelected || {}).filter(k => pgSelected[k])
     if (selectedFiles.length === 0) {
-      setLogs(l=>[...l,{text: '[PromptGrabber] Tidak ada file yang dipilih', color:'#ff9800'}])
+      pushLog({text: '[PromptGrabber] Tidak ada file yang dipilih', color:'#ff9800'})
       toast('Prompt Grabber', lang === 'id' ? 'Tidak ada file yang dipilih' : 'No files selected', 'error')
       return
     }
@@ -2464,11 +2426,11 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         .filter(Boolean)
         .join('\n\n')
       setPgOutputText(text)
-      setLogs(l=>[...l,{text: `[PromptGrabber] Generate selesai: ${list.length} file`, color:'#4caf50'}])
+      pushLog({text: `[PromptGrabber] Generate selesai: ${list.length} file`, color:'#4caf50'})
       setPgMiniStatus('done')
       toast('Prompt Grabber', lang === 'id' ? `Selesai: ${list.length} file` : `Done: ${list.length} files`, 'success')
     } catch (e:any) {
-      setLogs(l=>[...l,{text: `[PromptGrabber] Generate gagal: ${String(e)}`, color:'#f44336'}])
+      pushLog({text: `[PromptGrabber] Generate gagal: ${String(e)}`, color:'#f44336'})
       setPgMiniStatus('idle')
       toast('Prompt Grabber', lang === 'id' ? 'Generate gagal' : 'Generate failed', 'error')
     } finally {
@@ -2476,30 +2438,30 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     }
   }
   async function pickConvertInputFolder(){
-    if (!isTauri) { setLogs(l=>[...l,{text: '[Convert] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    if (!isTauri) { pushLog({text: '[Convert] Feature only available in Tauri app', color:'#ff9800'}); return }
     const inputDir = await dialogOpen({ directory: true, multiple: false, title: toolT?.selectFolderConvert || 'Select Folder (Convert)' });
     if (inputDir) setConvertInputDir(String(inputDir))
   }
   async function pickConvertOutputFolder(){
-    if (!isTauri) { setLogs(l=>[...l,{text: '[Convert] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    if (!isTauri) { pushLog({text: '[Convert] Feature only available in Tauri app', color:'#ff9800'}); return }
     const outputDir = await dialogOpen({ directory: true, multiple: false, title: toolT?.convertOutputFolder || 'Output Folder' });
     if (outputDir) setConvertOutputDir(String(outputDir))
   }
   async function runConvert(){
-    if (!isTauri) { setLogs(l=>[...l,{text: '[Convert] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    if (!isTauri) { pushLog({text: '[Convert] Feature only available in Tauri app', color:'#ff9800'}); return }
     if (!convertInputDir) {
-      setLogs(l=>[...l,{text: '[Convert] No input folder selected', color:'#ff9800'}])
+      pushLog({text: '[Convert] No input folder selected', color:'#ff9800'})
       return
     }
     if (!convertOutputDir) {
-      setLogs(l=>[...l,{text: '[Convert] No output folder selected', color:'#ff9800'}])
+      pushLog({text: '[Convert] No output folder selected', color:'#ff9800'})
       return
     }
     try {
       setConvertRunning(true)
       setShowConvertModal(false)
-      const logId = Date.now();
-      setLogs(l => [...l, { id: logId, text: pl('convertStarting', { path: convertInputDir }), color: '#aaa', animating: true }]);
+      const logId = `convert-${Date.now()}`;
+      pushLog({ id: logId, text: pl('convertStarting', { path: convertInputDir }), color: '#aaa', animating: true });
       const res = await invoke<string>('convert_media_batch', {
         req: {
           input_folder: convertInputDir,
@@ -2509,40 +2471,40 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
           quality: convertQuality
         }
       });
-      setLogs(l => l.map(x => x.id === logId ? { ...x, animating: false } : x));
-      setLogs(l => [...l, { text: pl('convertCompleted', { result: res }), color: '#4caf50' }]);
+      pushLog({ id: logId, animating: false });
+      pushLog({ text: pl('convertCompleted', { result: res }), color: '#4caf50' });
     } catch (e:any) {
-      setLogs(l => l.map(x => x.animating ? { ...x, animating: false } : x));
-      setLogs(l => [...l, { text: pl('convertFailed', { error: String(e) }), color: '#f44336' }]);
+      pushLog({ id: logId, animating: false });
+      pushLog({ text: pl('convertFailed', { error: String(e) }), color: '#f44336' });
     } finally {
       setConvertRunning(false)
     }
   }
   async function pickResizeInputFolder(){
-    if (!isTauri) { setLogs(l=>[...l,{text: '[Resize] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    if (!isTauri) { pushLog({text: '[Resize] Feature only available in Tauri app', color:'#ff9800'}); return }
     const inputDir = await dialogOpen({ directory: true, multiple: false, title: toolT?.selectFolderResize || 'Select Folder (Images/Videos)' });
     if (inputDir) setResizeInputDir(String(inputDir))
   }
   async function pickResizeOutputFolder(){
-    if (!isTauri) { setLogs(l=>[...l,{text: '[Resize] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    if (!isTauri) { pushLog({text: '[Resize] Feature only available in Tauri app', color:'#ff9800'}); return }
     const outputDir = await dialogOpen({ directory: true, multiple: false, title: toolT?.resizeOutputFolder || 'Output Folder' });
     if (outputDir) setResizeOutputDir(String(outputDir))
   }
   async function runResize(){
-    if (!isTauri) { setLogs(l=>[...l,{text: '[Resize] Feature only available in Tauri app', color:'#ff9800'}]); return }
+    if (!isTauri) { pushLog({text: '[Resize] Feature only available in Tauri app', color:'#ff9800'}); return }
     if (!resizeInputDir) {
-      setLogs(l=>[...l,{text: '[Resize] No input folder selected', color:'#ff9800'}])
+      pushLog({text: '[Resize] No input folder selected', color:'#ff9800'})
       return
     }
     if (!resizeOutputDir) {
-      setLogs(l=>[...l,{text: '[Resize] No output folder selected', color:'#ff9800'}])
+      pushLog({text: '[Resize] No output folder selected', color:'#ff9800'})
       return
     }
     try {
       setResizeRunning(true)
       setShowResizeModal(false)
-      const logId = Date.now();
-      setLogs(l => [...l, { id: logId, text: pl('resizeStarting', { path: resizeInputDir }), color: '#aaa', animating: true }]);
+      const logId = `resize-${Date.now()}`;
+      pushLog({ id: logId, text: pl('resizeStarting', { path: resizeInputDir }), color: '#aaa', animating: true });
       const parsedWidth = Math.max(1, Math.min(10000, Math.round(Number(String(resizeWidth || '').trim())) || 0))
       const parsedHeight = Math.max(1, Math.min(10000, Math.round(Number(String(resizeHeight || '').trim())) || 0))
       const res = await invoke<string>('resize_media_batch', { 
@@ -2557,48 +2519,48 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
           quality: resizeQuality
         }
       });
-      setLogs(l => l.map(x => x.id === logId ? { ...x, animating: false } : x));
-      setLogs(l => [...l, { text: pl('resizeCompleted', { result: res }), color: '#4caf50' }]);
+      pushLog({ id: logId, animating: false });
+      pushLog({ text: pl('resizeCompleted', { result: res }), color: '#4caf50' });
     } catch (e:any) {
-      setLogs(l => l.map(x => x.animating ? { ...x, animating: false } : x));
-      setLogs(l => [...l, { text: pl('resizeFailed', { error: String(e) }), color: '#f44336' }]);
+      pushLog({ id: logId, animating: false });
+      pushLog({ text: pl('resizeFailed', { error: String(e) }), color: '#f44336' });
     } finally {
       setResizeRunning(false)
     }
   }
 
   async function pickDupFolder(){
-    if (!isTauri) { setLogs(l=>[...l,{text: pl('duplicateTauriOnly'), color:'#ff9800'}]); return }
+    if (!isTauri) { pushLog({text: pl('duplicateTauriOnly'), color:'#ff9800'}); return }
     const inputDir = await dialogOpen({ directory: true, multiple: false, title: pl('selectFolderImagesVideos') });
     if (inputDir) setDupInputDir(String(inputDir))
   }
 
   async function runDupScan(){
-    if (!isTauri) { setLogs(l=>[...l,{text: pl('duplicateTauriOnly'), color:'#ff9800'}]); return }
+    if (!isTauri) { pushLog({text: pl('duplicateTauriOnly'), color:'#ff9800'}); return }
     if (!dupInputDir) {
-      setLogs(l=>[...l,{text: pl('duplicateNoFolderSelected'), color:'#ff9800'}])
+      pushLog({text: pl('duplicateNoFolderSelected'), color:'#ff9800'})
       return
     }
     try {
       setDupRunning(true)
-      const logId = Date.now();
-      setLogs(l => [...l, { id: logId, text: pl('duplicateStartingScan', { path: dupInputDir }), color: '#aaa', animating: true }]);
+      const logId = `dup-${Date.now()}`;
+      pushLog({ id: logId, text: pl('duplicateStartingScan', { path: dupInputDir }), color: '#aaa', animating: true });
       console.log("[Duplicate] Invoking command with:", { input_folder: dupInputDir, auto_delete: dupAutoDelete, threshold: dupThreshold });
       const res = await invoke<string>('detect_duplicate_images', { input_folder: dupInputDir, inputFolder: dupInputDir, auto_delete: dupAutoDelete, autoDelete: dupAutoDelete, threshold: dupThreshold });
       console.log("[Duplicate] Result:", res);
-      setLogs(l => l.map(x => x.id === logId ? { ...x, animating: false } : x));
-      setLogs(l => [...l, { text: pl('duplicateCompleted', { result: res }), color: '#4caf50' }]);
+      pushLog({ id: logId, animating: false });
+      pushLog({ text: pl('duplicateCompleted', { result: res }), color: '#4caf50' });
     } catch (e) {
       console.error("[Duplicate] Error:", e);
-      setLogs(l => l.map(x => x.animating ? { ...x, animating: false } : x));
-      setLogs(l => [...l, { text: pl('duplicateFailed', { error: String(e) }), color: '#f44336' }]);
+      pushLog({ id: logId, animating: false });
+      pushLog({ text: pl('duplicateFailed', { error: String(e) }), color: '#f44336' });
     } finally {
       setDupRunning(false)
     }
   }
 
-  async function runAiCluster(){
-    if (!isTauri) { setLogs(l=>[...l,{text: pl('aiClusterTauriOnly'), color:'#ff9800'}]); return }
+  const runAiCluster = React.useCallback(async () => {
+    if (!isTauri) { pushLog({text: pl('aiClusterTauriOnly'), color:'#ff9800'}); return }
     try {
         const inputDir = await dialogOpen({
             directory: true,
@@ -2608,20 +2570,20 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         if (!inputDir) return;
 
         // Log: Start
-        const logId = Date.now();
-        setLogs(l => [...l, { id: logId, text: pl('aiClusterStarting', { path: inputDir, threshold: '0.85' }), color: '#aaa', animating: true }]);
+        const logId = `ai-cluster-${Date.now()}`;
+        pushLog({ id: logId, text: pl('aiClusterStarting', { path: inputDir, threshold: '0.85' }), color: '#aaa', animating: true });
         
         // Threshold hardcoded to 0.85 for now as per python script default
         const res = await invoke<string>('run_ai_clustering', { inputFolder: inputDir, threshold: 0.85 });
         
         // Log: Success
-        setLogs(l => l.map(x => ({ ...x, animating: false })));
-        setLogs(l => [...l, { text: pl('aiClusterCompleted', { result: res }), color: '#4caf50' }]);
+        pushLog({ id: logId, animating: false });
+        pushLog({ text: pl('aiClusterCompleted', { result: res }), color: '#4caf50' });
     } catch (e) {
-        setLogs(l => l.map(x => ({ ...x, animating: false })));
-        setLogs(l => [...l, { text: pl('aiClusterFailed', { error: String(e) }), color: '#f44336' }]);
+        pushLog({ id: logId, animating: false });
+        pushLog({ text: pl('aiClusterFailed', { error: String(e) }), color: '#f44336' });
     }
-  }
+  }, [lang, pl])
   
 
   return (

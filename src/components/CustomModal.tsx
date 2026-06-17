@@ -15,7 +15,7 @@ interface CustomModalProps {
   secondaryDisabled?: boolean;
 }
 
-export default function CustomModal({
+function CustomModal({
   isOpen,
   type,
   title,
@@ -194,3 +194,5 @@ export default function CustomModal({
     </div>
   );
 }
+
+export default React.memo(CustomModal);
