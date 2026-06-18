@@ -49,6 +49,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       return 'en'
     }
   })
+  const noop = React.useCallback(() => {}, []);
   const t = (translations as any)[lang] || (translations as any)['en']
   const toolT = (t as any)?.settings?.tools || (translations as any)['en']?.settings?.tools || {}
   const openInAppWeb = React.useCallback(async (url: string, label: string, title: string, opts?: { mobile?: boolean }) => {
@@ -119,7 +120,11 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
   const [logs,setLogs]=useState<any[]>([])
   const pushLog = React.useCallback((entry: any) => {
     setLogs(prev => {
-      const next = [...prev, entry]
+      const normalizedEntry = typeof entry === 'string'
+        ? { text: entry, id: `${Date.now()}-${Math.random()}` }
+        : { ...entry, id: entry.id || `${Date.now()}-${Math.random()}` };
+
+      const next = [...prev, normalizedEntry]
       if (next.length > 2000) next.splice(0, next.length - 2000)
       return next
     })
@@ -2004,7 +2009,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     return start(!!st)
   }
 
-  async function generateCSV(){
+  const generateCSV = React.useCallback(async () => {
     if (!isTauri) { setLogs(l=>[...l,{text: pl('csvGenTauriOnly'), color:'#ff9800'}]); return }
     try {
         const inputDir = await dialogOpen({
@@ -2106,18 +2111,18 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     } finally {
         isCsvToolsRunningRef.current = false;
     }
-  }
-  async function openDupConfig(){
+  }, [token, pl, openLicenseActivation])
+  const openDupConfig = React.useCallback(async () => {
     setShowDupModal(true)
     // Removed log to avoid confusion when opening config
-  }
-  async function openResizeConfig(){
+  }, [])
+  const openResizeConfig = React.useCallback(async () => {
     setShowResizeModal(true)
-  }
-  async function openConvertConfig(){
+  }, [])
+  const openConvertConfig = React.useCallback(async () => {
     setShowConvertModal(true)
-  }
-  async function openPromptGrabberConfig(){
+  }, [])
+  const openPromptGrabberConfig = React.useCallback(async () => {
     setPgMinimized(false)
     if (!isTauri) {
       setLogs(l=>[...l,{text: '[PromptGrabber] Feature only available in Tauri app', color:'#ff9800'}])
@@ -2158,7 +2163,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     })()
     if (!ok) return
     setShowPromptGrabberModal(true)
-  }
+  }, [token, lang, toast])
   async function pgPremiumRecheckAndOpen(){
     if (pgPremiumBusy) return
     setPgPremiumBusy(true)
@@ -2597,7 +2602,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     }
   }
 
-  async function runAiCluster(){
+  const runAiCluster = React.useCallback(async () => {
     if (!isTauri) { setLogs(l=>[...l,{text: pl('aiClusterTauriOnly'), color:'#ff9800'}]); return }
     try {
         const inputDir = await dialogOpen({
@@ -2621,7 +2626,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         setLogs(l => l.map(x => ({ ...x, animating: false })));
         setLogs(l => [...l, { text: pl('aiClusterFailed', { error: String(e) }), color: '#f44336' }]);
     }
-  }
+  }, [lang, pl])
   
 
   return (
@@ -2847,7 +2852,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
               background: '#09090b'
           }}>
              <Settings 
-                onBack={()=>{}} 
+                onBack={noop}
                 embedded={true} 
                 lang={lang} 
                 onGenerateCSV={generateCSV}

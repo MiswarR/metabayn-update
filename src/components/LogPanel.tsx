@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react'
 import { translations } from '../utils/translations';
 
-export default function LogPanel({logs, lang = 'en'}:{logs:any[], lang?: 'en' | 'id'}){
+const LogPanel = React.memo(function LogPanel({logs, lang = 'en'}:{logs:any[], lang?: 'en' | 'id'}){
   const t = translations[lang].logPanel;
   const endRef = useRef<HTMLDivElement>(null)
   const [expandedIndex, setExpandedIndex] = React.useState<number | null>(null);
@@ -18,6 +18,7 @@ export default function LogPanel({logs, lang = 'en'}:{logs:any[], lang?: 'en' | 
     <div className="log-panel" style={{borderTopLeftRadius:0, borderTopRightRadius:0, borderTop:'none', padding: '10px', fontSize: 12, lineHeight: 1.35}}>
       {logs.map((l,i)=>{
          if (l && typeof l === 'object' && l.hidden) return null; // Skip hidden logs
+         const logKey = (l && typeof l === 'object' && l.id) ? l.id : i;
          
          if(typeof l === 'string') {
              // Legacy string support - attempt to color based on content keywords
@@ -28,7 +29,7 @@ export default function LogPanel({logs, lang = 'en'}:{logs:any[], lang?: 'en' | 
              else if (lower.includes('warning')) color = '#ff9800';
              else if (lower.includes('found') || lower.includes('scanning')) color = '#fff';
              
-             return <div key={i} className="line" style={{color}}>{l}</div>
+             return <div key={logKey} className="line" style={{color}}>{l}</div>
          } else {
              // Structured log object {text, color, animating, detail}
              const txt = l.text || '';
@@ -40,7 +41,7 @@ export default function LogPanel({logs, lang = 'en'}:{logs:any[], lang?: 'en' | 
              const isExpanded = expandedIndex === i;
 
              return (
-               <div key={i}>
+               <div key={logKey}>
                  <div 
                     className="line" 
                     style={{
@@ -81,4 +82,6 @@ export default function LogPanel({logs, lang = 'en'}:{logs:any[], lang?: 'en' | 
       <div ref={endRef} />
     </div>
   )
-}
+})
+
+export default LogPanel

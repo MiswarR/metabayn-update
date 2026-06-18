@@ -16,7 +16,7 @@ import iconResizeImageVideo from '@icons/resize-image-video.ico'
 import iconConvertImages from '@icons/convert-images.ico'
 import openRouterIcon from '../../src-tauri/icons/openrouter.png'
 
-export default function Settings({onBack, embedded, onSave, lang='en', onGenerateCSV, onOpenPromptGrabber, onOpenDupConfig, onRunAiCluster, onOpenResizeConfig, onOpenConvertConfig, promptGrabberLicensed}:{onBack:()=>void, embedded?: boolean, onSave?:()=>void, lang?:'en'|'id', onGenerateCSV?:()=>void, onOpenPromptGrabber?:()=>void, onOpenDupConfig?:()=>void, onRunAiCluster?:()=>void, onOpenResizeConfig?:()=>void, onOpenConvertConfig?:()=>void, promptGrabberLicensed?: boolean}){
+const Settings = React.memo(function Settings({onBack, embedded, onSave, lang='en', onGenerateCSV, onOpenPromptGrabber, onOpenDupConfig, onRunAiCluster, onOpenResizeConfig, onOpenConvertConfig, promptGrabberLicensed}:{onBack:()=>void, embedded?: boolean, onSave?:()=>void, lang?:'en'|'id', onGenerateCSV?:()=>void, onOpenPromptGrabber?:()=>void, onOpenDupConfig?:()=>void, onRunAiCluster?:()=>void, onOpenResizeConfig?:()=>void, onOpenConvertConfig?:()=>void, promptGrabberLicensed?: boolean}){
   const t = (translations[lang] || translations['en'])?.settings || translations['en'].settings;
   const getTabLabel = (tab: string) => {
     const key = tab.toLowerCase()
@@ -2290,4 +2290,6 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       )}
     </div>
   )
-}
+})
+
+export default Settings

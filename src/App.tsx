@@ -600,6 +600,10 @@ export default function App(){
     }
   }
 
+  const goToSettings = React.useCallback(() => setPage('settings'), []);
+  const goToAdmin = React.useCallback(() => setPage('admin'), []);
+  const goToDashboard = React.useCallback(() => setPage('dashboard'), []);
+
   async function runRedeemVoucher() {
     const code = redeemCode.trim();
     if (!code) {
@@ -677,18 +681,18 @@ export default function App(){
             <div style={{display: page==='dashboard' ? 'flex' : 'none', flexDirection: 'column', height: '100%', width: '100%', overflow: 'hidden'}}>
                 <Dashboard 
                     token={token} 
-                    onSettings={()=>setPage('settings')} 
+                    onSettings={goToSettings}
                     onProcessChange={setIsProcessing}
                     isActive={page==='dashboard'}
                     isAdmin={isAdmin}
                     userEmail={userEmail}
-                    onOpenAdmin={()=>setPage('admin')}
+                    onOpenAdmin={goToAdmin}
                 />
             </div>
             )}
 
-            {page==='settings'&&<Settings onBack={()=>setPage('dashboard')} lang={lang} />}
-            {page==='admin'&&<AdminPanel onBack={()=>setPage('dashboard')} lang={lang} />}
+            {page==='settings'&&<Settings onBack={goToDashboard} lang={lang} />}
+            {page==='admin'&&<AdminPanel onBack={goToDashboard} lang={lang} />}
             
         </div>
         <CustomModal
