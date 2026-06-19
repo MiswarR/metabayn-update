@@ -1,6 +1,10 @@
 import React from 'react'
 
-export default function ProgressBar({ value }: { value: number }) {
+/**
+ * ProgressBar component wrapped in React.memo to prevent unnecessary re-renders
+ * when the 'value' prop hasn't changed.
+ */
+const ProgressBar = React.memo(function ProgressBar({ value }: { value: number }) {
   const safe = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0
   return (
     <div style={{ height: 10, background: '#27272a', borderRadius: 999, overflow: 'hidden' }}>
@@ -14,4 +18,6 @@ export default function ProgressBar({ value }: { value: number }) {
       />
     </div>
   )
-}
+})
+
+export default ProgressBar
