@@ -19,7 +19,10 @@ export async function invokeWithTimeout<T>(
   } finally {
     clearTimeout(tid)
     if (timedOut) {
-      base.catch(() => {})
+      // Log the error instead of silently suppressing it
+      base.catch((err) => {
+        console.warn(`Async operation failed after timeout for ${cmd}:`, err)
+      })
     }
   }
 }

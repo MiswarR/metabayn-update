@@ -106,7 +106,8 @@ fn default_server_model() -> String { "@cf/meta/llama-3.1-8b-instruct".to_string
 
 fn settings_path() -> Result<std::path::PathBuf> {
   let dir = dirs::config_dir().ok_or_else(|| anyhow!("no config dir"))?.join("metabayn-studio");
-  create_dir_all(&dir)?;
+  // Add error handling to avoid crashing on access denied
+  let _ = create_dir_all(&dir);
   Ok(dir.join("settings.json"))
 }
 
@@ -117,7 +118,7 @@ pub fn load_settings() -> Result<AppSettings> {
     return Ok(AppSettings{
       openrouter_endpoint: "https://openrouter.ai/api/v1/chat/completions".to_string(),
       server_url: "https://metabayn-backend.metabayn.workers.dev".into(),
-      default_model: "gemini-flash".into(),
+      default_model: "gemini-2.5-flash-lite".into(),
       overwrite: true,
       csv_path: d.0,
       logs_path: d.1,
@@ -186,76 +187,299 @@ pub fn load_settings() -> Result<AppSettings> {
       profit_margin_percent: 50.0,
     });
   }
-  let mut f = File::open(p)?; let mut s = String::new(); f.read_to_string(&mut s)?;
-  let mut v = serde_json::from_str::<AppSettings>(&s)?;
-  
-  // Decrypt token if encrypted
-  if v.auth_token.starts_with("enc:") {
-      let enc = v.auth_token.trim_start_matches("enc:");
-      if let Ok(dec) = crate::crypto_utils::decrypt_token(enc) {
-          v.auth_token = dec;
+  match File::open(p) {
+    Ok(mut f) => {
+      let mut s = String::new();
+      if let Err(_) = f.read_to_string(&mut s) {
+        // If we can't read the file, return default settings instead of failing
+        let d = default_paths();
+        return Ok(AppSettings{
+          openrouter_endpoint: "https://openrouter.ai/api/v1/chat/completions".to_string(),
+          server_url: "https://metabayn-backend.metabayn.workers.dev".into(),
+          default_model: "gemini-2.5-flash-lite".into(),
+          overwrite: true,
+          csv_path: d.0,
+          logs_path: d.1,
+          input_folder: String::new(),
+          output_folder: String::new(),
+          max_threads: 4,
+          retry_count: 1,
+          title_min_words: 5,
+          title_max_words: 13,
+          description_min_chars: 80,
+          description_max_chars: 200,
+          keywords_min_count: 35,
+          keywords_max_count: 49,
+          auto_embed: true,
+          banned_words: String::new(),
+          ai_provider: "Gemini".into()
+          ,auth_email: String::new(), auth_token: String::new(),
+          server_model: "@cf/meta/llama-3.1-8b-instruct".into(),
+          selection_enabled: false,
+          server_selection_enabled: false,
+          check_human_presence: false,
+          check_animal_presence: false,
+          text_filter_gibberish: false,
+          text_filter_non_english: false,
+          text_filter_irrelevant: false,
+          text_filter_relevant: false,
+          human_filter_full_face: false,
+          human_filter_no_head: false,
+          human_filter_partial_perfect: false,
+          human_filter_partial_defect: false,
+          human_filter_back_view: false,
+          human_filter_unclear: false,
+          human_filter_face_only: false,
+          human_filter_nudity: false,
+          animal_filter_full_face: false,
+          animal_filter_no_head: false,
+          animal_filter_partial_perfect: false,
+          animal_filter_partial_defect: false,
+          animal_filter_back_view: false,
+          animal_filter_unclear: false,
+          animal_filter_face_only: false,
+          animal_filter_nudity: false,
+          check_deformed_object: false,
+          check_unrecognizable_subject: false,
+          check_text_or_text_like: false,
+          check_brand_logo: false,
+          check_famous_trademark: false,
+          check_watermark: false,
+          check_duplicate_similarity: false,
+          enable_quality_filter: false,
+          quality_blur_min: 100.0,
+          quality_noise_max: 16.0,
+          quality_luma_min: 30.0,
+          quality_luma_max: 225.0,
+          duplicate_max_hamming_distance: 4,
+          selection_order: "before".into(),
+          connection_mode: "server".into(),
+          generate_csv: true,
+          rename_enabled: false,
+          rename_mode: "title".into(),
+          rename_custom_text: String::new(),
+          active_mode: "apikey".to_string(),
+          profit_margin_percent: 50.0,
+        });
       }
-  }
+      let mut v = match serde_json::from_str::<AppSettings>(&s) {
+        Ok(v) => v,
+        Err(_) => {
+          // If we can't parse the settings, use default ones
+          let d = default_paths();
+          return Ok(AppSettings{
+            openrouter_endpoint: "https://openrouter.ai/api/v1/chat/completions".to_string(),
+            server_url: "https://metabayn-backend.metabayn.workers.dev".into(),
+            default_model: "gemini-2.5-flash-lite".into(),
+            overwrite: true,
+            csv_path: d.0,
+            logs_path: d.1,
+            input_folder: String::new(),
+            output_folder: String::new(),
+            max_threads: 4,
+            retry_count: 1,
+            title_min_words: 5,
+            title_max_words: 13,
+            description_min_chars: 80,
+            description_max_chars: 200,
+            keywords_min_count: 35,
+            keywords_max_count: 49,
+            auto_embed: true,
+            banned_words: String::new(),
+            ai_provider: "Gemini".into()
+            ,auth_email: String::new(), auth_token: String::new(),
+            server_model: "@cf/meta/llama-3.1-8b-instruct".into(),
+            selection_enabled: false,
+            server_selection_enabled: false,
+            check_human_presence: false,
+            check_animal_presence: false,
+            text_filter_gibberish: false,
+            text_filter_non_english: false,
+            text_filter_irrelevant: false,
+            text_filter_relevant: false,
+            human_filter_full_face: false,
+            human_filter_no_head: false,
+            human_filter_partial_perfect: false,
+            human_filter_partial_defect: false,
+            human_filter_back_view: false,
+            human_filter_unclear: false,
+            human_filter_face_only: false,
+            human_filter_nudity: false,
+            animal_filter_full_face: false,
+            animal_filter_no_head: false,
+            animal_filter_partial_perfect: false,
+            animal_filter_partial_defect: false,
+            animal_filter_back_view: false,
+            animal_filter_unclear: false,
+            animal_filter_face_only: false,
+            animal_filter_nudity: false,
+            check_deformed_object: false,
+            check_unrecognizable_subject: false,
+            check_text_or_text_like: false,
+            check_brand_logo: false,
+            check_famous_trademark: false,
+            check_watermark: false,
+            check_duplicate_similarity: false,
+            enable_quality_filter: false,
+            quality_blur_min: 100.0,
+            quality_noise_max: 16.0,
+            quality_luma_min: 30.0,
+            quality_luma_max: 225.0,
+            duplicate_max_hamming_distance: 4,
+            selection_order: "before".into(),
+            connection_mode: "server".into(),
+            generate_csv: true,
+            rename_enabled: false,
+            rename_mode: "title".into(),
+            rename_custom_text: String::new(),
+            active_mode: "apikey".to_string(),
+            profit_margin_percent: 50.0,
+          });
+        }
+      };
+      
+      // Decrypt token if encrypted
+      if v.auth_token.starts_with("enc:") {
+          let enc = v.auth_token.trim_start_matches("enc:");
+          if let Ok(dec) = crate::crypto_utils::decrypt_token(enc) {
+              v.auth_token = dec;
+          }
+      }
 
-  let mut changed = false;
+      let mut changed = false;
 
-  // Auto-fix server URL if kosong / whitespace atau masih pointing ke default lama
-  let trimmed = v.server_url.trim();
-  if trimmed.is_empty()
-    || trimmed == "https://api.metabayn.local"
-    || trimmed == "https://metabayn-worker.metabayn.workers.dev"
-    || trimmed.contains("metabayn-worker.metabayn.workers.dev")
-  {
-    v.server_url = "https://metabayn-backend.metabayn.workers.dev".into();
-    changed = true;
-  }
+      // Auto-fix server URL if kosong / whitespace atau masih pointing ke default lama
+      let trimmed = v.server_url.trim();
+      if trimmed.is_empty()
+        || trimmed == "https://api.metabayn.local"
+        || trimmed == "https://metabayn-worker.metabayn.workers.dev"
+        || trimmed.contains("metabayn-worker.metabayn.workers.dev")
+      {
+        v.server_url = "https://metabayn-backend.metabayn.workers.dev".into();
+        changed = true;
+      }
 
-  {
-    let mut url = v.server_url.trim().trim_end_matches('/').to_string();
-    if url.to_lowercase().ends_with("/v1") {
-      url = url[..url.len().saturating_sub(3)].trim_end_matches('/').to_string();
-    }
-    if !url.is_empty() && url != v.server_url {
-      v.server_url = url;
-      changed = true;
-    }
-  }
+      {
+        let mut url = v.server_url.trim().trim_end_matches('/').to_string();
+        if url.to_lowercase().ends_with("/v1") {
+          url = url[..url.len().saturating_sub(3)].trim_end_matches('/').to_string();
+        }
+        if !url.is_empty() && url != v.server_url {
+          v.server_url = url;
+          changed = true;
+        }
+      }
 
-  let or_trimmed = v.openrouter_endpoint.trim();
-  if !or_trimmed.is_empty() {
-    let mut endpoint = or_trimmed.trim_end_matches('/').to_string();
-    if endpoint.to_lowercase().ends_with("/v1") {
-      endpoint = format!("{}/chat/completions", endpoint);
+      let or_trimmed = v.openrouter_endpoint.trim();
+      if !or_trimmed.is_empty() {
+        let mut endpoint = or_trimmed.trim_end_matches('/').to_string();
+        if endpoint.to_lowercase().ends_with("/v1") {
+          endpoint = format!("{}/chat/completions", endpoint);
+        }
+        if endpoint.contains("metabayn-worker.metabayn.workers.dev") {
+          endpoint = "https://metabayn-backend.metabayn.workers.dev/v1/chat/completions".into();
+        }
+        if endpoint != v.openrouter_endpoint {
+          v.openrouter_endpoint = endpoint;
+          changed = true;
+        }
+      }
+      
+      if changed {
+        let _ = save_settings(&v);
+      }
+      
+      Ok(v)
     }
-    if endpoint.contains("metabayn-worker.metabayn.workers.dev") {
-      endpoint = "https://metabayn-backend.metabayn.workers.dev/v1/chat/completions".into();
-    }
-    if endpoint != v.openrouter_endpoint {
-      v.openrouter_endpoint = endpoint;
-      changed = true;
+    Err(_) => {
+      // If we can't open the settings file, use default ones
+      let d = default_paths();
+      return Ok(AppSettings{
+        openrouter_endpoint: "https://openrouter.ai/api/v1/chat/completions".to_string(),
+        server_url: "https://metabayn-backend.metabayn.workers.dev".into(),
+        default_model: "gemini-2.5-flash-lite".into(),
+        overwrite: true,
+        csv_path: d.0,
+        logs_path: d.1,
+        input_folder: String::new(),
+        output_folder: String::new(),
+        max_threads: 4,
+        retry_count: 1,
+        title_min_words: 5,
+        title_max_words: 13,
+        description_min_chars: 80,
+        description_max_chars: 200,
+        keywords_min_count: 35,
+        keywords_max_count: 49,
+        auto_embed: true,
+        banned_words: String::new(),
+        ai_provider: "Gemini".into()
+        ,auth_email: String::new(), auth_token: String::new(),
+        server_model: "@cf/meta/llama-3.1-8b-instruct".into(),
+        selection_enabled: false,
+        server_selection_enabled: false,
+        check_human_presence: false,
+        check_animal_presence: false,
+        text_filter_gibberish: false,
+        text_filter_non_english: false,
+        text_filter_irrelevant: false,
+        text_filter_relevant: false,
+        human_filter_full_face: false,
+        human_filter_no_head: false,
+        human_filter_partial_perfect: false,
+        human_filter_partial_defect: false,
+        human_filter_back_view: false,
+        human_filter_unclear: false,
+        human_filter_face_only: false,
+        human_filter_nudity: false,
+        animal_filter_full_face: false,
+        animal_filter_no_head: false,
+        animal_filter_partial_perfect: false,
+        animal_filter_partial_defect: false,
+        animal_filter_back_view: false,
+        animal_filter_unclear: false,
+        animal_filter_face_only: false,
+        animal_filter_nudity: false,
+        check_deformed_object: false,
+        check_unrecognizable_subject: false,
+        check_text_or_text_like: false,
+        check_brand_logo: false,
+        check_famous_trademark: false,
+        check_watermark: false,
+        check_duplicate_similarity: false,
+        enable_quality_filter: false,
+        quality_blur_min: 100.0,
+        quality_noise_max: 16.0,
+        quality_luma_min: 30.0,
+        quality_luma_max: 225.0,
+        duplicate_max_hamming_distance: 4,
+        selection_order: "before".into(),
+        connection_mode: "server".into(),
+        generate_csv: true,
+        rename_enabled: false,
+        rename_mode: "title".into(),
+        rename_custom_text: String::new(),
+        active_mode: "apikey".to_string(),
+        profit_margin_percent: 50.0,
+      });
     }
   }
-  
-  if changed {
-    let _ = save_settings(&v);
-  }
-  
-  Ok(v)
 }
 
 pub fn save_settings(v: &AppSettings) -> Result<()> {
   let p = settings_path()?;
-  let mut f = File::create(p)?;
+  // Try to create file, ignore errors if access denied
+  if let Ok(mut f) = File::create(p) {
+    // Encrypt token if present and not already encrypted
+    let mut v_to_save = v.clone();
+    if !v_to_save.auth_token.is_empty() && !v_to_save.auth_token.starts_with("enc:") {
+        if let Ok(enc) = crate::crypto_utils::encrypt_token(&v_to_save.auth_token) {
+            v_to_save.auth_token = format!("enc:{}", enc);
+        }
+    }
 
-  // Encrypt token if present and not already encrypted
-  let mut v_to_save = v.clone();
-  if !v_to_save.auth_token.is_empty() && !v_to_save.auth_token.starts_with("enc:") {
-      if let Ok(enc) = crate::crypto_utils::encrypt_token(&v_to_save.auth_token) {
-          v_to_save.auth_token = format!("enc:{}", enc);
-      }
+    let _ = f.write_all(serde_json::to_string_pretty(&v_to_save)?.as_bytes());
   }
-
-  f.write_all(serde_json::to_string_pretty(&v_to_save)?.as_bytes())?;
   Ok(())
 }
 

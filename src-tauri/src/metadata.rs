@@ -282,35 +282,21 @@ Solusi cepat:\n\
     // Categories, Editorial, Mature, Illustration
     let settings = crate::settings::load_settings().unwrap_or_default();
     let model = settings.default_model.clone();
-    let cm_raw = settings.connection_mode.trim().to_lowercase();
-    let api_key_present = api_key.as_ref().map(|k| !k.trim().is_empty()).unwrap_or(false);
-    let effective_connection_mode = if cm_raw == "direct" || cm_raw == "standard" || cm_raw == "standard_ai" {
-        "direct".to_string()
-    } else if cm_raw == "gateway" || cm_raw == "ai_gateway" {
-        "gateway".to_string()
-    } else if api_key_present {
-        "direct".to_string()
-    } else {
-        "gateway".to_string()
-    };
-    let effective_token = if effective_connection_mode == "gateway" {
-        token.unwrap_or(settings.auth_token.clone())
-    } else {
-        String::new()
-    };
-    
+    // Semua generasi AI memakai mode langsung (API key milik pengguna).
+    let _ = &token;
+
     // Construct BatchReq for AI calls
     let req_template = crate::api::BatchReq {
         files: vec![],
         model: model.clone(),
-        token: effective_token,
+        token: String::new(),
         retries: settings.retry_count,
         title_min_words: 0, title_max_words: 0,
         description_min_chars: 0, description_max_chars: 0,
         keywords_min_count: 0, keywords_max_count: 0,
         banned_words: String::new(),
         max_threads: 1,
-        connection_mode: effective_connection_mode,
+        connection_mode: "direct".to_string(),
         api_key: api_key.clone(),
         provider: settings.ai_provider.clone(),
         request_timeout_sec: None,
@@ -818,16 +804,34 @@ fn get_primary_prompt(req: &crate::api::BatchReq, context: Option<&str>) -> Stri
     };
 
     let mut p = format!(
-        "Create SEO-optimized microstock metadata from the image.
-Rules:
-- Title: {} to {} words. Clear, buyer-intent, not keyword-stuffed. Start with main subject, then action/context/style if relevant. Use natural English.
-- {} 
-- Keywords: {} to {} tags. Single English words only, comma separated. No duplicates.
-  Pick the most searched terms microstock buyers use: subject, action, setting, style, concept, industry, usage (e.g. background, banner, template, copyspace), and close synonyms. Order from most important to least.
-- Avoid irrelevant/trending terms and any brand/trademark names.
-- Banned characters: `~@#$%^&*()_+=-/\\][{{}}|';\":?/><` (Only . and , allowed).
-- Output: JSON keys 'title','description','keywords','category'.
-- Category: EXACTLY TWO from this list (comma separated, exact spelling): [Abstract, Animals/Wildlife, Arts, Backgrounds/Textures, Beauty/Fashion, Buildings/Landmarks, Business/Finance, Celebrities, Education, Food and drink, Healthcare/Medical, Holidays, Industrial, Interiors, Miscellaneous, Nature, Objects, Parks/Outdoor, People, Religion, Science, Signs/Symbols, Sports/Recreation, Technology, Transportation, Vintage].",
+        "Create EXTREMELY SEO-OPTIMIZED microstock metadata for maximum search visibility on major platforms (Shutterstock, Adobe Stock, iStock, etc.).
+CRITICAL RULES - MUST FOLLOW:
+1. TITLE: {} to {} words.
+   - MUST start with the MAIN SUBJECT (the most important visual element)
+   - Follow with key descriptive terms: action, setting, style, composition
+   - Use buyer-intent keywords that people actually search for
+   - Example good: \"Happy golden retriever puppy playing in green summer field\"
+   - Example bad: \"Cute dog picture\"
+2. {}
+3. KEYWORDS: {} to {} tags. EACH KEYWORD MUST BE A SINGLE ENGLISH WORD, comma separated. NO MULTI-WORD COMBINATIONS. NO COMBINING WORDS TOGETHER (like \"thinbudget\" - use \"thin\" and \"budget\" separately). No duplicates.
+   - FIRST 10-15 KEYWORDS MUST BE THE MOST RELEVANT, HIGH-SEARCH-VOLUME TERMS (prioritize what buyers actually search for)
+   - Include: subject, action, setting, style, concept, industry, usage (e.g. background, banner, template, copyspace, isolated)
+   - Use synonyms and related terms (e.g. dog, puppy, canine)
+   - Include both broad and specific terms (e.g. animal, dog, golden retriever)
+   - Order keywords FROM MOST IMPORTANT TO LEAST IMPORTANT
+   - NO irrelevant terms - EVERY keyword must match the visual content
+4. AVOID: irrelevant/trending terms, brand/trademark names, anything not visible
+5. Banned characters: ~@#$%^&*()_+=-/\\][{{}}|';\":?/>< (Only . and , allowed).
+6. Output: JSON keys 'title','description','keywords','category'.
+7. Category: EXACTLY TWO from this list (comma separated, exact spelling): [Abstract, Animals/Wildlife, Arts, Backgrounds/Textures, Beauty/Fashion, Buildings/Landmarks, Business/Finance, Celebrities, Education, Food and drink, Healthcare/Medical, Holidays, Industrial, Interiors, Miscellaneous, Nature, Objects, Parks/Outdoor, People, Religion, Science, Signs/Symbols, Sports/Recreation, Technology, Transportation, Vintage].
+
+ADDITIONAL SEO GUIDELINES:
+- Title and description MUST match what buyers actually search for
+- Use natural, conversational English
+- NO keyword stuffing - but DO use relevant terms multiple times in different forms
+- Focus on \"what\" the image shows, \"who\" is in it, \"where\" it is, \"when\" it was taken, \"why\" it's useful
+- Keywords should cover all visual elements and conceptual meanings
+- NO guesswork - only describe what you can actually SEE",
         tmin, tmax,
         desc_rule,
         kw_min, kw_max
@@ -1048,14 +1052,16 @@ async fn call_ai_base(
     // Retry Loop
     let max_attempts = (req.retries as usize).saturating_add(1).max(1);
     for attempt in 0..max_attempts {
-        if req.connection_mode == "direct" {
+        {
             let raw_key = req.api_key.as_ref().ok_or(anyhow!("Missing API key"))?;
             let api_key = raw_key.trim();
             
-            // Determine URL based on model or provider (OpenAI vs Gemini) or API Key format
-            let is_key_google = api_key.starts_with("AIza");
+            // Determine URL based on model or provider (OpenAI vs Gemini vs Grok) or API Key format
+            let is_key_google = api_key.starts_with("AIza") || api_key.starts_with("AQ.");
+            let is_key_grok = api_key.starts_with("xai-");
             let provider_lower = req.provider.to_lowercase();
             let is_openrouter = provider_lower.contains("openrouter") || api_key.starts_with("sk-or-");
+            let is_grok = is_key_grok || provider_lower.contains("grok") || provider_lower.contains("x.ai");
             
             let is_gemini = current_model.to_lowercase().contains("gemini") 
                 || req.provider.to_lowercase().contains("gemini")
@@ -1068,6 +1074,8 @@ async fn call_ai_base(
                 } else {
                     ep
                 }
+            } else if is_grok {
+                "https://api.x.ai/v1/chat/completions"
             } else if is_gemini {
                 "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
             } else {
@@ -1120,110 +1128,6 @@ async fn call_ai_base(
                     return Err(anyhow!("Direct API Network Error: {}", e));
                 }
              }
-        } else {
-            // Server Mode
-            let url = settings.server_url.clone();
-            let base = url.trim_end_matches('/');
-            let (b64, mime) = image_b64.clone().unwrap_or_default();
-            
-            let is_selection = prompt.starts_with("You are an AI Image Quality Inspector");
-            let body = serde_json::json!({
-                "model": current_model,
-                "messages": messages, // For OpenAI/Groq
-                "prompt": prompt,     // For Gemini
-                "image": b64,
-                "mimeType": mime,
-                "selectionMode": is_selection,
-                "retries": req.retries
-            });
-
-            let resp = client.post(format!("{}/ai/generate", base))
-                .header("Authorization", format!("Bearer {}", req.token))
-                .json(&body)
-                .send()
-                .await;
-
-            match resp {
-                Ok(r) => {
-                    if !r.status().is_success() {
-                        let status = r.status();
-                        let err_text = r.text().await.unwrap_or_default();
-                        let lower = err_text.to_lowercase();
-                        let is_transient =
-                            status.as_u16() == 429
-                                || status.as_u16() >= 500
-                                || lower.contains("queue timeout")
-                                || lower.contains("system busy")
-                                || lower.contains("bad gateway")
-                                || lower.contains("gateway timeout")
-                                || lower.contains("timeout")
-                                || lower.contains("temporarily unavailable")
-                                || lower.contains("service unavailable")
-                                || lower.contains("try again");
-                         if is_transient && attempt < max_attempts - 1 {
-                            let exp = std::cmp::min(attempt as u32, 4);
-                            let backoff_secs = std::cmp::min(30u64, 2u64.saturating_mul(1u64 << exp));
-                            tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
-                            continue; 
-                        }
-                        return Err(anyhow!("API Error (HTTP {}): {}", status, err_text));
-                    }
-                    let res_json: serde_json::Value = r.json().await?;
-                    let content = res_json.get("result").and_then(|s| s.as_str()).ok_or(anyhow!("No result"))?.to_string();
-                    
-                    // Parse usage - Support both nested object and top-level fields
-                    let usage = if let (Some(i), Some(o)) = (
-                        res_json.get("input_tokens").and_then(|v| v.as_u64()), 
-                        res_json.get("output_tokens").and_then(|v| v.as_u64())
-                    ) {
-                        Some(TokenUsage {
-                            prompt_tokens: i as u32,
-                            completion_tokens: o as u32,
-                            total_tokens: (i + o) as u32,
-                        })
-                    } else {
-                        res_json.get("usage")
-                            .or(res_json.get("usageMetadata"))
-                            .or(res_json.get("token_usage"))
-                            .and_then(|u| serde_json::from_value(u.clone()).ok())
-                    };
-                        
-                    let provider = res_json.pointer("/metadata/provider")
-                        .and_then(|s| s.as_str())
-                        .map(|s| s.to_string());
-                        
-                    // Cost might be top-level or in metadata
-                    let cost = res_json.get("cost")
-                        .or(res_json.get("cost_usd"))
-                        .or(res_json.pointer("/metadata/cost"))
-                        .and_then(|v| v.as_f64());
-
-                    let balance_after = res_json.get("app_balance_after")
-                        .or(res_json.get("user_balance_after"))
-                        .or(res_json.pointer("/metabayn/user_balance_after"))
-                        .or(res_json.pointer("/metabayn/user_balance"))
-                        .or(res_json.get("remaining_balance"))
-                        .or(res_json.get("remaining"))
-                        .or(res_json.pointer("/metadata/remaining"))
-                        .and_then(|v| v.as_f64().or_else(|| v.as_u64().map(|x| x as f64)));
-
-                    let tokens_deducted = res_json.get("app_tokens_deducted")
-                        .or(res_json.get("tokens_deducted"))
-                        .or(res_json.pointer("/metabayn/tokens_deducted"))
-                        .and_then(|v| v.as_f64().or_else(|| v.as_u64().map(|x| x as f64)));
-                    
-                    return Ok((content, usage, provider, cost, balance_after, tokens_deducted));
-                },
-                Err(e) => {
-                    if attempt < max_attempts - 1 { 
-                        let exp = std::cmp::min(attempt as u32, 4);
-                        let backoff_secs = std::cmp::min(30u64, 2u64.saturating_mul(1u64 << exp));
-                        tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
-                        continue; 
-                    }
-                    return Err(anyhow!("Server API Network Error: {}", e));
-                }
-            }
         }
     }
     
@@ -1271,6 +1175,13 @@ fn is_vision_model_for_provider(provider: &str, model_id: &str) -> bool {
         if !id.starts_with("gemini") { return false; }
         if id.contains("embedding") { return false; }
         return true;
+    }
+    if p == "grok" || p.contains("x.ai") {
+        // Grok vision/image models, plus Grok 4 and newer flagship lines
+        // which are multimodal and accept image input.
+        if id.contains("vision") || id.contains("image") { return true; }
+        if id.contains("grok-4") || id.contains("grok-5") || id.contains("grok-6") { return true; }
+        return is_vision_like_model_id(&id);
     }
     if p == "openai" {
         let ok =
@@ -1728,6 +1639,7 @@ fn normalize_keywords(v: &serde_json::Value, _min_c: u32, max_c: u32, banned_str
           .filter(|s| !s.is_empty())
           .collect();
 
+      let stopwords = build_stopwords();
       let mut out: Vec<String> = Vec::new();
       for kw in raw.drain(..) {
           let lower = kw.to_lowercase();
@@ -1735,13 +1647,25 @@ fn normalize_keywords(v: &serde_json::Value, _min_c: u32, max_c: u32, banned_str
           // Check explicit banned words
           if banned_list.contains(&lower) { continue; }
 
-          let clean = lower.replace(|c: char| !c.is_ascii_alphanumeric(), " ");
+          // Clean the keyword and split into single words
+          let clean: String = lower.chars()
+              .map(|c| if c.is_ascii_alphanumeric() || c.is_whitespace() { c } else { ' ' })
+              .collect();
+          
+          // Split into single words
           for token in clean.split_whitespace() {
-              if !token.is_empty() {
-                  // Check again after cleaning (e.g. if banned word was "ai", and token is "ai")
-                  if banned_list.contains(&token.to_string()) { continue; }
-                  
-                  if !out.contains(&token.to_string()) { out.push(token.to_string()); }
+              let trimmed = token.trim();
+              if trimmed.is_empty() { continue; }
+              
+              // Check banned words
+              if banned_list.contains(&trimmed.to_string()) { continue; }
+              
+              // Skip stopwords
+              if stopwords.contains(trimmed) { continue; }
+              
+              // Only add if not already present
+              if !out.iter().any(|existing| existing.to_lowercase() == trimmed.to_lowercase()) {
+                  out.push(trimmed.to_string());
               }
           }
       }
@@ -1878,6 +1802,150 @@ pub(crate) fn normalize_shutterstock_categories(raw: &str) -> (String, bool) {
     (format!("{}, {}", out[0], out[1]), had_issues)
 }
 
+// Optimize title for maximum microstock search visibility
+fn optimize_title_for_seo(g: &mut Generated, tmin: u32, tmax: u32) {
+    let mut title_words: Vec<String> = g.title.split_whitespace().map(|w| w.to_string()).filter(|w| !w.is_empty()).collect();
+    
+    // 1. Ensure title length is within bounds
+    if tmax > 0 && (title_words.len() as u32) > tmax {
+        title_words.truncate(tmax as usize);
+    }
+    
+    // 2. Remove generic/weak words that don't help SEO from the beginning
+    let weak_start_words = ["the", "a", "an", "this", "that", "these", "those", "my", "your", "his", "her", "our", "their", "some", "many", "few", "nice", "cute", "beautiful", "amazing", "awesome", "great", "good"];
+    while !title_words.is_empty() && weak_start_words.contains(&title_words[0].to_lowercase().as_str()) {
+        title_words.remove(0);
+    }
+    
+    // 3. If we don't have enough words, extract relevant terms from keywords
+    if tmin > 0 && (title_words.len() as u32) < tmin && !g.keywords.is_empty() {
+        let stopwords = build_stopwords();
+        let empty_banned: Vec<String> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = title_words.iter().map(|w| w.to_lowercase()).collect();
+        
+        for kw in &g.keywords {
+            if (title_words.len() as u32) >= tmin { break; }
+            if !is_meaningful_token(kw, &stopwords, &empty_banned) { continue; }
+            if seen.insert(kw.to_lowercase()) {
+                title_words.push(kw.to_string());
+            }
+        }
+    }
+    
+    // 4. Final length check
+    if tmax > 0 && (title_words.len() as u32) > tmax {
+        title_words.truncate(tmax as usize);
+    }
+    
+    g.title = title_words.join(" ");
+}
+
+// Optimize description for maximum microstock search visibility
+fn optimize_description_for_seo(g: &mut Generated, dmin: u32, dmax: u32) {
+    if dmax == 0 {
+        g.description = String::new();
+        return;
+    }
+    
+    let mut desc = g.description.trim().to_string();
+    
+    // 1. Ensure description length is within bounds
+    if desc.chars().count() as u32 > dmax {
+        desc = desc.chars().take(dmax as usize).collect::<String>().trim().to_string();
+    }
+    
+    // 2. If description is too short, enhance it with relevant terms
+    if (desc.chars().count() as u32) < dmin {
+        // Start with the title as base
+        let mut enhanced = if g.title.is_empty() {
+            "Image showing".to_string()
+        } else {
+            format!("Image showing {}", g.title.trim())
+        };
+        
+        // Add some keywords to enhance
+        if !g.keywords.is_empty() {
+            let keyword_sample: Vec<String> = g.keywords.iter().take(8).cloned().collect();
+            enhanced.push_str(". Keywords: ");
+            enhanced.push_str(&keyword_sample.join(", "));
+        }
+        
+        // Final length check
+        if enhanced.chars().count() as u32 > dmax {
+            enhanced = enhanced.chars().take(dmax as usize).collect::<String>().trim().to_string();
+        }
+        
+        desc = enhanced;
+    }
+    
+    // 3. Ensure we have at least the minimum length
+    if dmin > 0 {
+        while (desc.chars().count() as u32) < dmin {
+            if desc.is_empty() {
+                desc.push_str("Image.");
+            } else if !desc.ends_with('.') && !desc.ends_with('!') && !desc.ends_with('?') {
+                desc.push_str(".");
+            } else {
+                // If we still need more characters, add some relevant terms
+                if let Some(kw) = g.keywords.first() {
+                    desc.push_str(&format!(" Includes {}.", kw));
+                } else {
+                    desc.push_str(" High quality.");
+                }
+            }
+            
+            // Break if we're getting too long
+            if (desc.chars().count() as u32) > dmax {
+                break;
+            }
+        }
+        
+        if (desc.chars().count() as u32) > dmax {
+            desc = desc.chars().take(dmax as usize).collect::<String>().trim().to_string();
+        }
+    }
+    
+    g.description = desc;
+}
+
+// Comprehensive keyword optimization and verification
+fn optimize_and_verify_keywords(g: &mut Generated, _kw_min: u32, kw_max: u32, banned_list: &[String]) {
+    let _stopwords = build_stopwords();
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    
+    // Process keywords from AI - ensure single words only
+    for kw in g.keywords.iter() {
+        let trimmed = kw.trim();
+        if trimmed.is_empty() { continue; }
+        
+        let lower = trimmed.to_lowercase();
+        // Clean the keyword
+        let clean: String = lower.chars()
+            .map(|c| if c.is_ascii_alphanumeric() || c.is_whitespace() { c } else { ' ' })
+            .collect();
+        
+        // Split into single words (as per user requirement - no combined words)
+        for token in clean.split_whitespace() {
+            if token.is_empty() { continue; }
+            if banned_list.contains(&token.to_string()) { continue; }
+            
+            if seen.insert(token.to_string()) {
+                out.push(token.to_string());
+            }
+        }
+    }
+    
+    // Final bounds check
+    if kw_max == 0 {
+        out.clear();
+    } else if (out.len() as u32) > kw_max {
+        out.truncate(kw_max as usize);
+    }
+    
+    g.keywords = out;
+}
+
 fn enforce_generation_contract(g: &mut Generated, req: &crate::api::BatchReq) {
     if g.title.trim().eq_ignore_ascii_case("ERROR") {
         return;
@@ -1893,179 +1961,9 @@ fn enforce_generation_contract(g: &mut Generated, req: &crate::api::BatchReq) {
         .filter(|s| !s.is_empty())
         .collect();
 
-    let mut title_words: Vec<&str> = g.title.split_whitespace().filter(|w| !w.is_empty()).collect();
-    if tmax > 0 && (title_words.len() as u32) > tmax {
-        title_words.truncate(tmax as usize);
-        g.title = title_words.join(" ");
-        title_words = g.title.split_whitespace().filter(|w| !w.is_empty()).collect();
-    }
-    if tmin > 0 && (title_words.len() as u32) < tmin {
-        let mut extra: Vec<String> = Vec::new();
-        for kw in &g.keywords {
-            if extra.len() as u32 >= (tmin - title_words.len() as u32) { break; }
-            if kw.is_empty() { continue; }
-            extra.push(kw.clone());
-        }
-        if !extra.is_empty() {
-            g.title = format!("{} {}", g.title.trim(), extra.join(" ")).trim().to_string();
-            let mut words: Vec<&str> = g.title.split_whitespace().filter(|w| !w.is_empty()).collect();
-            if tmax > 0 && (words.len() as u32) > tmax {
-                words.truncate(tmax as usize);
-                g.title = words.join(" ");
-            }
-        }
-        let stopwords_title = build_stopwords();
-        let empty_banned: Vec<String> = Vec::new();
-        let mut cur_words: Vec<String> = g.title.split_whitespace().map(|w| w.to_string()).collect();
-        let mut seen_title: std::collections::HashSet<String> = cur_words.iter().map(|w| w.to_lowercase()).collect();
-
-        let push_words_from_text = |text: &str, cur_words: &mut Vec<String>, seen_title: &mut std::collections::HashSet<String>| {
-            let clean = text.to_lowercase().replace(|c: char| !c.is_ascii_alphanumeric(), " ");
-            for token in clean.split_whitespace() {
-                if (cur_words.len() as u32) >= tmin { break; }
-                if !is_meaningful_token(token, &stopwords_title, &empty_banned) { continue; }
-                let w = token.trim().to_string();
-                if seen_title.insert(w.clone()) {
-                    cur_words.push(w);
-                }
-            }
-        };
-
-        if (cur_words.len() as u32) < tmin {
-            push_words_from_text(&g.category, &mut cur_words, &mut seen_title);
-        }
-        if (cur_words.len() as u32) < tmin {
-            if let Some(stem) = std::path::Path::new(&g.file_path).file_stem().and_then(|s| s.to_str()) {
-                push_words_from_text(stem, &mut cur_words, &mut seen_title);
-            }
-        }
-
-        if !cur_words.is_empty() {
-            while (cur_words.len() as u32) < tmin {
-                cur_words.push(cur_words[0].clone());
-            }
-            if tmax > 0 && (cur_words.len() as u32) > tmax {
-                cur_words.truncate(tmax as usize);
-            }
-            g.title = cur_words.join(" ");
-        }
-    }
-
-    if dmax == 0 {
-        g.description = String::new();
-    } else {
-        let mut desc = g.description.trim().split_whitespace().collect::<Vec<_>>().join(" ");
-        if desc.chars().count() as u32 > dmax {
-            desc = desc.chars().take(dmax as usize).collect::<String>().trim().to_string();
-        }
-        if (desc.chars().count() as u32) < dmin {
-            let title_part = g.title.trim();
-            let mut alt = if title_part.is_empty() {
-                "Image.".to_string()
-            } else {
-                format!("Image showing {}.", title_part)
-            };
-            if (alt.chars().count() as u32) < dmin {
-                let kws = g.keywords.iter().take(12).cloned().collect::<Vec<_>>().join(", ");
-                if !kws.is_empty() {
-                    alt = format!("{} Keywords: {}.", alt.trim_end_matches('.'), kws);
-                }
-            }
-            if alt.chars().count() as u32 > dmax {
-                alt = alt.chars().take(dmax as usize).collect::<String>().trim().to_string();
-            }
-            desc = alt;
-        }
-        if dmin > 0 {
-            while (desc.chars().count() as u32) < dmin {
-                if desc.is_empty() {
-                    desc.push_str("Image.");
-                } else {
-                    desc.push_str(" Image.");
-                }
-                if (desc.chars().count() as u32) > dmax {
-                    desc = desc.chars().take(dmax as usize).collect::<String>().trim().to_string();
-                    break;
-                }
-            }
-        }
-        g.description = desc;
-    }
-
-    let stopwords = build_stopwords();
-    let mut out: Vec<String> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for kw in g.keywords.drain(..) {
-        let lower = kw.trim().to_lowercase();
-        if lower.is_empty() { continue; }
-        let clean = lower.replace(|c: char| !c.is_ascii_alphanumeric(), " ");
-        for token in clean.split_whitespace() {
-            if !is_meaningful_token(token, &stopwords, &banned_list) { continue; }
-            let t = token.trim().to_string();
-            if seen.insert(t.clone()) { out.push(t); }
-        }
-    }
-
-    let push_from_text = |text: &str, out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>| {
-        let lower = text.to_lowercase();
-        let clean = lower.replace(|c: char| !c.is_ascii_alphanumeric(), " ");
-        for token in clean.split_whitespace() {
-            if out.len() as u32 >= kw_min { break; }
-            if !is_meaningful_token(token, &stopwords, &banned_list) { continue; }
-            let t = token.trim().to_string();
-            if seen.insert(t.clone()) { out.push(t); }
-        }
-    };
-
-    if kw_min > 0 && (out.len() as u32) < kw_min {
-        push_from_text(&g.title, &mut out, &mut seen);
-    }
-    if kw_min > 0 && (out.len() as u32) < kw_min {
-        push_from_text(&g.description, &mut out, &mut seen);
-    }
-    if kw_min > 0 && (out.len() as u32) < kw_min {
-        push_from_text(&g.category, &mut out, &mut seen);
-    }
-    if kw_min > 0 && (out.len() as u32) < kw_min {
-        use std::path::Path;
-        if let Some(stem) = Path::new(&g.file_path).file_stem().and_then(|s| s.to_str()) {
-            let lower = stem.to_lowercase();
-            let clean = lower.replace(|c: char| !c.is_ascii_alphanumeric(), " ");
-            for token in clean.split_whitespace() {
-                if out.len() as u32 >= kw_min { break; }
-                if !is_meaningful_token(token, &stopwords, &banned_list) { continue; }
-                let t = token.trim().to_string();
-                if seen.insert(t.clone()) { out.push(t); }
-            }
-        }
-    }
-
-    if kw_min > 0 && (out.len() as u32) < kw_min {
-        let base = out.clone();
-        for w in base {
-            if out.len() as u32 >= kw_min { break; }
-            let lower = w.to_lowercase();
-            if lower.len() < 3 { continue; }
-            if lower.ends_with('s') && lower.len() > 3 {
-                let singular = lower.trim_end_matches('s').to_string();
-                if is_meaningful_token(&singular, &stopwords, &banned_list) && seen.insert(singular.clone()) {
-                    out.push(singular);
-                }
-            } else {
-                let plural = format!("{}s", lower);
-                if is_meaningful_token(&plural, &stopwords, &banned_list) && seen.insert(plural.clone()) {
-                    out.push(plural);
-                }
-            }
-        }
-    }
-
-    if kw_max == 0 {
-        out.clear();
-    } else if (out.len() as u32) > kw_max {
-        out.truncate(kw_max as usize);
-    }
-    g.keywords = out;
+    optimize_title_for_seo(g, tmin, tmax);
+    optimize_description_for_seo(g, dmin, dmax);
+    optimize_and_verify_keywords(g, kw_min, kw_max, &banned_list);
 }
 
 fn valid(g: &Generated, req: &crate::api::BatchReq) -> bool {
@@ -2647,17 +2545,13 @@ async fn pg_call_prompt(
     let model = req.model.trim();
     let provider_lower = req.provider.trim().to_lowercase();
     let key = req.api_key.clone().unwrap_or_default().trim().to_string();
-    let token = req.token.trim().to_string();
 
     let has_key = !key.is_empty();
-    let has_token = !token.is_empty();
-    let wants_gateway = req.connection_mode.trim().to_lowercase().contains("gateway") || req.connection_mode.trim().to_lowercase().contains("server");
 
     let is_openrouter = provider_lower.contains("openrouter") || key.starts_with("sk-or-");
-    let is_key_google = key.starts_with("AIza");
+    let is_grok = key.starts_with("xai-") || provider_lower.contains("grok") || provider_lower.contains("x.ai");
+    let is_key_google = key.starts_with("AIza") || key.starts_with("AQ.");
     let is_gemini = model.to_lowercase().contains("gemini") || provider_lower.contains("gemini") || is_key_google;
-
-    let use_server = wants_gateway && !has_key && has_token;
 
     let max_tokens = promptgrab_max_tokens(&req.detail_level);
     let messages = if let Some((b64, mime)) = image_b64 {
@@ -2666,37 +2560,6 @@ async fn pg_call_prompt(
         pg_messages_text_only(system_prompt, meta_text)
     };
 
-    if use_server {
-        let base = settings.server_url.trim_end_matches('/');
-        let url = format!("{}/ai/generate", base);
-        let resp = client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", token))
-            .json(&serde_json::json!({
-                "model": model,
-                "messages": messages,
-                "prompt": meta_text,
-                "retries": req.retries
-            }))
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let err_text = resp.text().await.unwrap_or_default();
-            return Err(anyhow!("Gateway API Error (HTTP {}): {}", status, err_text));
-        }
-        let res_json: serde_json::Value = resp.json().await?;
-        let content = res_json
-            .get("result")
-            .and_then(|s| s.as_str())
-            .or_else(|| res_json.pointer("/choices/0/message/content").and_then(|s| s.as_str()))
-            .unwrap_or("")
-            .to_string();
-        let usage: Option<TokenUsage> = res_json.get("usage").and_then(|u| serde_json::from_value(u.clone()).ok());
-        return Ok((content, usage, "gateway".into()));
-    }
-
     if !has_key {
         return Err(anyhow!("Missing API key"));
     }
@@ -2704,6 +2567,8 @@ async fn pg_call_prompt(
     let url = if is_openrouter {
         let ep = settings.openrouter_endpoint.trim();
         if ep.is_empty() { "https://openrouter.ai/api/v1/chat/completions".to_string() } else { ep.to_string() }
+    } else if is_grok {
+        "https://api.x.ai/v1/chat/completions".to_string()
     } else if is_gemini {
         "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string()
     } else {

@@ -28,28 +28,7 @@ export async function getApiUrl(): Promise<string> {
     }
 }
 
-// @deprecated Use getApiUrl() instead. Kept for backward compatibility if needed, but value is static.
-export const API_URL = DEFAULT_API_URL;
 
-export interface User {
-  id: number;
-  email: string;
-  tokens: number;
-}
-
-export interface AuthResponse {
-  token: string;
-  user: User;
-  error?: string;
-}
-
-export interface AIResponse {
-  result: string;
-  usage: { input: number; output: number };
-  cost: number;
-  remaining: number;
-  error?: string;
-}
 
 // Helper untuk mendapatkan HWID dari Rust
 export async function getMachineHash(): Promise<string> {
@@ -72,44 +51,6 @@ export async function apiRegister(email: string, password: string): Promise<any>
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Registration failed");
   return data;
-}
-
-export async function apiLogin(email: string, password: string): Promise<AuthResponse> {
-  const deviceHash = await getMachineHash();
-  const baseUrl = await getApiUrl();
-  const res = await fetch(`${baseUrl}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, device_hash: deviceHash })
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Login failed");
-  return data;
-}
-
-export async function apiGenerateAI(token: string, model: string, prompt: string): Promise<any> {
-  const baseUrl = await getApiUrl();
-  const res = await fetch(`${baseUrl}/ai/generate`, {
-    method: "POST",
-    headers: { 
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}` 
-    },
-    body: JSON.stringify({ model, prompt })
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "AI Generation failed");
-  return data;
-}
-
-export async function apiGetBalance(token: string): Promise<any> {
-    const baseUrl = await getApiUrl();
-    const res = await fetch(`${baseUrl}/token/balance`, {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Failed to fetch balance");
-    return data;
 }
 
 export async function apiGetUserProfile(token: string): Promise<any> {
@@ -215,8 +156,9 @@ export async function apiGetAdminLynkPurchases(token: string, opts?: { limit?: n
 	const res = await fetch(url.toString(), {
 		headers: { "Authorization": `Bearer ${token}` }
 	});
-	const data = await res.json().catch(() => null);
-	if (!res.ok) throw new Error(data?.error || "Failed to fetch Lynk purchases");
+	let data: any = null;
+	try { data = await res.json(); } catch (e) { data = null; }
+	if (!res.ok) throw new Error(data?.error || `Failed to fetch Lynk purchases (HTTP ${res.status})`);
 	return data;
 }
 
@@ -230,8 +172,9 @@ export async function apiGetAdminLynkWebhookLogs(token: string, opts?: { limit?:
 	const res = await fetch(url.toString(), {
 		headers: { "Authorization": `Bearer ${token}` }
 	});
-	const data = await res.json().catch(() => null);
-	if (!res.ok) throw new Error(data?.error || "Failed to fetch Lynk webhook logs");
+	let data: any = null;
+	try { data = await res.json(); } catch (e) { data = null; }
+	if (!res.ok) throw new Error(data?.error || `Failed to fetch Lynk webhook logs (HTTP ${res.status})`);
 	return data;
 }
 
@@ -258,18 +201,19 @@ export async function apiManualUpdateUser(
       subscription_expiry_date: subscriptionExpiryDate
     })
 	});
-	const data = await res.json();
-	if (!res.ok) throw new Error(data.error || "Manual update user failed");
+	let data: any = null;
+	try { data = await res.json(); } catch (e) { data = null; }
+	if (!res.ok) throw new Error(data?.error || `Manual update user failed (HTTP ${res.status})`);
 	return data;
 }
-
 export async function apiAdminListVouchers(token: string): Promise<any[]> {
   const baseUrl = await getApiUrl();
   const res = await fetch(`${baseUrl}/admin/vouchers`, {
     headers: { "Authorization": `Bearer ${token}` }
   });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.error || "Failed to fetch vouchers");
+  let data: any = null;
+  try { data = await res.json(); } catch (e) { data = null; }
+  if (!res.ok) throw new Error(data?.error || `Failed to fetch vouchers (HTTP ${res.status})`);
   return Array.isArray(data) ? data : (Array.isArray(data?.results) ? data.results : []);
 }
 
@@ -294,8 +238,9 @@ export async function apiAdminCreateVoucher(
     },
     body: JSON.stringify(payload)
   });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.error || "Failed to create voucher");
+  let data: any = null;
+  try { data = await res.json(); } catch (e) { data = null; }
+  if (!res.ok) throw new Error(data?.error || `Failed to create voucher (HTTP ${res.status})`);
   return data;
 }
 
@@ -307,8 +252,9 @@ export async function apiLicenseStatus(token: string, userId: string, deviceHash
   const res = await fetch(url.toString(), {
     headers: { "Authorization": `Bearer ${token}` }
   });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.error || "License status failed");
+  let data: any = null;
+  try { data = await res.json(); } catch (e) { data = null; }
+  if (!res.ok) throw new Error(data?.error || `License status failed (HTTP ${res.status})`);
   return data;
 }
 
@@ -322,8 +268,9 @@ export async function apiLicenseActivate(token: string, code: string, userId: st
     },
     body: JSON.stringify({ code, userId, deviceHash })
   });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.error || "License activation failed");
+  let data: any = null;
+  try { data = await res.json(); } catch (e) { data = null; }
+  if (!res.ok) throw new Error(data?.error || `License activation failed (HTTP ${res.status})`);
   return data;
 }
 
@@ -405,8 +352,9 @@ export async function apiAdminListLicenseSupport(token: string, opts?: { status?
   if (opts?.q) url.searchParams.set('q', String(opts.q));
   if (opts?.limit) url.searchParams.set('limit', String(opts.limit));
   const res = await fetch(url.toString(), { headers: { "Authorization": `Bearer ${token}` } });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.error || "Failed to fetch license support requests");
+  let data: any = null;
+  try { data = await res.json(); } catch (e) { data = null; }
+  if (!res.ok) throw new Error(data?.error || `Failed to fetch license support requests (HTTP ${res.status})`);
   return data;
 }
 
@@ -416,8 +364,9 @@ export async function apiAdminFindLynkPurchasesByEmail(token: string, email: str
   url.searchParams.set('email', String(email || ''));
   if (limit) url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), { headers: { "Authorization": `Bearer ${token}` } });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.error || "Failed to search Lynk purchases");
+  let data: any = null;
+  try { data = await res.json(); } catch (e) { data = null; }
+  if (!res.ok) throw new Error(data?.error || `Failed to search Lynk purchases (HTTP ${res.status})`);
   return data;
 }
 
@@ -431,8 +380,9 @@ export async function apiAdminApproveLicenseSupport(
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
     body: JSON.stringify(payload || {})
   });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.error || "Approve failed");
+  let data: any = null;
+  try { data = await res.json(); } catch (e) { data = null; }
+  if (!res.ok) throw new Error(data?.error || `Approve failed (HTTP ${res.status})`);
   return data;
 }
 
@@ -446,8 +396,9 @@ export async function apiAdminRejectLicenseSupport(
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
     body: JSON.stringify(payload || {})
   });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.error || "Reject failed");
+  let data: any = null;
+  try { data = await res.json(); } catch (e) { data = null; }
+  if (!res.ok) throw new Error(data?.error || `Reject failed (HTTP ${res.status})`);
   return data;
 }
 

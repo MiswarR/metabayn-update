@@ -13,8 +13,6 @@ mod anti_clone;
 mod api;
 mod audit;
 mod auth;
-mod cloudflare;
-mod cloudflare_commands;
 mod crypto_utils;
 mod csv;
 mod filesystem;
@@ -38,7 +36,7 @@ fn main() {
         if std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_none() {
             let mut dir = std::env::temp_dir();
             dir.push("metabayn-webview2");
-            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::create_dir_all(&dir); // Ignore error if access denied, WebView2 will handle it
             std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", dir);
         }
         if std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_none() {
@@ -125,11 +123,7 @@ fn main() {
             crate::api::prompt_grabber_generate,
             crate::api::prompt_grabber_save_txt,
             crate::api::prompt_grabber_save_file,
-            crate::api::cancel_prompt_grabber,
-            // Cloudflare Gateway Commands
-            crate::cloudflare_commands::check_cloudflare_balance,
-            crate::cloudflare_commands::generate_metadata_cloudflare,
-            crate::cloudflare_commands::set_active_mode
+            crate::api::cancel_prompt_grabber
         ])
         .setup(|app| {
             #[cfg(target_os = "windows")]

@@ -142,7 +142,6 @@ export default function App(){
     return 'login';
   });
 
-  const [isProcessing, setIsProcessing] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [userEmail, setUserEmail] = useState(() => {
     try { return localStorage.getItem('metabayn:userEmail:v1') || '' } catch { return '' }
@@ -166,7 +165,6 @@ export default function App(){
   const [redeemUserId, setRedeemUserId] = useState<string>('');
   const redeemPromptShownRef = React.useRef(false);
   const updateCheckedRef = React.useRef(false);
-  const hotkeyRef = React.useRef<{ stage: 0 | 1; ts: number }>({ stage: 0, ts: 0 })
   const keysPressed = React.useRef(new Set<string>());
   
   // Skip booting screen for video player
@@ -237,12 +235,15 @@ export default function App(){
         console.log('Deep Link received:', url);
         // Parse token: metabayn://auth?token=XYZ
         if (url.includes('token=')) {
-           const extractedToken = url.split('token=')[1].split('&')[0];
-           if (extractedToken) {
+           const extractedToken = url.split('token=')[1].split('&')[0]?.trim();
+           // Validate token before storing (must be a valid JWT with 3 parts)
+           if (extractedToken && isValidToken(extractedToken)) {
              setToken(extractedToken);
              setPage('dashboard');
              saveTokenLocal(extractedToken);
              if (isTauri) invoke('save_auth_token', { token: extractedToken }).catch(console.error);
+           } else {
+             console.warn('Invalid token from deep link, ignoring');
            }
         }
       });
@@ -678,7 +679,7 @@ export default function App(){
                 <Dashboard 
                     token={token} 
                     onSettings={()=>setPage('settings')} 
-                    onProcessChange={setIsProcessing}
+                    onProcessChange={undefined}
                     isActive={page==='dashboard'}
                     isAdmin={isAdmin}
                     userEmail={userEmail}

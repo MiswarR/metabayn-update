@@ -38,6 +38,11 @@ impl AuditState {
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("audit.log");
         
+        // Try to create the directory, ignore errors
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        
         Self {
             log_path: path.to_string_lossy().to_string(),
         }
@@ -53,6 +58,7 @@ impl AuditState {
         };
 
         if let Ok(json) = serde_json::to_string(&entry) {
+            // Ignore errors when writing to audit log
             if let Ok(mut file) = OpenOptions::new()
                 .create(true)
                 .append(true)

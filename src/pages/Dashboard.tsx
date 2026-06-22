@@ -25,7 +25,7 @@ import Settings from './Settings'
 import HelpGuide from '../components/HelpGuide'
 import { getApiUrl, clearTokenLocal, apiGetUserProfile, getMachineHash, apiLicenseStatus, apiToolLicenseActivate, apiToolLicenseStatus } from '../api/backend'
 import { decryptApiKey } from '../utils/crypto'
-import { resolveGatewayBalanceAfter } from '../utils/gatewayBalance'
+import { getApiKeyFromStorage } from '../utils/apiKeyStorage'
 import { invokeWithTimeout } from '../utils/invokeWithTimeout'
 import { translations } from '../utils/translations'
 import { clearBatchState, loadBatchState, markBatchInterrupted, saveBatchState, type BatchFileStatus, type BatchStateV1 } from '../utils/batchLifecycle'
@@ -280,7 +280,6 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
   const criticalErrorRef = useRef<string | null>(null);
   const [profitMargin, setProfitMargin] = useState<number>(50);
   const convertFormatOptionsLoadedRef = useRef<boolean>(false);
-  const [gatewayEnabled, setGatewayEnabled] = useState<boolean>(false);
   const autoResumeTriedRef = useRef(false);
   const isGeneratingRef = useRef(false)
   const isCsvToolsRunningRef = useRef(false)
@@ -354,8 +353,6 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         if (s && typeof s.profit_margin_percent === 'number') {
             setProfitMargin(s.profit_margin_percent);
         }
-        const isGateway = resolveGatewayFromSettings(s)
-        setGatewayEnabled(isGateway)
     }).catch(console.error);
   }, []);
 
@@ -365,7 +362,6 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       const minimal = {
         id: (userProfile as any)?.id,
         email: (userProfile as any)?.email,
-        tokens: (userProfile as any)?.tokens,
         subscription_active: (userProfile as any)?.subscription_active,
         subscription_expiry: (userProfile as any)?.subscription_expiry
       }
@@ -386,13 +382,8 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     } catch {}
   }, [])
 
-  const resolveGatewayFromSettings = (s: any): boolean => {
-    return false
-  }
-
   // Notification State
   const [notification, setNotification] = useState<{title: string, message: string, type: 'success' | 'info' | 'error'} | null>(null)
-  const prevProfileRef = useRef<any>(null)
 
   useEffect(() => {
     try {
@@ -456,15 +447,6 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       clearBatchState()
     }
   }, [token])
-
-  useEffect(() => {
-    if (!userProfile) return;
-    prevProfileRef.current = userProfile;
-  }, [userProfile]);
-  
-  useEffect(() => {
-    console.log("Dashboard mounted. Token present:", !!token);
-  }, []);
 
   // Listen for CSV Generation Logs
   useEffect(() => {
@@ -900,48 +882,6 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     })()
   }, [showConvertModal])
 
-  // Background Keep-Alive (Prevent Throttling)
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const oscillatorRef = useRef<OscillatorNode | null>(null);
-  const folderRetryCount = useRef(0);
-
-  function enableKeepAlive() {
-      // Disabled to prevent overheating / high CPU usage
-      /*
-      try {
-          if (!audioCtxRef.current) {
-              const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-              audioCtxRef.current = new AudioContext();
-          }
-          if (audioCtxRef.current?.state === 'suspended') {
-              audioCtxRef.current.resume();
-          }
-          
-          if (!oscillatorRef.current) {
-              const osc = audioCtxRef.current!.createOscillator();
-              const gain = audioCtxRef.current!.createGain();
-              gain.gain.value = 0.0001; // Silent but active
-              osc.connect(gain);
-              gain.connect(audioCtxRef.current!.destination);
-              osc.start();
-              oscillatorRef.current = osc;
-          }
-      } catch (e) {
-          console.error("Failed to enable keep-alive", e);
-      }
-      */
-  }
-
-  function disableKeepAlive() {
-      try {
-          if (oscillatorRef.current) {
-              oscillatorRef.current.stop();
-              oscillatorRef.current.disconnect();
-              oscillatorRef.current = null;
-          }
-      } catch (e) {}
-  }
-  
   // TopUp State Removed
   
   useEffect(()=>{ 
@@ -1095,11 +1035,9 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
 
   async function start(isAutoRetry: boolean | any = false){
     const isRetry = typeof isAutoRetry === 'boolean' ? isAutoRetry : false;
-    if (!isRetry) folderRetryCount.current = 0;
     isGeneratingRef.current = true
 
     if(onProcessChange) onProcessChange(true);
-    enableKeepAlive();
     try {
         setStats({total:0, done:0, success:0, failed:0, rejected:0});
     setLogs(l=>[...l, {text: pl('scanning'), color:'#aaa'}])
@@ -1108,8 +1046,6 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     setCriticalError(null);
     
     const s=await invoke<any>('get_settings');
-    const isGateway = resolveGatewayFromSettings(s);
-    setGatewayEnabled(isGateway);
 
     if (token && userProfile) {
       const uid = String((userProfile as any)?.id ?? '').trim()
@@ -1183,15 +1119,17 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     };
     // -----------------------------------------------------------------------------------------------
 
-    // Tentukan mode koneksi berdasarkan provider:
-    // - OpenRouter (AI Gateway): server-managed key, TIDAK butuh API key lokal
-    // - Standard AI (Gemini/OpenAI): Direct mode dan butuh API key lokal
+    // Semua provider memakai API key milik pengguna (mode langsung):
+    // - Standard AI: Gemini / OpenAI / Grok
+    // - AI Gateway: OpenRouter
+    // API key disimpan per-provider dan dikirim langsung ke endpoint provider.
     let directApiKey = '';
-    if (!isGateway) {
+    {
       try {
         const deviceSecret = String(await getMachineHash()).trim()
-        const savedKey = localStorage.getItem('metabayn_api_key_enc');
-        const savedIv = localStorage.getItem('metabayn_api_key_iv');
+        const apiKeyStorage = getApiKeyFromStorage(String(s.ai_provider || 'Gemini'))
+        const savedKey = apiKeyStorage.enc;
+        const savedIv = apiKeyStorage.iv;
         if (!savedKey || !savedIv) {
           setLogs(l=>[...l, {text: pl('apiKeyMissing'), color:'#f44336'}]);
           return;
@@ -1206,10 +1144,8 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         setLogs(l=>[...l, {text: pl('failedReadApiKey'), detail: String(e), color:'#f44336'}]);
         return;
       }
-    } else {
-      setLogs(l=>[...l, {text: pl('gatewayModeEnabled'), color:'#4caf50', hidden:true}]);
     }
-    
+
     // --- FIX: CSV Headers are now initialized on-demand inside processFile ---
     /* 
     try {
@@ -1273,7 +1209,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       String(s.selection_order || ''),
       String(s.ai_provider || ''),
       String(s.connection_mode || ''),
-      String(isGateway ? 'gateway' : 'direct'),
+      'direct',
       effectiveModel
     ].join('|')
 
@@ -1453,95 +1389,20 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
               request_timeout_sec: requestTimeoutSec,
               request_id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`
             };
-            if (isGateway) {
-              reqPayload.connection_mode = 'gateway';
-              reqPayload.api_key = '';
-            } else {
-              reqPayload.connection_mode = 'direct';
-              reqPayload.api_key = directApiKey;
-            }
+            reqPayload.connection_mode = 'direct';
+            reqPayload.api_key = directApiKey;
             const res = await invoke<any[]>('generate_metadata_batch', { req: reqPayload })
             if (criticalErrorRef.current) {
               finalStatus = 'skipped'
               return
             }
 
-            const getCostUsd = (g: any): number | null => {
-              const n = Number((g as any)?.cost ?? (g as any)?.cost_usd)
-              if (!Number.isFinite(n) || n <= 0) return null
-              return n
-            }
-
-            const applyGatewayBalanceUpdate = async (g: any): Promise<{ balanceAfter: number | null; deducted: number | null; stopped: boolean }> => {
-              if (!token || !isGateway) return { balanceAfter: null, deducted: null, stopped: false }
-
-              const deducted = (g as any).app_tokens_deducted ?? (g as any).tokens_deducted
-              const hasBalanceAfter = Number.isFinite(Number((g as any).app_balance_after)) || Number.isFinite(Number((g as any).user_balance_after))
-              let balanceAfter = hasBalanceAfter ? resolveGatewayBalanceAfter(g, Number(userProfile?.tokens || 0)) : null
-
-              if (balanceAfter === null && typeof deducted === 'number' && Number.isFinite(deducted) && deducted > 0) {
-                setUserProfile((prev: any) => {
-                  balanceAfter = resolveGatewayBalanceAfter(g, Number(prev?.tokens || 0))
-                  if (typeof balanceAfter === 'number' && Number.isFinite(balanceAfter)) {
-                    return { ...prev, tokens: balanceAfter }
-                  }
-                  return prev
-                })
-              }
-
-              if (typeof balanceAfter === 'number' && Number.isFinite(balanceAfter)) {
-                setUserProfile((prev: any) => ({ ...prev, tokens: balanceAfter }))
-                if (balanceAfter <= 0) {
-                  pushLog({text: pl('tokensExhaustedStop'), color:'#f44336'})
-                  stopProcessSystem(pl('tokensExhaustedDetail'))
-                  return { balanceAfter, deducted: typeof deducted === 'number' ? deducted : null, stopped: true }
-                }
-                return { balanceAfter, deducted: typeof deducted === 'number' ? deducted : null, stopped: false }
-              }
-
-              try {
-                const fresh = await apiGetUserProfile(token)
-                const freshTokens = Number((fresh as any)?.tokens)
-                if (Number.isFinite(freshTokens)) {
-                  setUserProfile((prev: any) => ({ ...prev, ...fresh, tokens: freshTokens }))
-                  if (freshTokens <= 0) {
-                    pushLog({text: pl('tokensExhaustedStop'), color:'#f44336'})
-                    stopProcessSystem(pl('tokensExhaustedDetail'))
-                    return { balanceAfter: freshTokens, deducted: null, stopped: true }
-                  }
-                  return { balanceAfter: freshTokens, deducted: null, stopped: false }
-                }
-              } catch {}
-
-              return { balanceAfter: null, deducted: null, stopped: false }
-            }
-            
             for(const g of res){
                 if (criticalErrorRef.current) {
                   finalStatus = finalStatus || 'skipped'
                   break
                 }
                 const fileName = g.file.split(/[\\/]/).pop();
-
-                const balanceUpdate = await applyGatewayBalanceUpdate(g)
-                if (balanceUpdate.stopped) break
-
-                if (isGateway) {
-                  const costUsd = getCostUsd(g)
-                  const reqId = String((g as any)?.request_id || (g as any)?.metabayn?.request_id || '').trim()
-                  const appUsed = Number((g as any)?.app_tokens_deducted ?? (g as any)?.tokens_deducted)
-                  const balanceAfter = Number((g as any)?.app_balance_after ?? (g as any)?.user_balance_after)
-                  const finalBalance = Number.isFinite(balanceAfter) ? balanceAfter : (Number.isFinite(Number(balanceUpdate.balanceAfter)) ? Number(balanceUpdate.balanceAfter) : null)
-                  const line = [
-                    `[${new Date().toISOString()}]`,
-                    `request_id=${reqId || '-'}`,
-                    `file=${fileName}`,
-                    `cost_usd=${costUsd && Number.isFinite(costUsd) ? costUsd.toFixed(6) : '0.000000'}`,
-                    `deducted=${Number.isFinite(appUsed) ? appUsed : 0}`,
-                    `balance_after=${finalBalance !== null ? finalBalance : 'unknown'}`
-                  ].join(' ')
-                  invoke<string>('append_cost_log', { line }).catch(() => {})
-                }
 
                 if (g.source === 'error' || g.title === 'ERROR' || g.selection_status === 'rejected') {
                     const isRejection = String(g.description).startsWith('Rejected:') || g.selection_status === 'rejected';
@@ -1558,17 +1419,6 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
                         const outTok = typeof g.output_tokens === 'number' && Number.isFinite(g.output_tokens) ? g.output_tokens : 0
                         detailMsg += `\n${pl('inOut', { inTok, outTok })}`;
 
-                        if (isGateway) {
-                          const costUsd = getCostUsd(g)
-                          if (costUsd) {
-                            detailMsg += `\n${pl('costUsd', { cost: costUsd.toFixed(6) })}`
-                          }
-                          const appUsed = (g as any).app_tokens_deducted
-                          if (typeof appUsed === 'number' && Number.isFinite(appUsed)) {
-                            detailMsg += `\n${pl('appTokensUsed', { tokens: appUsed })}`
-                          }
-                        }
-                        
                         if (g.selection_status) {
                              detailMsg += `\n${pl('selection', { status: g.selection_status })}`;
                         }
@@ -1795,15 +1645,6 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
                         const outTok = typeof g.output_tokens === 'number' && Number.isFinite(g.output_tokens) ? g.output_tokens : 0
                         msg += `\n${pl('inOut', { inTok, outTok })}`;
 
-                        const appUsed = (g as any).app_tokens_deducted
-                        if (typeof appUsed === 'number' && Number.isFinite(appUsed)) {
-                          msg += `\n${pl('appTokensUsed', { tokens: appUsed })}`
-                        }
-                        const costUsd = getCostUsd(g)
-                        if (costUsd) {
-                          msg += `\n${pl('costUsd', { cost: costUsd.toFixed(6) })}`
-                        }
-                        
                         msg += `\n${pl('selection', { status: g.selection_status || 'n/a' })}`;
                         return msg;
                     })();
@@ -1957,7 +1798,6 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
     } finally {
         isGeneratingRef.current = false
         if(onProcessChange) onProcessChange(false);
-        disableKeepAlive();
     }
   }
   function stopProcess(){ 
@@ -2070,8 +1910,9 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
         
         try {
             const deviceSecret = String(await getMachineHash()).trim()
-            const savedKey = localStorage.getItem('metabayn_api_key_enc');
-            const savedIv = localStorage.getItem('metabayn_api_key_iv');
+            const apiKeyStorage = getApiKeyFromStorage(providerName)
+            const savedKey = apiKeyStorage.enc;
+            const savedIv = apiKeyStorage.iv;
             if (savedKey && savedIv) {
                 apiKey = (await decryptApiKey(savedKey, savedIv, deviceSecret)).trim();
             }
@@ -2410,8 +2251,9 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       let apiKey = ''
       try {
         const deviceSecret = String(await getMachineHash()).trim()
-        const savedKey = localStorage.getItem('metabayn_api_key_enc')
-        const savedIv = localStorage.getItem('metabayn_api_key_iv')
+        const apiKeyStorage = getApiKeyFromStorage(provider)
+        const savedKey = apiKeyStorage.enc
+        const savedIv = apiKeyStorage.iv
         if (savedKey && savedIv) apiKey = (await decryptApiKey(savedKey, savedIv, deviceSecret)).trim()
       } catch {}
       if (!apiKey) throw new Error('API key belum diset di Settings')
@@ -2583,9 +2425,7 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
       setDupRunning(true)
       const logId = Date.now();
       setLogs(l => [...l, { id: logId, text: pl('duplicateStartingScan', { path: dupInputDir }), color: '#aaa', animating: true }]);
-      console.log("[Duplicate] Invoking command with:", { input_folder: dupInputDir, auto_delete: dupAutoDelete, threshold: dupThreshold });
       const res = await invoke<string>('detect_duplicate_images', { input_folder: dupInputDir, inputFolder: dupInputDir, auto_delete: dupAutoDelete, autoDelete: dupAutoDelete, threshold: dupThreshold });
-      console.log("[Duplicate] Result:", res);
       setLogs(l => l.map(x => x.id === logId ? { ...x, animating: false } : x));
       setLogs(l => [...l, { text: pl('duplicateCompleted', { result: res }), color: '#4caf50' }]);
     } catch (e) {

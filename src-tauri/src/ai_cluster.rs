@@ -83,13 +83,32 @@ pub async fn run_clustering(window: Window, input_folder: &str, threshold: f64) 
     thread::spawn(move || {
         let reader = BufReader::new(stderr);
         for l in reader.lines().map_while(Result::ok) {
-             // Ignore some common stderr noise from python libraries if needed
-             if l.trim().is_empty() { continue; }
+             // Ignore some common stderr noise from python libraries
+             let trimmed = l.trim();
+             if trimmed.is_empty() { continue; }
              
-             let _ = window_clone2.emit("ai_cluster_log", serde_json::json!({
-                 "text": format!("[STDERR] {}", l),
-                 "status": "error"
-             }));
+             // Filter out known warnings and non-error messages
+             let lower = trimmed.to_lowercase();
+             let is_just_warning = lower.contains("warning") || 
+                                   lower.contains("deprecated") ||
+                                   lower.contains("futurewarning") ||
+                                   lower.contains("pynvml") ||
+                                   lower.contains("100%|") ||  // tqdm progress bars
+                                   lower.contains("██████") || // progress bar characters
+                                   (lower.contains("%") && lower.contains("|")); // progress indicator
+             
+             if is_just_warning {
+                 // Show as processing instead of error
+                 let _ = window_clone2.emit("ai_cluster_log", serde_json::json!({
+                     "text": format!("[STDERR] {}", l),
+                     "status": "processing"
+                 }));
+             } else {
+                 let _ = window_clone2.emit("ai_cluster_log", serde_json::json!({
+                     "text": format!("[STDERR] {}", l),
+                     "status": "error"
+                 }));
+             }
         }
     });
 

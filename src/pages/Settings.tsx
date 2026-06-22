@@ -5,8 +5,7 @@ import { encryptApiKey, decryptApiKey } from '../utils/crypto'
 import { logAudit } from '../utils/audit'
 import { apiGetUserProfile, getApiUrl, getMachineHash, getTokenLocal } from '../api/backend'
 import { translations } from '../utils/translations'
-import { isVisionLikeModelId } from '../utils/modelVisionFilter'
-import { formatTokenBalance } from '../utils/gatewayBalance'
+import { isVisionLikeModelId, isDeprecatedGeminiModelId } from '../utils/modelVisionFilter'
 import iconGenerateCsv from '@icons/generate-csv.ico'
 import iconDuplicateCheck from '@icons/duplicate-check.ico'
 import iconRemoveMetadata from '@icons/remove-metadata.ico'
@@ -37,7 +36,7 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       return null
     }
   })
-  const [model,setModel]=useState('gemini-2.0-flash-exp')
+  const [model,setModel]=useState('gemini-2.5-flash-lite')
   const [overwrite,setOverwrite]=useState(true)
   const [csv,setCsv]=useState('')
   const [logs,setLogs]=useState('')
@@ -62,8 +61,6 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
   const [settingsHydrated, setSettingsHydrated] = useState(false)
   const [deviceSecret, setDeviceSecret] = useState<string>('')
   const [selectionEnabled, setSelectionEnabled] = useState(false)
-  // // const [checkAnatomyDefect, setCheckAnatomyDefect] = useState(false)
-  const [checkHumanAnimalSimilarity, setCheckHumanAnimalSimilarity] = useState(false)
   const [checkHumanPresence, setCheckHumanPresence] = useState(false)
   const [checkAnimalPresence, setCheckAnimalPresence] = useState(false)
   const [checkDeformedObject, setCheckDeformedObject] = useState(false)
@@ -140,6 +137,15 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
     return m
   }
 
+  // Generate storage key for API Key based on provider
+  const getApiKeyStorageKey = (prov: string): { enc: string; iv: string } => {
+    const normalizedProvider = String(prov || 'Gemini').toLowerCase()
+    return {
+      enc: `metabayn:apikey:${normalizedProvider}:enc`,
+      iv: `metabayn:apikey:${normalizedProvider}:iv`
+    }
+  }
+
   const getGenModelCfgKey = (provider: string, model: string) => {
     const p = String(provider || '')
     const m = normalizeModelForProvider(provider, model)
@@ -198,31 +204,22 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
     {label:'GPT-4o Mini (Nano)', value:'gpt-4o-mini'},
     {label:'GPT-5 Nano', value:'gpt-5-nano'},
   ]
+  // Hanya model Gemini yang masih berlaku & mendukung vision (endpoint OpenAI-compatible).
+  // Model "Ultra", experimental berkode tanggal (-exp / preview-02-05), dan seri 1.5
+  // sudah tidak tersedia / dipensiunkan oleh Google, jadi tidak ditampilkan.
   const geminiModels=[
-    {label:'Gemini 3.0 Flash (Preview)', value:'gemini-3.0-flash-preview'},
-    {label:'Gemini 3.0 Pro (Preview)', value:'gemini-3.0-pro-preview'},
-    {label:'Gemini 3.0 Ultra', value:'gemini-3.0-ultra'},
     {label:'Gemini 2.5 Pro', value:'gemini-2.5-pro'},
     {label:'Gemini 2.5 Flash', value:'gemini-2.5-flash'},
     {label:'Gemini 2.5 Flash-Lite', value:'gemini-2.5-flash-lite'},
-    {label:'Gemini 2.5 Ultra', value:'gemini-2.5-ultra'},
-    {label:'Gemini 2.0 Pro', value:'gemini-2.0-pro-exp-02-05'},
-    {label:'Gemini 2.0 Ultra', value:'gemini-2.0-ultra'},
-    {label:'Gemini 2.0 Flash', value:'gemini-2.0-flash-exp'},
-    {label:'Gemini 2.0 Flash Lite', value:'gemini-2.0-flash-lite-preview-02-05'},
-    {label:'Gemini 1.5 Pro', value:'gemini-1.5-pro-002'},
-    {label:'Gemini 1.5 Flash', value:'gemini-1.5-flash-002'},
-    {label:'Gemini 1.5 Flash-8B', value:'gemini-1.5-flash-8b'},
+    {label:'Gemini 2.0 Flash', value:'gemini-2.0-flash'},
+    {label:'Gemini 2.0 Flash-Lite', value:'gemini-2.0-flash-lite'},
   ]
 
-  const groqModels = [
-    {label:'Llama 3.2 8B Vision — Free Tier / $0.0005 (Vision, Cheapest)', value:'llama-3.2-8b-vision-instruct'},
-    {label:'Phi-3 Vision Mini 4K — Free Tier / $0.0006 (Vision, Cepat)', value:'phi-3-vision-mini-4k'},
-    {label:'Gemma 2 9B Vision — Free Tier / $0.0008 (Vision)', value:'gemma-2-9b-vision-instruct'},
-    {label:'Qwen 2 72B Vision — Free Tier / $0.0025 (Vision + Reasoning, Recommended)', value:'qwen2-72b-vision-instruct'},
-    {label:'GPT-4o Mini Vision — Free Tier / $0.003 (Vision, OpenAI Compatible)', value:'gpt-4o-mini-vision'},
-    {label:'GPT-4o Vision — Paid / $0.012 (Vision + Reasoning, High Quality)', value:'gpt-4o-vision'},
-    {label:'Llama 3.2 70B Vision — Paid / $0.018 (Vision + Reasoning, Detail Tinggi)', value:'llama-3.2-70b-vision-instruct'},
+  // X.ai (Grok) vision-capable models (OpenAI-compatible API at api.x.ai).
+  const grokModels=[
+    {label:'Grok 4', value:'grok-4'},
+    {label:'Grok 4 Fast', value:'grok-4-fast'},
+    {label:'Grok 2 Vision', value:'grok-2-vision-1212'},
   ]
 
   const openRouterModels = [
@@ -442,23 +439,23 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
   const detectProviderFromApiKey = (apiKey: string): string | null => {
     if (!apiKey || typeof apiKey !== 'string') return null;
     
+    // X.ai (Grok) keys start with 'xai-'
+    if (apiKey.startsWith('xai-')) {
+      return 'Grok';
+    }
+
     // OpenAI keys start with 'sk-proj-'
     if (apiKey.startsWith('sk-proj-')) {
       return 'OpenAI';
     }
 
-    // Groq keys start with 'gsk_'
-    if (apiKey.startsWith('gsk_')) {
-      return 'Groq';
-    }
-    
     // OpenRouter keys start with 'sk-or-'
     if (apiKey.startsWith('sk-or-')) {
       return 'OpenRouter';
     }
 
-    // Google AI/Gemini keys typically start with 'AIza' 
-    if (apiKey.startsWith('AIza')) {
+    // Google AI/Gemini keys: old format 'AIza' or new format 'AQ.'
+    if (apiKey.startsWith('AIza') || apiKey.startsWith('AQ.')) {
       return 'Gemini';
     }
     
@@ -479,9 +476,9 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
     const models = getModels(provider) || [];
     if (!models || models.length === 0) {
         // Fallback defaults if no models found in DB
-        if(provider === 'Gemini') return 'gemini-2.0-flash-exp';
+        if(provider === 'Gemini') return 'gemini-2.5-flash-lite';
         if(provider === 'OpenAI') return 'gpt-4o-mini';
-        if(provider === 'Groq') return 'llama-3.1-8b-instant';
+        if(provider === 'Grok') return 'grok-4';
         if(provider === 'OpenRouter') return 'qwen/qwen3-vl-235b-a22b-thinking';
         return '';
     }
@@ -562,9 +559,9 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
     
     // Model termurah untuk setiap provider
     const cheapestModels = {
-      'Gemini': 'gemini-1.5-flash-8b',
+      'Gemini': 'gemini-2.5-flash-lite',
       'OpenAI': 'gpt-4o-mini',
-      'Groq': 'llama-3.1-8b-instant',
+      'Grok': 'grok-4-fast',
       'OpenRouter': 'qwen/qwen3-vl-235b-a22b-thinking'
     };
     
@@ -605,12 +602,13 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
      }
      
      if (dbModels.length > 0 && p !== 'OpenRouter') {
-        return dbModels.filter(m => isVisionLikeModelId(m.value))
+        return dbModels.filter(m => isVisionLikeModelId(m.value) && !(p === 'Gemini' && isDeprecatedGeminiModelId(m.value)))
      }
-     
+
      const filterFallback = (list: {label: string, value: string}[]) => {
        return (list || []).filter(m => {
          if (p === 'OpenRouter') return !isOpenRouterBlockedModel(m.value, m.label) && isVisionLikeModelId(m.value)
+         if (p === 'Gemini' && isDeprecatedGeminiModelId(m.value)) return false
          return isVisionLikeModelId(m.value)
        })
      }
@@ -715,7 +713,7 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
      
      if (p === 'OpenAI') return filterFallback(openaiModels)
      if (p === 'Gemini') return filterFallback(geminiModels)
-     if (p === 'Groq') return filterFallback(groqModels)
+     if (p === 'Grok') return filterFallback(grokModels)
      if (p === 'OpenRouter') return filterFallback(buildOpenRouterOptions())
      return [];
   }
@@ -743,17 +741,27 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
      else setOutputError(false)
   }, [input, output])
 
-  // Load API Key from local storage if exists
+  // Load API Key from local storage if exists - PER PROVIDER
   useEffect(() => {
-      const savedKey = localStorage.getItem('metabayn_api_key_enc')
-      const savedIv = localStorage.getItem('metabayn_api_key_iv')
-      if (savedKey && savedIv) {
+      // Load API Key specific to current provider
+      const keys = getApiKeyStorageKey(provider)
+      const savedKey = localStorage.getItem(keys.enc)
+      const savedIv = localStorage.getItem(keys.iv)
+      if (savedKey && savedIv && deviceSecret) {
         decryptApiKey(savedKey, savedIv, deviceSecret).then(k => {
             setApiKey(k)
             setApiKeyEncrypted(savedKey)
-        }).catch(e => console.error("Failed to decrypt API key", e))
+        }).catch(e => {
+          console.error("Failed to decrypt API key", e)
+          setApiKey('')
+          setApiKeyEncrypted('')
+        })
+      } else {
+        // If no API Key found for this provider, clear the field
+        setApiKey('')
+        setApiKeyEncrypted('')
       }
-  }, [deviceSecret])
+  }, [provider, deviceSecret])
 
   const [testingConnection, setTestingConnection] = useState(false)
 
@@ -781,40 +789,44 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
 
   async function saveApiKey(): Promise<boolean> {
       const normalizedKey = apiKey.trim()
-      // Validate format
+      // Validate: only check minimum length, no strict format validation
+      // This allows for API key format updates from providers without breaking the app
       if (normalizedKey.length < 5) {
           showToast(t.apiKeyInvalid, 'error')
           return false
       }
-      if (provider === 'OpenAI' && !normalizedKey.startsWith('sk-proj-') && !normalizedKey.startsWith('sk-')) {
-          showToast(t.openaiKeyInvalid, 'error')
-          return false
-      }
-      if (provider === 'OpenRouter' && !normalizedKey.startsWith('sk-or-')) {
-          showToast((t as any).apiKeyHintOpenrouter || 'OpenRouter API keys typically start with sk-or-', 'error')
-          return false
-      }
+      // Format validation removed: Use Test Connection button to verify API key validity
+      // This supports:
+      // - OpenAI: sk-proj-*, sk-* (new and legacy formats)
+      // - Gemini: AIza* (old format) or AQ.* (new format)
+      // - OpenRouter: sk-or-*
+      // Future format changes are now supported without code updates
 
       try {
           const { iv, data } = await encryptApiKey(normalizedKey, deviceSecret)
-          localStorage.setItem('metabayn_api_key_enc', data)
-          localStorage.setItem('metabayn_api_key_iv', iv)
+          // Save with provider-specific key
+          const keys = getApiKeyStorageKey(provider)
+          localStorage.setItem(keys.enc, data)
+          localStorage.setItem(keys.iv, iv)
           setApiKeyEncrypted(data)
-          logAudit('ApiKeyUsage', 'Save API Key', 'Success');
+          logAudit('ApiKeyUsage', `Save API Key for ${provider}`, 'Success');
           showToast(t.apiKeySaved, 'success')
           return true
       } catch (e:any) {
-          logAudit('Error', 'Save API Key Failed', String(e));
+          logAudit('Error', `Save API Key Failed for ${provider}`, String(e));
           showToast(`${t.saveFailed}${String(e).replace('Error: ', '')}`, 'error')
           return false
       }
   }
 
   function clearApiKey() {
-      localStorage.removeItem('metabayn_api_key_enc')
-      localStorage.removeItem('metabayn_api_key_iv')
+      // Clear API Key for current provider only
+      const keys = getApiKeyStorageKey(provider)
+      localStorage.removeItem(keys.enc)
+      localStorage.removeItem(keys.iv)
       setApiKey('')
       setApiKeyEncrypted('')
+      logAudit('ApiKeyUsage', `Clear API Key for ${provider}`, 'Success');
   }
 
   async function load(){
@@ -828,7 +840,7 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       const sRaw=await invoke<any>('get_settings')
       const s = sRaw || {};
       
-      const validProviders = ['Gemini', 'OpenAI', 'OpenRouter', 'Groq'];
+      const validProviders = ['Gemini', 'OpenAI', 'OpenRouter', 'Grok'];
       const normalizeProvider = (raw: any): string => {
         const v = String(raw || '').trim()
         if (!v) return 'Gemini'
@@ -838,7 +850,7 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       const p = normalizeProvider(s.ai_provider)
       setProvider(p)
 
-      let initialModel = s.default_model || 'gemini-2.0-flash-lite-preview-02-05';
+      let initialModel = s.default_model || 'gemini-2.5-flash-lite';
       if (p === 'OpenRouter' && initialModel === 'openrouter/auto') {
         initialModel = 'nvidia/nemotron-nano-12b-v2-vl:free';
       }
@@ -863,8 +875,6 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       setOpenRouterEndpoint(orEndpoint)
 
       setSelectionEnabled(!!s.selection_enabled)
-      // setCheckAnatomyDefect(!!s.check_anatomy_defect)
-      setCheckHumanAnimalSimilarity(!!s.check_human_animal_similarity)
       setCheckHumanPresence(!!s.check_human_presence)
       setCheckAnimalPresence(!!s.check_animal_presence)
       
@@ -924,7 +934,7 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       saveSilent()
     }, 400)
     return () => clearTimeout(timer)
-  }, [model, input, output, threads, retry, tmin, tmax, dmin, dmax, kmin, kmax, banned, provider, selectionEnabled, descEnabled, /*checkAnatomyDefect,*/ checkHumanAnimalSimilarity, checkHumanPresence, checkAnimalPresence, checkDeformedObject, checkUnrecognizableSubject, checkTextOrTextLike, checkBrandLogo, checkFamousTrademark, checkWatermark, checkDuplicateSimilarity, qualityBlurMin, qualityNoiseMax, qualityLumaMin, qualityLumaMax, duplicateMaxDistance, selectionOrder, loaded, generateCsv,
+  }, [model, input, output, threads, retry, tmin, tmax, dmin, dmax, kmin, kmax, banned, provider, selectionEnabled, descEnabled, checkHumanPresence, checkAnimalPresence, checkDeformedObject, checkUnrecognizableSubject, checkTextOrTextLike, checkBrandLogo, checkFamousTrademark, checkWatermark, checkDuplicateSimilarity, qualityBlurMin, qualityNoiseMax, qualityLumaMin, qualityLumaMax, duplicateMaxDistance, selectionOrder, loaded, generateCsv,
       renameEnabled, renameMode, renameCustomText,
       openRouterEndpoint, enableQualityFilter,
       textFilterGibberish, textFilterNonEnglish, textFilterIrrelevant, textFilterRelevant,
@@ -953,8 +963,6 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
       selection_enabled: selectionEnabled, generate_csv: generateCsv,
       auth_token: currentToken, // Ensure auth token is preserved/saved
       rename_enabled: renameEnabled, rename_mode: renameMode, rename_custom_text: renameCustomText,
-      // check_anatomy_defect: checkAnatomyDefect,
-      check_human_animal_similarity: checkHumanAnimalSimilarity,
       check_human_presence: checkHumanPresence,
       check_animal_presence: checkAnimalPresence,
       check_deformed_object: checkDeformedObject,
@@ -1093,24 +1101,6 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
                   </span>
                 </div>
               )}
-
-              {userProfile && (
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  background: 'rgba(255,255,255,0.05)', padding: '6px 10px', borderRadius: 999,
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  cursor: 'default'
-                }} title={(translations as any)[lang]?.dashboard?.tokenBalanceTitle || "Token Balance"}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
-                    <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
-                    <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
-                  </svg>
-                  <span style={{ fontSize: '11px', color: '#e4e4e7', fontWeight: 700 }}>
-                    {formatTokenBalance(userProfile?.tokens)}
-                  </span>
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -1219,7 +1209,7 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
                                     }}
                                 >
                                     <div style={{fontSize: 10, fontWeight: 'bold', marginBottom: 1}}>Standard AI</div>
-                                    <div style={{fontSize: 8, opacity: 0.7}}>Gemini, OpenAI</div>
+                                    <div style={{fontSize: 8, opacity: 0.7}}>Gemini, OpenAI, Grok</div>
                                 </button>
                                 
                                 <button 
@@ -1270,6 +1260,7 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
                   }} style={{width:'100%', background:'#111', border:'1px solid #444', padding:'4px 8px', borderRadius:6, color:'#fff', fontSize:10}}>
                     <option>Gemini</option>
                     <option>OpenAI</option>
+                    <option>Grok</option>
                   </select>
               </div>
           </div>
@@ -1334,16 +1325,10 @@ export default function Settings({onBack, embedded, onSave, lang='en', onGenerat
                             }
                         }
                         
-                        const effectiveProvider = detectedProvider || provider;
-                        if (effectiveProvider === 'OpenAI' && val && !val.startsWith('sk-proj-') && !val.startsWith('sk-')) {
-                            setApiKeyError(t.apiKeyHintOpenai);
-                        } else if (effectiveProvider === 'Gemini' && val && !val.startsWith('AIza')) {
-                            setApiKeyError(t.apiKeyHintGemini);
-                        } else if (effectiveProvider === 'OpenRouter' && val && !val.startsWith('sk-or-')) {
-                            setApiKeyError((t as any).apiKeyHintOpenrouter || 'OpenRouter API keys typically start with sk-or-');
-                        } else {
-                            setApiKeyError('');
-                        }
+                        // Format validation removed: No strict format checking
+                        // Users should test connection to verify API key validity
+                        // This allows for API key format updates from providers
+                        setApiKeyError('');
                     }} 
                     onFocus={()=>setIsApiKeyFocused(true)}
                     onBlur={()=>setIsApiKeyFocused(false)}

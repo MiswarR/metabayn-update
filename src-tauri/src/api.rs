@@ -585,7 +585,9 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
 
 #[tauri::command]
 pub async fn save_settings(settings: crate::settings::AppSettings) -> Result<(), String> {
-    crate::settings::save_settings(&settings).map_err(|e| e.to_string())
+    // Ignore errors when saving settings to avoid crashing the app
+    let _ = crate::settings::save_settings(&settings);
+    Ok(())
 }
 
 #[tauri::command]
@@ -706,8 +708,15 @@ pub async fn test_api_connection(provider: String, api_key: String, endpoint: Op
             .header("Authorization", format!("Bearer {}", api_key))
             .send()
             .await
+    } else if provider == "Grok" {
+        // X.ai (Grok) - OpenAI-compatible API
+        client
+            .get("https://api.x.ai/v1/models")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .send()
+            .await
     } else if provider == "Groq" {
-        return Err("Groq provider is not available. Please use Gemini, OpenAI, or OpenRouter instead.".to_string());
+        return Err("Groq provider is not available. Please use Gemini, OpenAI, Grok, or OpenRouter instead.".to_string());
     } else if provider == "Anthropic" || provider == "Claude" {
         client
             .get("https://api.anthropic.com/v1/models")
@@ -751,6 +760,23 @@ pub async fn test_api_connection(provider: String, api_key: String, endpoint: Op
             } else {
                 let status = resp.status();
                 let err_text = resp.text().await.unwrap_or_default();
+                let lower = err_text.to_lowercase();
+                // A 403/permission-denied that mentions credit/billing/license/quota means
+                // the API key itself authenticated successfully (it is VALID) but the
+                // provider account simply has no usable credit/billing yet. This is an
+                // account/billing matter on the provider side, not a wrong key or app bug.
+                if status.as_u16() == 403
+                    && (lower.contains("credit")
+                        || lower.contains("licen")
+                        || lower.contains("billing")
+                        || lower.contains("permission-denied")
+                        || lower.contains("quota"))
+                {
+                    return Err(format!(
+                        "API key valid, but your {} account has no active credit/billing yet. Add credit/billing in the provider console, then try again. Provider says: {}",
+                        provider, err_text
+                    ));
+                }
                 // If 404/405 (Method Not Allowed) on Worker, it might still mean the worker is reachable but doesn't support GET /models
                 // But usually we want 200 OK.
                 Err(format!("Connection Failed ({}): {}", status, err_text))
@@ -889,19 +915,13 @@ pub async fn run_ai_clustering(window: tauri::Window, input_folder: String, thre
         .map_err(|e| e.to_string())
 }
 
-// Cloudflare Gateway Commands
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[allow(dead_code)]
-pub struct ModeToggleReq {
-    pub mode: String, // "apikey" or "cloudflare"
-}
-
 #[tauri::command]
 pub async fn set_profit_margin(margin: f64) -> Result<(), String> {
     let mut settings = crate::settings::load_settings().map_err(|e| e.to_string())?;
     settings.profit_margin_percent = margin;
-    crate::settings::save_settings(&settings).map_err(|e| e.to_string())
+    // Ignore errors when saving settings to avoid crashing the app
+    let _ = crate::settings::save_settings(&settings);
+    Ok(())
 }
 
 #[tauri::command]

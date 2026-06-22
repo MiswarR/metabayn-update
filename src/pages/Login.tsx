@@ -283,7 +283,7 @@ export default function Login({ onLogin }: { onLogin: (token: string) => void })
                   setRegLoading(true);
                   try {
                     const { apiRegister } = await import('../api/backend');
-                    const res = await apiRegister(regEmail.trim(), regPassword);
+                    await apiRegister(regEmail.trim(), regPassword);
                     setShowSuccessModal(true);
                   } catch (e:any) {
                     setError(String(e));
