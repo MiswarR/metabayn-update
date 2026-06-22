@@ -3,6 +3,14 @@ name: Build and Release
 permissions:
   contents: write
 
+env:
+  # Harden cargo/rustup against transient crates.io / git download failures
+  # (e.g. "download of wasm-bindgen failed: Connection was reset" on CI runners).
+  CARGO_NET_RETRY: "10"
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_TIMEOUT: "120"
+  RUSTUP_MAX_RETRIES: "10"
+
 on:
   push:
     branches:
