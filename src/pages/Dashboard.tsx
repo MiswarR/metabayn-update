@@ -119,7 +119,9 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
   const [logs,setLogs]=useState<any[]>([])
   const pushLog = React.useCallback((entry: any) => {
     setLogs(prev => {
-      const next = [...prev, entry]
+      const logObj = typeof entry === 'string' ? { text: entry } : { ...entry };
+      if (!logObj.id) logObj.id = `log-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const next = [...prev, logObj]
       if (next.length > 2000) next.splice(0, next.length - 2000)
       return next
     })
@@ -494,11 +496,13 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
              const idx = prev.findIndex(l => l.file === payload.file && l.status === 'processing');
              if (idx >= 0) {
                  const newLogs = [...prev];
-                 newLogs[idx] = { ...newLogs[idx], ...logItem };
+                 newLogs[idx] = { ...newLogs[idx], ...logItem, id: newLogs[idx].id || logItem.id };
                  return newLogs;
              }
           }
-          return [...prev, logItem];
+          const logObj = { ...logItem };
+          if (!logObj.id) logObj.id = `log-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+          return [...prev, logObj];
       });
     });
     return () => {
@@ -540,11 +544,13 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
           const idx = prev.findIndex(l => l.file === (payload as any).file && l.status === 'processing');
           if (idx >= 0) {
             const newLogs = [...prev];
-            newLogs[idx] = { ...newLogs[idx], ...logItem };
+            newLogs[idx] = { ...newLogs[idx], ...logItem, id: newLogs[idx].id || logItem.id };
             return newLogs;
           }
         }
-        return [...prev, logItem];
+        const logObj = { ...logItem };
+        if (!logObj.id) logObj.id = `log-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        return [...prev, logObj];
       });
     });
     return () => { unlistenPromise.then(unlisten => unlisten()); };
@@ -633,11 +639,13 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
              const idx = prev.findIndex(l => l.file === (payload as any).file && l.status === 'processing');
              if (idx >= 0) {
                  const newLogs = [...prev];
-                 newLogs[idx] = { ...newLogs[idx], ...logItem };
+                 newLogs[idx] = { ...newLogs[idx], ...logItem, id: newLogs[idx].id || logItem.id };
                  return newLogs;
              }
           }
-          return [...prev, logItem];
+          const logObj = { ...logItem };
+          if (!logObj.id) logObj.id = `log-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+          return [...prev, logObj];
       });
     });
     return () => { unlistenPromise.then(unlisten => unlisten()); };
@@ -726,11 +734,13 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
           const idx = prev.findIndex(l => l.file === (payload as any).file && l.status === 'processing');
           if (idx >= 0) {
             const newLogs = [...prev];
-            newLogs[idx] = { ...newLogs[idx], ...logItem };
+            newLogs[idx] = { ...newLogs[idx], ...logItem, id: newLogs[idx].id || logItem.id };
             return newLogs;
           }
         }
-        return [...prev, logItem];
+        const logObj = { ...logItem };
+        if (!logObj.id) logObj.id = `log-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        return [...prev, logObj];
       });
     });
     return () => { unlistenPromise.then(unlisten => unlisten()); };
@@ -771,11 +781,13 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
              const idx = prev.findIndex(l => l.file === (payload as any).file && l.status === 'processing');
              if (idx >= 0) {
                  const newLogs = [...prev];
-                 newLogs[idx] = { ...newLogs[idx], ...logItem };
+                 newLogs[idx] = { ...newLogs[idx], ...logItem, id: newLogs[idx].id || logItem.id };
                  return newLogs;
              }
           }
-          return [...prev, logItem];
+          const logObj = { ...logItem };
+          if (!logObj.id) logObj.id = `log-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+          return [...prev, logObj];
       });
     });
     return () => {
@@ -816,11 +828,13 @@ export default function Dashboard({token,onSettings,onProcessChange,isActive,isA
           const idx = prev.findIndex(l => l.file === (payload as any).file && l.status === 'processing');
           if (idx >= 0) {
             const newLogs = [...prev];
-            newLogs[idx] = { ...newLogs[idx], ...logItem };
+            newLogs[idx] = { ...newLogs[idx], ...logItem, id: newLogs[idx].id || logItem.id };
             return newLogs;
           }
         }
-        return [...prev, logItem];
+        const logObj = { ...logItem };
+        if (!logObj.id) logObj.id = `log-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        return [...prev, logObj];
       });
     });
     return () => { unlistenPromise.then(unlisten => unlisten()); };
