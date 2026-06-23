@@ -68,6 +68,6 @@ pub async fn scan_supported(input: &str, exclude_paths: Option<Vec<String>>) -> 
 #[allow(dead_code)]
 fn is_supported(p: &str) -> bool {
   let l = p.to_lowercase();
-  l.ends_with(".jpg")||l.ends_with(".jpeg")||l.ends_with(".png")||l.ends_with(".webp")||l.ends_with(".tiff")||l.ends_with(".bmp")||l.ends_with(".mp4")||l.ends_with(".mov")||l.ends_with(".mkv")||l.ends_with(".avi")||l.ends_with(".webm")
+  l.ends_with(".jpg")||l.ends_with(".jpeg")||l.ends_with(".png")||l.ends_with(".webp")||l.ends_with(".tiff")||l.ends_with(".bmp")||l.ends_with(".eps")||l.ends_with(".mp4")||l.ends_with(".mov")||l.ends_with(".mkv")||l.ends_with(".avi")||l.ends_with(".webm")
 }
 

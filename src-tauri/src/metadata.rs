@@ -813,7 +813,7 @@ CRITICAL RULES - MUST FOLLOW:
    - Example good: \"Happy golden retriever puppy playing in green summer field\"
    - Example bad: \"Cute dog picture\"
 2. {}
-3. KEYWORDS: {} to {} tags. EACH KEYWORD MUST BE A SINGLE ENGLISH WORD, comma separated. NO MULTI-WORD COMBINATIONS. NO COMBINING WORDS TOGETHER (like \"thinbudget\" - use \"thin\" and \"budget\" separately). No duplicates.
+3. KEYWORDS: {} to {} tags — IMPORTANT: provide as MANY relevant single-word tags as allowed, as close to the maximum as possible (never fewer than the minimum). EACH KEYWORD MUST BE A SINGLE ENGLISH WORD, comma separated. NO MULTI-WORD COMBINATIONS. NO COMBINING WORDS TOGETHER (like \"thinbudget\" - use \"thin\" and \"budget\" separately). No duplicates.
    - FIRST 10-15 KEYWORDS MUST BE THE MOST RELEVANT, HIGH-SEARCH-VOLUME TERMS (prioritize what buyers actually search for)
    - Include: subject, action, setting, style, concept, industry, usage (e.g. background, banner, template, copyspace, isolated)
    - Use synonyms and related terms (e.g. dog, puppy, canine)
@@ -1500,7 +1500,7 @@ fn parse_generated_json(
             file_path: file.to_string(),
             title: parsed["title"].as_str().unwrap_or("").to_string(),
             description: parsed["description"].as_str().unwrap_or("").to_string(),
-            keywords: normalize_keywords(&parsed["keywords"], req.keywords_min_count, req.keywords_max_count, &req.banned_words),
+            keywords: normalize_keywords(&parsed["keywords"], req.keywords_min_count, req.keywords_max_count, &req.banned_words, &category_string(&parsed["category"]), &format!("{} {}", parsed["title"].as_str().unwrap_or(""), parsed["description"].as_str().unwrap_or(""))),
             category: if let Some(arr) = parsed["category"].as_array() {
                 arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(",")
             } else {
@@ -1556,7 +1556,7 @@ fn parse_generated_json(
                             file_path: file.to_string(),
                             title: parsed["title"].as_str().unwrap_or("").to_string(),
                             description: parsed["description"].as_str().unwrap_or("").to_string(),
-                            keywords: normalize_keywords(&parsed["keywords"], req.keywords_min_count, req.keywords_max_count, &req.banned_words),
+                            keywords: normalize_keywords(&parsed["keywords"], req.keywords_min_count, req.keywords_max_count, &req.banned_words, &category_string(&parsed["category"]), &format!("{} {}", parsed["title"].as_str().unwrap_or(""), parsed["description"].as_str().unwrap_or(""))),
                             category: if let Some(arr) = parsed["category"].as_array() { arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(",") } else { parsed["category"].as_str().unwrap_or("").to_string() },
                             source: model.to_string(),
                             selection_status,
@@ -1600,7 +1600,7 @@ fn parse_generated_json(
             }
         }
         let keywords_val = serde_json::Value::Array(keywords_raw.iter().map(|s| serde_json::Value::String(s.clone())).collect());
-        let keywords = normalize_keywords(&keywords_val, req.keywords_min_count, req.keywords_max_count, &req.banned_words);
+        let keywords = normalize_keywords(&keywords_val, req.keywords_min_count, req.keywords_max_count, &req.banned_words, &category, &format!("{} {}", title, description));
         if title.is_empty() { title = Path::new(file).file_stem().and_then(|s| s.to_str()).unwrap_or("Untitled").to_string(); }
         Some(Generated {
             file: file.to_string(),
@@ -1631,7 +1631,17 @@ fn parse_generated_json(
     }
 }
 
-fn normalize_keywords(v: &serde_json::Value, _min_c: u32, max_c: u32, banned_str: &str) -> Vec<String> {
+/// Join the AI-assigned category value (array of 1-2 names, or a string) into a
+/// comma-separated string for keyword-database lookup.
+fn category_string(v: &serde_json::Value) -> String {
+    if let Some(arr) = v.as_array() {
+        arr.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(",")
+    } else {
+        v.as_str().unwrap_or("").to_string()
+    }
+}
+
+fn normalize_keywords(v: &serde_json::Value, min_c: u32, max_c: u32, banned_str: &str, category_str: &str, extra_source: &str) -> Vec<String> {
       let mut raw: Vec<String> = if let Some(arr) = v.as_array() { arr.iter().map(|x| x.as_str().unwrap_or("").to_string()).collect() } else { v.as_str().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default() };
       
       let banned_list: Vec<String> = banned_str.split(',')
@@ -1669,7 +1679,43 @@ fn normalize_keywords(v: &serde_json::Value, _min_c: u32, max_c: u32, banned_str
               }
           }
       }
-      if out.len() as u32 > max_c { out.truncate(max_c as usize); }
+      let max_eff = max_c.max(min_c);
+      if max_eff > 0 && out.len() as u32 > max_eff { out.truncate(max_eff as usize); }
+
+      // Enforce the user's requested MINIMUM keyword count, fully offline (no AI
+      // tokens). First top up from the internal category keyword database: pull in
+      // order, only category-relevant words the AI did not already produce, no dups.
+      if min_c > 0 && (out.len() as u32) < min_c {
+          for cat in category_str.split(',') {
+              if (out.len() as u32) >= min_c { break; }
+              for &kw in crate::keyword_db::master_keywords(cat) {
+                  if (out.len() as u32) >= min_c { break; }
+                  let k = kw.trim().to_lowercase();
+                  if k.is_empty() { continue; }
+                  if banned_list.contains(&k) { continue; }
+                  if out.iter().any(|e| e.eq_ignore_ascii_case(&k)) { continue; }
+                  out.push(k);
+              }
+          }
+      }
+
+      // Final fallback (e.g. unknown category): top up with meaningful words from
+      // the title/description the AI generated for this same image.
+      if min_c > 0 && (out.len() as u32) < min_c {
+          let clean_extra: String = extra_source.to_lowercase().chars()
+              .map(|c| if c.is_ascii_alphanumeric() || c.is_whitespace() { c } else { ' ' })
+              .collect();
+          for token in clean_extra.split_whitespace() {
+              if (out.len() as u32) >= min_c { break; }
+              let t = token.trim();
+              if t.len() < 2 { continue; }
+              if t.chars().all(|c| c.is_ascii_digit()) { continue; }
+              if banned_list.contains(&t.to_string()) { continue; }
+              if stopwords.contains(t) { continue; }
+              if out.iter().any(|e| e.eq_ignore_ascii_case(t)) { continue; }
+              out.push(t.to_string());
+          }
+      }
       out
 }
 
@@ -2887,6 +2933,216 @@ pub async fn prompt_grabber_generate(
     Ok(out)
 }
 
+/// Extract the embedded raster preview from a vector file (EPS) so it can be
+/// sent to the AI vision model. EPS files saved for stock normally embed a
+/// JPEG/TIFF preview; ExifTool pulls it out without any extra dependency.
+async fn extract_eps_preview(path: &str) -> Result<Vec<u8>> {
+    let exiftool = resolve_exiftool()
+        .ok_or(anyhow!("ExifTool tidak ditemukan untuk membaca preview EPS."))?;
+    for tag in ["-PreviewImage", "-ThumbnailImage", "-PageImage"] {
+        if cancel_requested() {
+            return Err(anyhow!("CANCELLED_BY_USER"));
+        }
+        let mut cmd = Command::new(&exiftool);
+        cmd.args(["-b", tag, path]);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000);
+        if let Ok(out) = cmd.output() {
+            if out.status.success() && out.stdout.len() > 100 {
+                return Ok(out.stdout);
+            }
+        }
+    }
+    Err(anyhow!("no embedded preview"))
+}
+
+/// Locate a Ghostscript console executable. We do NOT bundle Ghostscript
+/// (AGPL); we use the one the user has installed on their system.
+fn find_ghostscript() -> Option<PathBuf> {
+    for name in ["gswin64c", "gswin64c.exe", "gswin32c", "gswin32c.exe", "gs"] {
+        if let Ok(p) = which::which(name) {
+            return Some(p);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        for base in ["C:\\Program Files\\gs", "C:\\Program Files (x86)\\gs"] {
+            if let Ok(entries) = std::fs::read_dir(base) {
+                for e in entries.flatten() {
+                    for exe in ["gswin64c.exe", "gswin32c.exe"] {
+                        let cand = e.path().join("bin").join(exe);
+                        if cand.exists() {
+                            return Some(cand);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Render a vector EPS to a raster PNG using the system Ghostscript, cropped to
+/// the EPS bounding box. Used when the EPS has no embedded preview to send to AI.
+async fn render_eps_with_ghostscript(path: &str) -> Result<Vec<u8>> {
+    let gs = find_ghostscript().ok_or(anyhow!(
+        "File EPS ini vektor murni (tanpa preview tertanam), jadi perlu Ghostscript untuk dirender.\n\
+Pasang gratis dari https://ghostscript.com/releases/gsdnld.html (versi Windows 64-bit), lalu coba lagi."
+    ))?;
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = std::env::temp_dir().join(format!("metabayn_eps_{}_{}.png", std::process::id(), ts));
+
+    let mut cmd = Command::new(&gs);
+    cmd.args([
+        "-dSAFER", "-dBATCH", "-dNOPAUSE", "-dEPSCrop", "-q",
+        "-sDEVICE=png16m", "-r96",
+        "-dGraphicsAlphaBits=4", "-dTextAlphaBits=4",
+    ]);
+    cmd.arg(format!("-sOutputFile={}", tmp.to_string_lossy()));
+    cmd.arg(path);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+
+    let out = cmd.output().map_err(|e| anyhow!("Gagal menjalankan Ghostscript: {}", e))?;
+    if !out.status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(anyhow!("Ghostscript gagal merender EPS: {}", String::from_utf8_lossy(&out.stderr)));
+    }
+
+    let bytes = std::fs::read(&tmp).map_err(|e| anyhow!("Gagal membaca hasil render EPS: {}", e))?;
+    let _ = std::fs::remove_file(&tmp);
+    if bytes.len() < 100 {
+        return Err(anyhow!("Hasil render EPS kosong."));
+    }
+    Ok(bytes)
+}
+
+/// Largest BoundingBox dimension (in points) from an EPS header, if declared.
+fn parse_eps_bbox_maxdim(eps_path: &Path) -> Option<f64> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(eps_path).ok()?;
+    let mut buf = vec![0u8; 8192];
+    let n = f.read(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf[..n]);
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("%%BoundingBox:") {
+            let nums: Vec<f64> = rest.split_whitespace().filter_map(|s| s.parse::<f64>().ok()).collect();
+            if nums.len() == 4 {
+                let w = (nums[2] - nums[0]).abs();
+                let h = (nums[3] - nums[1]).abs();
+                return Some(w.max(h));
+            }
+        }
+    }
+    None
+}
+
+/// Embed a TIFF preview into a preview-less EPS using the standard DOS-EPS
+/// binary header (same as Illustrator "Include Preview (TIFF)"), so the file is
+/// accepted by microstock sites (Shutterstock/Vecteezy). Best-effort: returns
+/// Ok and leaves the file untouched if Ghostscript is missing or rendering fails.
+fn add_eps_tiff_preview(eps_path: &Path) -> Result<()> {
+    {
+        use std::io::Read;
+        let mut head = [0u8; 4];
+        if let Ok(mut f) = std::fs::File::open(eps_path) {
+            let _ = f.read(&mut head);
+        }
+        // Already a binary DOS-EPS (has a preview) -> nothing to do.
+        if head == [0xC5, 0xD0, 0xD3, 0xC6] {
+            return Ok(());
+        }
+        // Safety: only ever touch genuine PostScript/EPS (starts with "%!").
+        // Any other file (jpeg/png/etc., even if misnamed .eps) is left untouched.
+        if &head[0..2] != b"%!" {
+            return Ok(());
+        }
+    }
+
+    let gs = match find_ghostscript() {
+        Some(g) => g,
+        None => return Ok(()),
+    };
+
+    // Aim for ~800px on the long side regardless of artboard size.
+    let dpi = match parse_eps_bbox_maxdim(eps_path) {
+        Some(maxpt) if maxpt > 1.0 => (72.0 * 800.0 / maxpt).clamp(12.0, 150.0),
+        _ => 48.0,
+    };
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp_tif = std::env::temp_dir().join(format!("metabayn_epsprev_{}_{}.tif", std::process::id(), ts));
+
+    let mut cmd = Command::new(&gs);
+    cmd.args(["-dSAFER", "-dBATCH", "-dNOPAUSE", "-dEPSCrop", "-q", "-sDEVICE=tiff24nc"]);
+    cmd.arg(format!("-r{}", dpi.round() as u32));
+    cmd.arg(format!("-sOutputFile={}", tmp_tif.to_string_lossy()));
+    cmd.arg(eps_path.to_string_lossy().to_string());
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+
+    match cmd.output() {
+        Ok(o) if o.status.success() => {}
+        _ => {
+            let _ = std::fs::remove_file(&tmp_tif);
+            return Ok(()); // keep the (metadata-embedded) EPS as-is
+        }
+    }
+
+    let tiff = match std::fs::read(&tmp_tif) {
+        Ok(b) => b,
+        Err(_) => return Ok(()),
+    };
+    let _ = std::fs::remove_file(&tmp_tif);
+    if tiff.len() < 100 {
+        return Ok(());
+    }
+
+    let ps = std::fs::read(eps_path)?;
+    let ps_len = ps.len() as u32;
+    let tiff_len = tiff.len() as u32;
+    let mut buf = Vec::with_capacity(30 + ps.len() + tiff.len());
+    buf.extend_from_slice(&[0xC5, 0xD0, 0xD3, 0xC6]); // DOS-EPS magic
+    buf.extend_from_slice(&30u32.to_le_bytes()); // PostScript offset
+    buf.extend_from_slice(&ps_len.to_le_bytes()); // PostScript length
+    buf.extend_from_slice(&0u32.to_le_bytes()); // WMF offset
+    buf.extend_from_slice(&0u32.to_le_bytes()); // WMF length
+    buf.extend_from_slice(&(30u32 + ps_len).to_le_bytes()); // TIFF offset
+    buf.extend_from_slice(&tiff_len.to_le_bytes()); // TIFF length
+    buf.extend_from_slice(&0xFFFFu16.to_le_bytes()); // checksum (none)
+    buf.extend_from_slice(&ps);
+    buf.extend_from_slice(&tiff);
+    std::fs::write(eps_path, buf)?;
+    Ok(())
+}
+
+/// On Windows, prefix an absolute path with the extended-length marker `\\?\`
+/// so std::fs can open paths longer than the legacy 260-char MAX_PATH limit.
+/// (The file name is never sent to the AI, so its length only matters to the OS,
+/// not to token usage.)
+#[cfg(target_os = "windows")]
+fn fs_long_path(p: &str) -> std::path::PathBuf {
+    let s = p.replace('/', "\\");
+    if s.starts_with("\\\\?\\") || s.starts_with("\\\\") {
+        std::path::PathBuf::from(s)
+    } else if std::path::Path::new(&s).is_absolute() {
+        std::path::PathBuf::from(format!("\\\\?\\{}", s))
+    } else {
+        std::path::PathBuf::from(s)
+    }
+}
+#[cfg(not(target_os = "windows"))]
+fn fs_long_path(p: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(p)
+}
+
 async fn prepare_image_data(path: &str, _model: &str) -> Result<(String, String)> {
     if let Some(cached) = cache_get(path) {
         return Ok(cached);
@@ -2898,18 +3154,59 @@ async fn prepare_image_data(path: &str, _model: &str) -> Result<(String, String)
     
     // Check if video
     let path_lower = path.to_lowercase();
-    let is_video = path_lower.ends_with(".mp4") 
-        || path_lower.ends_with(".mov") 
-        || path_lower.ends_with(".avi") 
+    let is_video = path_lower.ends_with(".mp4")
+        || path_lower.ends_with(".mov")
+        || path_lower.ends_with(".avi")
         || path_lower.ends_with(".mkv")
         || path_lower.ends_with(".webm");
+    let is_vector = path_lower.ends_with(".eps");
 
     let buf = if is_video {
         // Extract frame using FFmpeg (already resized to 1024px)
         crate::video::extract_frame(path)?
+    } else if is_vector {
+        // EPS is a vector format; the vision model can't read it directly.
+        // Prefer an embedded raster preview (fast, no dependency); otherwise
+        // render the PostScript with the system Ghostscript. Then downscale.
+        let raster = match extract_eps_preview(path).await {
+            Ok(b) => b,
+            Err(_) => render_eps_with_ghostscript(path).await?,
+        };
+        let img = ImageReader::new(Cursor::new(raster))
+            .with_guessed_format()?
+            .decode()
+            .map_err(|e| anyhow!("Hasil render/preview EPS tidak bisa dibaca sebagai gambar: {}", e))?;
+        let (w, h) = img.dimensions();
+        let (nw, nh) = if w > 512 || h > 512 {
+            if w > h { (512, (512.0 * h as f32 / w as f32) as u32) }
+            else { ((512.0 * w as f32 / h as f32) as u32, 512) }
+        } else { (w, h) };
+        let resized = img.resize(nw.max(1), nh.max(1), FilterType::Triangle);
+        let mut out = Cursor::new(Vec::new());
+        resized.write_to(&mut out, image::ImageOutputFormat::Jpeg(70))?;
+        out.into_inner()
     } else {
-        let file_len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-        let (w, h) = ImageReader::open(path)?.with_guessed_format()?.into_dimensions()?;
+        // Open via an extended-length path so very long file names don't fail
+        // the Windows 260-char path limit. Filename length does NOT affect AI
+        // token usage (the name is never sent to the model) — only the OS path
+        // limit matters, which this works around.
+        let read_path = fs_long_path(path);
+        let file_len = std::fs::metadata(&read_path).map(|m| m.len()).unwrap_or(0);
+        let dims = (|| -> Result<(u32, u32)> {
+            Ok(ImageReader::open(&read_path)?.with_guessed_format()?.into_dimensions()?)
+        })();
+        let (w, h) = match dims {
+            Ok(d) => d,
+            Err(e) => {
+                if path.chars().count() > 240 {
+                    return Err(anyhow!(
+                        "Gagal membuka gambar — kemungkinan nama file / path terlalu panjang ({} karakter, melebihi batas Windows ~260). Persingkat nama file atau pindahkan ke folder dengan path lebih pendek.",
+                        path.chars().count()
+                    ));
+                }
+                return Err(e);
+            }
+        };
 
         if cancel_requested() {
             return Err(anyhow!("CANCELLED_BY_USER"));
@@ -2921,7 +3218,7 @@ async fn prepare_image_data(path: &str, _model: &str) -> Result<(String, String)
             let mut attempts = 0;
             loop {
                 attempts += 1;
-                match std::fs::File::open(path) {
+                match std::fs::File::open(&read_path) {
                     Ok(mut file) => {
                         match std::io::Read::read_to_end(&mut file, &mut f_buf) {
                             Ok(_) => break,
@@ -2939,7 +3236,7 @@ async fn prepare_image_data(path: &str, _model: &str) -> Result<(String, String)
             }
             f_buf
         } else {
-            let img = ImageReader::open(path)?.with_guessed_format()?.decode()?;
+            let img = ImageReader::open(&read_path)?.with_guessed_format()?.decode()?;
             let (w, h) = img.dimensions();
             let (nw, nh) = if w > 512 || h > 512 {
                 if w > h { (512, (512.0 * h as f32 / w as f32) as u32) }
@@ -3407,7 +3704,19 @@ Solusi cepat:\n\
     let keywords_str = req.keywords.join(";");
     args.push(format!("-Keywords={}", keywords_str));
     args.push(format!("-Subject={}", keywords_str));
-    
+
+    // EPS/PS vector files store metadata as XMP. ExifTool maps -Title/-Subject to
+    // XMP for EPS, but the description otherwise only goes to comment tags that EPS
+    // ignores — so write it explicitly as XMP for EPS files.
+    let is_eps = target
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|e| e.eq_ignore_ascii_case("eps"))
+        .unwrap_or(false);
+    if is_eps {
+        args.push(format!("-XMP-dc:Description={}", req.description));
+    }
+
     let working_path = if target == source {
         source.to_path_buf()
     } else {
@@ -3415,14 +3724,15 @@ Solusi cepat:\n\
             fs::create_dir_all(parent).with_context(|| format!("Gagal membuat folder output: {}", parent.to_string_lossy()))?;
         }
         let ext = target.extension().and_then(|s| s.to_str()).unwrap_or("");
-        let stem = target.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
         let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
         let pid = std::process::id();
-        let tmp_name = if ext.is_empty() { format!(".{}.tmp-{}-{}", stem, ms, pid) } else { format!(".{}.tmp-{}-{}.{}", stem, ms, pid, ext) };
+        // Short temp name (do NOT include the original file stem) so a long file
+        // name doesn't push the temp path past the Windows 260-char limit.
+        let tmp_name = if ext.is_empty() { format!(".mbtmp-{}-{}", ms, pid) } else { format!(".mbtmp-{}-{}.{}", ms, pid, ext) };
         let tmp_path = target.with_file_name(tmp_name);
         let mut last = None;
         for _ in 0..5 {
-            match fs::copy(source, &tmp_path) {
+            match fs::copy(fs_long_path(&source.to_string_lossy()), fs_long_path(&tmp_path.to_string_lossy())) {
                 Ok(_) => { last = None; break; }
                 Err(e) => {
                     last = Some(e);
@@ -3468,16 +3778,18 @@ Solusi cepat:\n\
     let final_path = if target == source {
         target.clone()
     } else {
+        let wp = fs_long_path(&working_path.to_string_lossy());
+        let tp = fs_long_path(&target.to_string_lossy());
         let mut moved = false;
         for _ in 0..5 {
-            if fs::rename(&working_path, &target).is_ok() { moved = true; break; }
+            if fs::rename(&wp, &tp).is_ok() { moved = true; break; }
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
         if !moved {
             let mut copied = false;
             let mut last = None;
             for _ in 0..5 {
-                match fs::copy(&working_path, &target) {
+                match fs::copy(&wp, &tp) {
                     Ok(_) => { copied = true; last = None; break; }
                     Err(e) => {
                         last = Some(e);
@@ -3486,21 +3798,37 @@ Solusi cepat:\n\
                 }
             }
             if !copied {
+                let _ = fs::remove_file(&wp);
+                let long_hint = if target.to_string_lossy().chars().count() > 240 {
+                    "\nKemungkinan nama file / path output terlalu panjang (melebihi batas Windows ~260 karakter). Persingkat nama file atau pakai folder output dengan path lebih pendek."
+                } else {
+                    ""
+                };
                 if let Some(e) = last {
-                    let _ = fs::remove_file(&working_path);
-                    return Err(anyhow!(e).context(format!("Gagal menulis hasil ke folder output: {}", target.to_string_lossy())));
+                    return Err(anyhow!(e).context(format!("Gagal menulis hasil ke folder output: {}{}", target.to_string_lossy(), long_hint)));
                 }
-                let _ = fs::remove_file(&working_path);
-                return Err(anyhow!("Gagal menulis hasil ke folder output: {}", target.to_string_lossy()));
+                return Err(anyhow!("Gagal menulis hasil ke folder output: {}{}", target.to_string_lossy(), long_hint));
             }
-            let _ = fs::remove_file(&working_path);
+            let _ = fs::remove_file(&wp);
         }
         target.clone()
     };
     
     // Rename File if enabled
     let new_path = apply_file_rename(&final_path, &req.title)?;
-    
+
+    // For a preview-less EPS, embed a TIFF preview (DOS-EPS) so it is accepted by
+    // microstock (Shutterstock/Vecteezy). Best-effort — never fails the write.
+    let actual = new_path.clone().unwrap_or_else(|| final_path.clone());
+    if actual
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|e| e.eq_ignore_ascii_case("eps"))
+        .unwrap_or(false)
+    {
+        let _ = add_eps_tiff_preview(&actual);
+    }
+
     if let Some(ref np) = new_path {
         return Ok(Some(np.to_string_lossy().to_string()));
     }

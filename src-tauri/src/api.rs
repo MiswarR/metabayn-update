@@ -254,7 +254,7 @@ pub async fn scan_folder(input: String) -> Result<ScanResult, String> {
         let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
         let supported = matches!(
             ext.as_str(),
-            "jpg" | "jpeg" | "png" | "webp" | "mp4" | "mov" | "mkv" | "avi" | "webm"
+            "jpg" | "jpeg" | "png" | "webp" | "eps" | "mp4" | "mov" | "mkv" | "avi" | "webm"
         );
         if supported {
             out.push(path.to_string_lossy().to_string());

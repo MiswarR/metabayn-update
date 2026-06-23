@@ -16,6 +16,7 @@ mod auth;
 mod crypto_utils;
 mod csv;
 mod filesystem;
+mod keyword_db;
 mod metadata;
 mod duplicates;
 mod ai_cluster;
