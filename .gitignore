@@ -1,0 +1,6 @@
+# Hanya updates/version.json yang boleh ada di repo ini
+# Source code ada di repo privat metabayn-studio
+*
+!updates/
+!updates/version.json
+!.gitignore
